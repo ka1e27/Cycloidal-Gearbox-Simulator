@@ -1,0 +1,102 @@
+// Default inputs and the SPEC.md joint presets.
+
+import { materialProps, SPEC_STEEL } from './materials';
+import type { GearboxInputs } from './types';
+
+export type JointId = 'J1' | 'J2' | 'J3' | 'J4';
+export const JOINT_IDS: readonly JointId[] = ['J1', 'J2', 'J3', 'J4'];
+
+/** SPEC.md defaults (unit-case geometry, 6061-T6 disc, M3 bolt + 5 mm bushing, M3 standoff, 61800). */
+export function defaultGearboxInputs(): GearboxInputs {
+  return {
+    Zp: 18,
+    Zw: 6,
+    D: 85,
+    e: 1.3,
+    L: 6.35,
+    rr: 2.5,
+    rw: 2.5,
+    Db: 19,
+    tMin: 2.0,
+    discs: 1,
+    gap: 0.5,
+    RwOverride: null,
+    wall: 4,
+    discMaterial: materialProps('al-6061'),
+    outerPin: {
+      construction: 'boltBushing',
+      shankDia: 3.0,
+      boltYield: 640,
+      material: { ...SPEC_STEEL },
+    },
+    innerPin: {
+      construction: 'standoff',
+      od: 5.0,
+      bore: 2.46,
+      standoffYield: 300,
+      material: { ...SPEC_STEEL },
+    },
+    Treq: 5.85,
+    Tdes: 8.8,
+    Kc: 2.0,
+    KcLife: 1.3,
+    discShare: null,
+    bearing: { name: '61800', C: 1380, C0: 585 },
+    rpm: 300,
+    reqLifeH: 2000,
+  };
+}
+
+export interface JointPresetSpec {
+  label: string;
+  D: number;
+  e: number;
+  Treq: number;
+  Tdes: number;
+  discs: number;
+  note: string;
+}
+
+export const JOINT_PRESET_SPECS: Record<JointId, JointPresetSpec> = {
+  J2: { label: 'J2 shoulder', D: 85, e: 1.6, Treq: 5.85, Tdes: 8.8, discs: 2, note: '' },
+  J3: { label: 'J3 elbow', D: 70, e: 1.07, Treq: 2.25, Tdes: 3.4, discs: 1, note: '' },
+  J1: { label: 'J1 base yaw', D: 60, e: 0.92, Treq: 1.3, Tdes: 2.0, discs: 1, note: 'T_req is an estimate' },
+  J4: { label: 'J4 forearm roll', D: 60, e: 0.92, Treq: 0.3, Tdes: 1.0, discs: 1, note: 'T_req is an estimate' },
+};
+
+export function presetInputs(id: JointId): GearboxInputs {
+  const p = JOINT_PRESET_SPECS[id];
+  return { ...defaultGearboxInputs(), D: p.D, e: p.e, Treq: p.Treq, Tdes: p.Tdes, discs: p.discs };
+}
+
+export const PRESETS: Record<JointId, GearboxInputs> = {
+  J1: presetInputs('J1'),
+  J2: presetInputs('J2'),
+  J3: presetInputs('J3'),
+  J4: presetInputs('J4'),
+};
+
+/**
+ * Fill any missing or non-numeric field of a partial/imported object from the defaults,
+ * so that a hand-edited JSON never crashes the engine. Returns a complete GearboxInputs.
+ */
+export function normalizeGearboxInputs(partial: unknown): GearboxInputs {
+  const d = defaultGearboxInputs();
+  if (!partial || typeof partial !== 'object') return d;
+  const p = partial as Record<string, unknown>;
+  const merge = <T extends object>(base: T, over: unknown): T => {
+    const out = { ...base } as Record<string, unknown>;
+    if (over && typeof over === 'object') {
+      for (const [k, v] of Object.entries(over as Record<string, unknown>)) {
+        if (!(k in out)) continue;
+        const b = out[k];
+        if (b !== null && typeof b === 'object') out[k] = merge(b as object, v);
+        else if (typeof b === 'number') out[k] = typeof v === 'number' ? v : b;
+        else if (typeof b === 'string') out[k] = typeof v === 'string' ? v : b;
+        else out[k] = v === null || typeof v === 'number' ? v : b; // nullable numeric (RwOverride, discShare)
+      }
+    }
+    return out as T;
+  };
+  return merge(d, p);
+}

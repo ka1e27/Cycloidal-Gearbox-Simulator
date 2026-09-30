@@ -1,0 +1,43 @@
+// Worker-side request handling, separated from `self` so it can be tested without a real Worker.
+
+import { adviseDesignAsync } from './advisor';
+import type { WorkerRequest, WorkerResponse } from './messages';
+import { solveMinimumSizeAsync } from './solver';
+
+export interface WorkerHost {
+  post(msg: WorkerResponse): void;
+}
+
+/**
+ * Handles one request. `cancelled` holds job ids that the UI asked to cancel; it is polled
+ * between work slices (the async drivers yield to the event loop, so cancel messages get through).
+ */
+export function createWorkerHandler(host: WorkerHost) {
+  const cancelled = new Set<number>();
+  return async function handle(msg: WorkerRequest): Promise<void> {
+    if (msg.type === 'cancel') {
+      cancelled.add(msg.id);
+      return;
+    }
+    const id = msg.id;
+    try {
+      if (msg.type === 'solve') {
+        const result = await solveMinimumSizeAsync(msg.inputs, msg.options, {
+          onProgress: (progress) => host.post({ type: 'progress', id, kind: 'solve', progress }),
+          shouldCancel: () => cancelled.has(id),
+        });
+        host.post({ type: 'result', id, kind: 'solve', result });
+      } else if (msg.type === 'advise') {
+        const result = await adviseDesignAsync(msg.inputs, msg.options, {
+          onProgress: (progress) => host.post({ type: 'progress', id, kind: 'advise', progress }),
+          shouldCancel: () => cancelled.has(id),
+        });
+        host.post({ type: 'result', id, kind: 'advise', result });
+      }
+    } catch (err) {
+      host.post({ type: 'error', id, message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      cancelled.delete(id);
+    }
+  };
+}
