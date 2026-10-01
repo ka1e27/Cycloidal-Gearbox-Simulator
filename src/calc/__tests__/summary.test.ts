@@ -28,7 +28,9 @@ describe('all-joints summary', () => {
       expect(r.Tdes).toBeCloseTo(a.joints[i].Tdes, 12);
       expect(r.inputs.Treq).toBe(r.Treq);
       expect(r.outboardWeight_N).toBeCloseTo(a.joints[i].outboardWeight_N, 12);
-      expect(r.overturningMoment_Nm).toBeCloseTo(a.joints[i].overturningMoment_Nm, 12);
+      expect(r.bearingRadial_N).toBeCloseTo(a.joints[i].bearingRadial_N, 12);
+      expect(r.bearingAxial_N).toBeCloseTo(a.joints[i].bearingAxial_N, 12);
+      expect(r.bearingTiltMoment_Nm).toBeCloseTo(a.joints[i].bearingTiltMoment_Nm, 12);
       // the row's result is exactly the gearbox check of those inputs
       expect(r.result.maxUtilization).toBeCloseTo(checkGearbox(r.inputs).maxUtilization, 12);
       expect(r.maxUtilization).toBe(r.result.maxUtilization);

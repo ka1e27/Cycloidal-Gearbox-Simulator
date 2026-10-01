@@ -269,13 +269,11 @@ function* searchGen(
   const light = new TopK(cmpLight, TOPK), margin = new TopK(cmpMargin, TOPK);
 
   const Kc = base.Kc, Tdes = base.Tdes, Treq = base.Treq, KcLife = base.KcLife;
-  const solidOuter = base.outerPin.construction === 'solid';
-  const solidInner = base.innerPin.construction === 'solid';
   const disc = base.discMaterial;
   const EsRing = effectiveModulus(base.outerPin.material, disc);
   const EsIn = effectiveModulus(base.innerPin.material, disc);
-  const limRing = contactLimits(disc, base.outerPin.material, solidOuter);
-  const limIn = contactLimits(disc, base.innerPin.material, solidInner);
+  const limRing = contactLimits(disc, base.outerPin.material);
+  const limIn = contactLimits(disc, base.innerPin.material);
   const boltLim = outerPinBendingLimit(base.outerPin);
   const soLim = innerPinBendingLimit(base.innerPin);
   const stock = disc.kind === 'polymer' ? DISC_STOCK_POLYMER : DISC_STOCK_METAL;

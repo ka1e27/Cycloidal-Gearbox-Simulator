@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "parity": "node scripts/parity/run.mjs",
+    "parity:gen": "node scripts/parity/run.mjs --gen"
   },
   "dependencies": {
     "react": "^19.3.0",

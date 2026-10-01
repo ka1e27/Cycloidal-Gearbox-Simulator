@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { applySolverSolution, getCalcClient, type CalcJob, type GearboxInputs, type SolverResult } from '../../calc';
 import { Button, Card, Notice, ProgressBar, StatusChip } from '../components/primitives';
-import { num, fixed } from '../format';
+import { fixed } from '../format';
 import { useStore } from '../store';
 import type { Slot } from '../session';
 import { useWidth } from '../viz/useWidth';
@@ -13,7 +13,8 @@ function solverKey(i: GearboxInputs): string {
   return JSON.stringify(rest);
 }
 
-function Heat({ res, curD, curK1 }: { res: SolverResult; curD: number; curK1: number }) {
+export function Heat({ res, curD, curK1 }: { res: SolverResult; curD: number; curK1: number }) {
+  const { u } = useStore();
   const [ref, W] = useWidth<HTMLDivElement>(520);
   const { D, K1, score } = res.grid;
   if (!D.length || !K1.length) return null;
@@ -24,6 +25,17 @@ function Heat({ res, curD, curK1 }: { res: SolverResult; curD: number; curK1: nu
   const ch = Math.max(8, Math.min(14, 200 / rows));
   const ih = ch * rows;
   const H = ih + m.t + m.b;
+  // Axis ticks in the display unit: the smallest tidy step that gives at most 6 ticks (the swept range
+  // shrinks to a few tens of mm when a solution is found early, so a fixed 20 mm / 1 in step could leave one tick).
+  const lo = u.toDisplay('length', D[0]);
+  const hi = u.toDisplay('length', D[D.length - 1]);
+  const count = (s: number) => Math.floor(hi / s + 1e-9) - Math.ceil(lo / s - 1e-9) + 1;
+  const step = [0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 20, 25, 50, 100].find((s) => count(s) <= 6) ?? 100;
+  const dTicks: { mm: number; label: string }[] = [];
+  for (let k = Math.ceil(lo / step - 1e-9); k * step <= hi + 1e-9; k++) {
+    const v = k * step;
+    dTicks.push({ mm: u.fromDisplay('length', v), label: String(parseFloat(v.toFixed(2))) });
+  }
   const cls = (s: number | null) => (s == null ? 'hm-none' : s <= 0.85 ? 'hm-ok' : s <= 1 ? 'hm-marginal' : 'hm-fail');
   const x = (d: number) => m.l + ((d - D[0]) / (D[D.length - 1] - D[0] || 1)) * (iw - cw) + cw / 2;
   const y = (k: number) => m.t + ih - ((k - K1[0]) / (K1[K1.length - 1] - K1[0] || 1)) * (ih - ch) - ch / 2;
@@ -34,14 +46,14 @@ function Heat({ res, curD, curK1 }: { res: SolverResult; curD: number; curK1: nu
         {score.map((row, i) =>
           row.map((s, j) => (
             <rect key={`${i}-${j}`} className={cls(s)} x={m.l + i * cw} y={m.t + ih - (j + 1) * ch} width={Math.ceil(cw) + 0.5} height={ch + 0.5}>
-              <title>{`D ${D[i]} mm, K1 ${K1[j].toFixed(3)}: ${s == null ? 'not feasible' : `score ${s.toFixed(2)}`}`}</title>
+              <title>{`D ${u.fu('length', D[i], { dp: 0 })}, K1 ${K1[j].toFixed(3)}: ${s == null ? 'not feasible' : `score ${s.toFixed(2)}`}`}</title>
             </rect>
           )),
         )}
-        {[30, 50, 70, 90, 110].filter((d) => d >= D[0] && d <= D[D.length - 1]).map((d) => (
-          <text key={d} className="ch-axis" x={x(d)} y={H - 14} textAnchor="middle">{d}</text>
+        {dTicks.map((t) => (
+          <text key={t.label} className="ch-axis" x={x(t.mm)} y={H - 14} textAnchor="middle">{t.label}</text>
         ))}
-        <text className="ch-axis" x={m.l + iw / 2} y={H - 1} textAnchor="middle">D, mm</text>
+        <text className="ch-axis" x={m.l + iw / 2} y={H - 1} textAnchor="middle">D, {u.sym('length')}</text>
         {[0.4, 0.6, 0.85].map((k) => (
           <text key={k} className="ch-axis" x={m.l - 5} y={y(k) + 4} textAnchor="end">{k.toFixed(2)}</text>
         ))}
@@ -65,7 +77,7 @@ function Heat({ res, curD, curK1 }: { res: SolverResult; curD: number; curK1: nu
 }
 
 export function SolverPanel({ slot, eff, K1 }: { slot: Slot; eff: GearboxInputs; K1: number }) {
-  const { updateGearbox, notify } = useStore();
+  const { updateGearbox, notify, u } = useStore();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [res, setRes] = useState<SolverResult | null>(null);
@@ -105,12 +117,12 @@ export function SolverPanel({ slot, eff, K1 }: { slot: Slot; eff: GearboxInputs;
   return (
     <Card
       title="Minimum-size solver"
-      subtitle={'Sweeps D from 30 to 120 mm and K1 from 0.40 to 0.85 for your current loads and materials, and finds the smallest D whose contact checks all pass (score ≤ 1).'}
+      subtitle={u.text('Sweeps D from 30 to 120 mm and K1 from 0.40 to 0.85 for your current loads and materials, and finds the smallest D whose contact checks all pass (score ≤ 1).')}
       actions={
         running ? (
-          <Button variant="secondary" size="sm" icon="stop" onClick={cancel}>Cancel</Button>
+          <Button variant="secondary" size="sm" onClick={cancel}>Cancel</Button>
         ) : (
-          <Button variant="primary" size="sm" icon="search" onClick={run}>{res ? 'Run again' : 'Find minimum size'}</Button>
+          <Button variant="primary" size="sm" onClick={run}>{res ? 'Run again' : 'Find minimum size'}</Button>
         )
       }
     >
@@ -122,32 +134,32 @@ export function SolverPanel({ slot, eff, K1 }: { slot: Slot; eff: GearboxInputs;
       )}
       {res && !res.valid && (
         <Notice kind="error" title="The solver could not run">
-          {res.errors[0] ?? 'Check the inputs on the left.'}
+          {u.text(res.errors[0] ?? 'Check the inputs on the left.')}
         </Notice>
       )}
       {res && res.valid && (
         <div className={`solver-out${stale ? ' is-stale' : ''}`}>
           {stale && <Notice kind="info" title="Inputs changed since this run">Press Run again to refresh the result.</Notice>}
           {res.noSolution ? (
-            <Notice kind="warning" title={`No solution up to D = ${res.Dmax} mm`}>
+            <Notice kind="warning" title={`No solution up to D = ${u.fu('length', res.Dmax, { dp: 0 })}`}>
               {res.floorD != null
-                ? `The smallest geometrically possible D is ${res.floorD} mm, but the contact stress is too high at every size. `
+                ? `The smallest geometrically possible D is ${u.fu('length', res.floorD, { dp: 0 })}, but the contact stress is too high at every size. `
                 : 'No geometrically possible size was found with these pins and bore. '}
               Try two discs, a thicker disc, a stronger disc material, larger pins, or lower loads.
             </Notice>
           ) : (
             <div className="solver-hero">
               <div>
-                <div className="solver-big">D = {num(res.minD, 0)} <span>mm</span></div>
+                <div className="solver-big">D = {u.f('length', res.minD, { dp: 0 })} <span>{u.sym('length')}</span></div>
                 <div className="solver-sub">
-                  e = {fixed(res.bestE, 2)} mm {'·'} K1 = {fixed(res.bestK1, 3)} {'·'} housing OD {num(housing, 0)} mm
+                  e = {u.fu('length', res.bestE, { dp: 3 })} {'·'} K1 = {fixed(res.bestK1, 3)} {'·'} housing OD {u.fu('length', housing, { dp: 1, trim: true })}
                 </div>
               </div>
               <div className="solver-side">
                 <StatusChip kind={(res.bestScore ?? 2) <= 0.85 ? 'ok' : (res.bestScore ?? 2) <= 1 ? 'marginal' : 'fail'} size="sm">
                   contact score {fixed(res.bestScore, 2)}
                 </StatusChip>
-                <span className="muted small">geometric floor {res.floorD != null ? `${num(res.floorD, 0)} mm` : '—'}</span>
+                <span className="muted small">geometric floor {res.floorD != null ? u.fu('length', res.floorD, { dp: 0 }) : '—'}</span>
               </div>
             </div>
           )}
@@ -155,10 +167,9 @@ export function SolverPanel({ slot, eff, K1 }: { slot: Slot; eff: GearboxInputs;
             <div className="solver-actions">
               <Button
                 variant="primary"
-                icon="check"
                 onClick={() => {
                   updateGearbox(slot, (g) => applySolverSolution(g, res.minD as number, res.bestE as number));
-                  notify('success', `Applied D = ${num(res.minD, 0)} mm, e = ${fixed(res.bestE, 2)} mm to ${slot === 'custom' ? 'Custom' : slot}.`);
+                  notify('success', `Applied D = ${u.fu('length', res.minD, { dp: 0 })}, e = ${u.fu('length', res.bestE, { dp: 3 })} to ${slot === 'custom' ? 'Custom' : slot}.`);
                 }}
               >
                 Apply to inputs

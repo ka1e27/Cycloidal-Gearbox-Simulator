@@ -1,0 +1,144 @@
+{
+ "cases": [
+  {
+   "name": "floor Db=19",
+   "over": {
+    "Treq": 1.0,
+    "Tdes": 1.0,
+    "discs": 1,
+    "Db": 19.0
+   },
+   "floorD": 45,
+   "floorK1": 0.4,
+   "minD": 45,
+   "bestK1": 0.4,
+   "bestE": 0.5,
+   "bestScore": 0.9822213420138396,
+   "noSolution": false,
+   "undercutOnlySkips": 0
+  },
+  {
+   "name": "floor Db=24",
+   "over": {
+    "Treq": 1.0,
+    "Tdes": 1.0,
+    "discs": 1,
+    "Db": 24.0
+   },
+   "floorD": 51,
+   "floorK1": 0.4,
+   "minD": 51,
+   "bestK1": 0.45,
+   "bestE": 0.6375,
+   "bestScore": 0.8600207525810759,
+   "noSolution": false,
+   "undercutOnlySkips": 0
+  },
+  {
+   "name": "J3 1 disc",
+   "over": {
+    "Treq": 2.25,
+    "Tdes": 3.4,
+    "discs": 1,
+    "Db": 19.0
+   },
+   "floorD": 45,
+   "floorK1": 0.4,
+   "minD": 63,
+   "bestK1": 0.7,
+   "bestE": 1.2249999999999999,
+   "bestScore": 0.9938396228026186,
+   "noSolution": false,
+   "undercutOnlySkips": 0
+  },
+  {
+   "name": "J3 2 discs",
+   "over": {
+    "Treq": 2.25,
+    "Tdes": 3.4,
+    "discs": 2,
+    "Db": 19.0
+   },
+   "floorD": 45,
+   "floorK1": 0.4,
+   "minD": 47,
+   "bestK1": 0.625,
+   "bestE": 0.8159722222222222,
+   "bestScore": 0.9669736770583852,
+   "noSolution": false,
+   "undercutOnlySkips": 0
+  },
+  {
+   "name": "J1",
+   "over": {
+    "Treq": 1.3,
+    "Tdes": 2.0,
+    "discs": 1,
+    "Db": 19.0
+   },
+   "floorD": 45,
+   "floorK1": 0.4,
+   "minD": 47,
+   "bestK1": 0.625,
+   "bestE": 0.8159722222222222,
+   "bestScore": 0.9910914378555964,
+   "noSolution": false,
+   "undercutOnlySkips": 0
+  },
+  {
+   "name": "J4",
+   "over": {
+    "Treq": 0.3,
+    "Tdes": 1.0,
+    "discs": 1,
+    "Db": 19.0
+   },
+   "floorD": 45,
+   "floorK1": 0.4,
+   "minD": 45,
+   "bestK1": 0.4,
+   "bestE": 0.5,
+   "bestScore": 0.634448359314439,
+   "noSolution": false,
+   "undercutOnlySkips": 0
+  },
+  {
+   "name": "J2 2 discs",
+   "over": {
+    "Treq": 5.85,
+    "Tdes": 8.8,
+    "discs": 2,
+    "Db": 19.0
+   },
+   "floorD": 45,
+   "floorK1": 0.4,
+   "minD": 79,
+   "bestK1": 0.75,
+   "bestE": 1.6458333333333333,
+   "bestScore": 0.9929511523360477,
+   "noSolution": false,
+   "undercutOnlySkips": 0
+  },
+  {
+   "name": "J2 1 disc",
+   "over": {
+    "Treq": 5.85,
+    "Tdes": 8.8,
+    "discs": 1,
+    "Db": 19.0
+   },
+   "floorD": 45,
+   "floorK1": 0.4,
+   "minD": null,
+   "bestK1": null,
+   "bestE": null,
+   "bestScore": null,
+   "noSolution": true,
+   "undercutOnlySkips": 0
+  }
+ ],
+ "limits": [
+  460.91999999999996,
+  240.03199999999998
+ ]
+}

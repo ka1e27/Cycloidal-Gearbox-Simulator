@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { BEARING_NOTE, SUPPLIER_DATA_NOTE } from '../../calc';
 import { Icon } from './Icon';
 import { OPEN_ASSUMPTIONS_EVENT } from './Header';
+import { useU } from '../store';
 
 const GROUPS: { title: string; items: string[] }[] = [
   {
@@ -32,14 +33,16 @@ const GROUPS: { title: string; items: string[] }[] = [
       'The default masses and lengths are placeholders until CAD masses exist. They were chosen to give roughly the SPEC torques at J2 (5.85 N·m) and J3 (2.25 N·m).',
       'The arm is evaluated fully extended horizontally, the worst gravity pose. Joint masses are lumped at the joint centres; links are uniform rods with their centre of mass at the midpoint.',
       'Dynamic torque is α · I about the joint axis with the same α for everything outboard. Friction, payload swing, shocks and cable forces are ignored.',
-      'J4 (roll) assumes J5 is bent 90°, so the tool is horizontal and perpendicular to the roll axis. J1 (yaw) has no gravity torque, only α · I.',
+      'J4 (roll) torque assumes J5 is bent 90°, so the tool is horizontal and perpendicular to the roll axis. J1 (yaw) has no gravity torque, only α · I.',
       'J5 is a direct-drive servo: the app reports the torque it must deliver but does not check a gearbox for it.',
-      'Output-bearing radial load and overturning moment are information for sizing the joint bearing or housing. They are not pass/fail checks.',
+      'Output-bearing loads are information for sizing the joint bearing or housing, not pass/fail checks. The gravity torque about the axis goes through the gearbox; it is not the tilting moment on the bearing.',
+      'J1 (vertical axis): the outboard weight is an axial thrust, and its horizontal reach gives an overturning moment. J2 and J3 (horizontal axis): radial load = outboard weight, tilting moment = radial load × the link offset from the output bearing along the axis (an input, default 15 mm). J4 (roll): radial load = outboard weight, tilting moment = Σ m·g × axial distance along the roll axis with the forearm and tool straight out, the worse pose for the bearing. J5 is a servo and has none.',
     ],
   },
 ];
 
 export function AssumptionsPanel() {
+  const u = useU();
   const [open, setOpen] = useState(false);
   const id = useId();
   const root = useRef<HTMLElement>(null);
@@ -57,9 +60,8 @@ export function AssumptionsPanel() {
     <section className="card assumptions" ref={root} id="assumptions" aria-label="Assumptions and limitations">
       <h2 className="assumptions-h">
         <button type="button" className="assumptions-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
-          <Icon name="book" size={18} />
           <span>Assumptions and limitations</span>
-          <Icon name="chevron" size={18} className="assumptions-chevron" />
+          <Icon name="chevron" size={14} className="assumptions-chevron" />
         </button>
       </h2>
       <div className={`assumptions-body${open ? ' is-open' : ''}`} id={id} inert={!open}>
@@ -70,7 +72,7 @@ export function AssumptionsPanel() {
                 <h3 className="assumptions-group">{g.title}</h3>
                 <ul>
                   {g.items.map((t) => (
-                    <li key={t}>{t}</li>
+                    <li key={t}>{u.text(t)}</li>
                   ))}
                 </ul>
               </div>

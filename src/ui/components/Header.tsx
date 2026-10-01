@@ -1,41 +1,116 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Icon } from './Icon';
 import { useStore } from '../store';
 import type { Step } from '../session';
+import { IMPERIAL, METRIC, QUANTITIES, UNIT_OPTIONS, systemOf, type Quantity } from '../units';
 
 export const OPEN_ASSUMPTIONS_EVENT = 'cgd-open-assumptions';
 
-const STEPS: { step: Step; short: string; long: string }[] = [
-  { step: 1, short: 'Arm', long: 'Arm & Loads' },
-  { step: 2, short: 'Gearbox', long: 'Gearbox' },
-  { step: 3, short: 'Advisor', long: 'Design Advisor' },
-  { step: 4, short: 'Joints', long: 'All Joints' },
+const TABS: { step: Step; num: string; short: string; long: string }[] = [
+  { step: 1, num: '01', short: 'Arm', long: 'Arm & Loads' },
+  { step: 2, num: '02', short: 'Gearbox', long: 'Gearbox' },
+  { step: 3, num: '03', short: 'Advisor', long: 'Design Advisor' },
+  { step: 4, num: '04', short: 'Joints', long: 'All Joints' },
 ];
 
-function logoPath(): string {
-  // a 9-lobed cycloidal rosette, radius ~9 in a 24 box
-  const pts: string[] = [];
-  const n = 240;
-  for (let i = 0; i < n; i++) {
-    const t = (i / n) * Math.PI * 2;
-    const r = 8.6 + 1.5 * Math.cos(9 * t);
-    pts.push(`${(12 + r * Math.cos(t)).toFixed(2)} ${(12 + r * Math.sin(t)).toFixed(2)}`);
-  }
-  return `M${pts.join('L')}Z`;
-}
+const QUANTITY_LABEL: Record<Quantity, string> = { length: 'Length', mass: 'Mass', force: 'Force', torque: 'Torque', stress: 'Stress' };
 
-function Brand() {
-  const d = useMemo(logoPath, []);
+// ---------------------------------------------------------------------------
+// Units: a mm | in switch plus a popover with one choice per quantity
+// ---------------------------------------------------------------------------
+
+function UnitsControl() {
+  const { state, dispatch } = useStore();
+  const sys = systemOf(state.units);
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const popId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const set = (units: typeof METRIC) => dispatch({ type: 'units', units });
+  const onSwitchKey = (e: KeyboardEvent) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      set(sys === 'imperial' ? METRIC : IMPERIAL);
+    }
+  };
+
   return (
-    <div className="brand">
-      <svg className="brand-logo" width="28" height="28" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d={d} fill="var(--accent-soft)" stroke="var(--accent)" strokeWidth="1.3" strokeLinejoin="round" />
-        <circle cx="12" cy="12" r="2.6" fill="var(--accent)" />
-      </svg>
-      <span className="brand-name">Cycloidal Gearbox Designer</span>
+    <div className="units" ref={wrap}>
+      <div className="unitswitch" role="radiogroup" aria-label="Units" onKeyDown={onSwitchKey}>
+        <button type="button" role="radio" aria-checked={sys === 'metric'} tabIndex={sys === 'imperial' ? -1 : 0}
+          className={`unitswitch-btn${sys === 'metric' ? ' is-on' : ''}`} title="Metric: mm, g, N, N·m, MPa" onClick={() => set(METRIC)}>
+          mm
+        </button>
+        <button type="button" role="radio" aria-checked={sys === 'imperial'} tabIndex={sys === 'imperial' ? 0 : -1}
+          className={`unitswitch-btn${sys === 'imperial' ? ' is-on' : ''}`} title="Imperial: in, oz, lbf, lbf·in, ksi" onClick={() => set(IMPERIAL)}>
+          in
+        </button>
+      </div>
+      <button
+        ref={trigger}
+        type="button"
+        className="tb-link units-trigger"
+        aria-expanded={open}
+        aria-controls={open ? popId : undefined}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="units-trigger-text">Units{sys === 'custom' ? ' (custom)' : ''}</span>
+        <Icon name="chevron" size={12} />
+      </button>
+      {open && (
+        <div id={popId} className="popover units-pop" role="dialog" aria-label="Choose units">
+          <p className="units-pop-note">Everything is stored in SI. Changing units only changes how numbers are shown and typed.</p>
+          <div className="units-pop-grid">
+            {QUANTITIES.map((q) => (
+              <label key={q} className="units-pop-row">
+                <span>{QUANTITY_LABEL[q]}</span>
+                <span className="sf-box">
+                  <select
+                    className="sf-select"
+                    value={state.units[q]}
+                    onChange={(e) => set({ ...state.units, [q]: e.target.value } as typeof METRIC)}
+                  >
+                    {UNIT_OPTIONS[q].map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <Icon name="chevron" size={14} className="sf-chevron" />
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="units-pop-actions">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => set(METRIC)}>All metric</button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => set(IMPERIAL)}>All imperial</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Session menu
+// ---------------------------------------------------------------------------
 
 function MenuButton() {
   const { exportJson, importJson, resetAll, notify } = useStore();
@@ -107,19 +182,23 @@ function MenuButton() {
         <Icon name="more" size={20} />
       </button>
       {open && (
-        <div id={menuId} className="menu" role="menu" aria-label="Session" onKeyDown={onMenuKey}>
+        <div id={menuId} className="popover menu" role="menu" aria-label="Session" onKeyDown={onMenuKey}>
           <button ref={(el) => { items.current[0] = el; }} role="menuitem" type="button" className="menu-item"
             onClick={() => { setOpen(false); exportJson(); }}>
-            <Icon name="download" size={16} /> Export JSON
+            <Icon name="download" size={15} /> Export JSON
           </button>
           <button ref={(el) => { items.current[1] = el; }} role="menuitem" type="button" className="menu-item"
             onClick={() => { setOpen(false); file.current?.click(); }}>
-            <Icon name="upload" size={16} /> Import JSON
+            <Icon name="upload" size={15} /> Import JSON
+          </button>
+          <button ref={(el) => { items.current[2] = el; }} role="menuitem" type="button" className="menu-item"
+            onClick={() => { setOpen(false); window.dispatchEvent(new Event(OPEN_ASSUMPTIONS_EVENT)); }}>
+            <span className="menu-spacer" /> Assumptions and limits
           </button>
           <div className="menu-sep" role="separator" />
-          <button ref={(el) => { items.current[2] = el; }} role="menuitem" type="button" className="menu-item is-danger"
+          <button ref={(el) => { items.current[3] = el; }} role="menuitem" type="button" className="menu-item is-danger"
             onClick={() => { setOpen(false); setConfirm(true); }}>
-            <Icon name="reset" size={16} /> Reset to defaults
+            <Icon name="reset" size={15} /> Reset to defaults
           </button>
         </div>
       )}
@@ -157,52 +236,56 @@ function MenuButton() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Title block + tabs
+// ---------------------------------------------------------------------------
+
 export function Header() {
   const { state, dispatch, setStep, resolvedTheme } = useStore();
   const dark = resolvedTheme === 'dark';
   return (
     <header className="app-header">
-      <div className="app-header-inner">
-        <Brand />
-        <nav className="steps" aria-label="Design steps">
-          {STEPS.map((s) => (
-            <button
-              key={s.step}
-              type="button"
-              className={`step${state.step === s.step ? ' is-current' : ''}`}
-              aria-current={state.step === s.step ? 'step' : undefined}
-              onClick={() => setStep(s.step)}
-            >
-              <span className="step-num" aria-hidden="true">{s.step}</span>
-              <span className="step-label">
-                <span className="step-short">{s.short}</span>
-                <span className="step-long">{s.long}</span>
-              </span>
+      <div className="titleblock">
+        <div className="titleblock-inner">
+          <div className="tb-left">
+            <span className="tb-title">Cycloidal Gearbox Simulator</span>
+            <span className="tb-sub">Pin-type cycloidal reducers for a 5-DOF arm</span>
+          </div>
+          <div className="tb-right">
+            <UnitsControl />
+            <button type="button" className="tb-link tb-assumptions" onClick={() => window.dispatchEvent(new Event(OPEN_ASSUMPTIONS_EVENT))}>
+              Assumptions
             </button>
-          ))}
-        </nav>
-        <div className="header-tools">
-          <button
-            type="button"
-            className="icon-btn"
-            title="Assumptions and limitations"
-            aria-label="Open assumptions and limitations"
-            onClick={() => window.dispatchEvent(new Event(OPEN_ASSUMPTIONS_EVENT))}
-          >
-            <Icon name="book" size={19} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
-            title={dark ? 'Switch to light theme' : 'Switch to dark theme'}
-            onClick={() => dispatch({ type: 'theme', theme: dark ? 'light' : 'dark' })}
-          >
-            <Icon name={dark ? 'sun' : 'moon'} size={19} />
-          </button>
-          <MenuButton />
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+              title={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+              onClick={() => dispatch({ type: 'theme', theme: dark ? 'light' : 'dark' })}
+            >
+              <Icon name={dark ? 'sun' : 'moon'} size={18} />
+            </button>
+            <MenuButton />
+          </div>
         </div>
       </div>
+      <nav className="tabs" aria-label="Design steps">
+        <div className="tabs-inner">
+          {TABS.map((t) => (
+            <button
+              key={t.step}
+              type="button"
+              className={`tab${state.step === t.step ? ' is-current' : ''}`}
+              aria-current={state.step === t.step ? 'step' : undefined}
+              onClick={() => setStep(t.step)}
+            >
+              <span className="tab-num" aria-hidden="true">{t.num}</span>
+              <span className="tab-short">{t.short}</span>
+              <span className="tab-long">{t.long}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
     </header>
   );
 }

@@ -1,14 +1,15 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { HelpEntry } from '../help';
-import { InfoTip } from './InfoTip';
+import { useU } from '../store';
+import { inputText, niceStep, type Quantity } from '../units';
+import { FieldRow } from './primitives';
 
-function show(v: number | null): string {
-  if (v == null || !Number.isFinite(v)) return '';
+function showNum(v: number): string {
   return String(parseFloat(v.toPrecision(12)));
 }
 
-function parse(text: string): number | null | undefined {
-  // null = empty, undefined = not a number
+/** Text typed into a number box. null = empty, undefined = not a number. Exported for tests. */
+export function parseNumberText(text: string): number | null | undefined {
   const t = text.trim().replace(',', '.');
   if (t === '') return null;
   if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t)) return undefined;
@@ -23,98 +24,113 @@ function decimalsOf(step: number): number {
 }
 
 export interface NumberFieldProps {
-  label: ReactNode;
-  /** Plain-text label for aria, e.g. when `label` is JSX */
-  labelText?: string;
+  /** Plain-language name */
+  label: string;
+  /** Short symbol shown in mono next to the name, e.g. "D" */
+  symbol?: string;
+  /** Stored value, always SI (mm, g, N, N*m, MPa) when `quantity` is set */
   value: number | null;
+  /** Receives the SI value converted from exactly what was typed */
   onChange: (v: number | null) => void;
+  /** Converted quantity: the box shows and accepts the chosen display unit */
+  quantity?: Quantity;
+  /** Fixed unit suffix for values that are never converted (rpm, h, rad/s², ...) */
   unit?: string;
   help?: HelpEntry;
-  /** Value to compare with for the "modified from default" dot (null = default is empty) */
+  /** Default (SI) for the "modified" marker; pass undefined to hide it */
   defaultValue?: number | null;
-  /** Shows the dot only when this is provided; clicking it resets to the default. */
   error?: string | null;
   warning?: string | null;
+  /** Arrow-key step, in SI units of the quantity */
   step?: number;
   /** Empty field means null (automatic). Otherwise an empty field is an error and is not committed. */
   nullable?: boolean;
   placeholder?: string;
   disabled?: boolean;
-  /** Small note under the field */
   note?: ReactNode;
   className?: string;
 }
 
 /**
- * Labelled numeric input with unit suffix, "?" tooltip, inline validation and a "modified" dot.
- * Keeps a text draft so partial input like "1." or "-" never fights the user; commits live while the
- * text is a valid number.
+ * Datasheet row: name and symbol on the left, number box with unit on the right.
+ * Keeps a text draft so partial input like "1." never fights the user, commits live while the text is a
+ * valid number, and converts display units <-> SI only at this boundary.
  */
 export function NumberField(p: NumberFieldProps) {
   const id = useId();
-  const errId = `${id}-msg`;
+  const msgId = `${id}-msg`;
+  const u = useU();
+  const q = p.quantity;
   const { value, onChange, nullable } = p;
-  const [draft, setDraft] = useState(show(value));
+  const toText = (v: number | null) => (v == null || !Number.isFinite(v) ? '' : q ? inputText(q, v, u.prefs) : showNum(v));
+  const toSI = (n: number) => (q ? u.fromDisplay(q, n) : n);
+
+  const [draft, setDraft] = useState(toText(value));
   const [localErr, setLocalErr] = useState<string | null>(null);
   const focused = useRef(false);
 
   useEffect(() => {
     if (!focused.current) {
-      setDraft(show(value));
+      setDraft(toText(value));
       return;
     }
-    const parsed = parse(draft);
-    if (parsed !== undefined && parsed !== value) setDraft(show(value));
+    const parsed = parseNumberText(draft);
+    if (parsed !== undefined && (parsed === null ? value !== null : toSI(parsed) !== value)) setDraft(toText(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  }, [value, u]);
 
   const commit = (text: string) => {
     setDraft(text);
-    const parsed = parse(text);
-    if (parsed === undefined) {
-      setLocalErr('Enter a number');
-      return;
-    }
-    if (parsed === null && !nullable) {
+    const parsed = parseNumberText(text);
+    if (parsed === undefined || (parsed === null && !nullable)) {
       setLocalErr('Enter a number');
       return;
     }
     setLocalErr(null);
-    if (parsed !== value) onChange(parsed);
+    const si = parsed === null ? null : toSI(parsed);
+    if (si !== value) onChange(si);
   };
 
-  const step = p.step ?? 1;
+  const step = q ? niceStep(q, p.step ?? 1, u.prefs) : p.step ?? 1;
   const nudge = (dir: 1 | -1, mult: number) => {
-    const cur = parse(draft);
-    const base = typeof cur === 'number' ? cur : (value ?? 0);
-    const dp = Math.max(decimalsOf(step), 0) + (mult < 1 ? 1 : 0);
+    const cur = parseNumberText(draft);
+    const base = typeof cur === 'number' ? cur : value != null ? (q ? u.toDisplay(q, value) : value) : 0;
+    const dp = decimalsOf(step) + (mult < 1 ? 1 : 0);
     const next = Number((base + dir * step * mult).toFixed(Math.min(dp, 10)));
-    commit(show(next));
+    commit(showNum(next));
   };
 
-  const modified =
-    p.defaultValue !== undefined &&
-    !(p.defaultValue === value || (p.defaultValue != null && value != null && Math.abs(p.defaultValue - value) < 1e-9));
+  const same = (a: number | null | undefined, b: number | null) =>
+    a === b || (a != null && b != null && Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a)));
+  const modified = p.defaultValue !== undefined && !same(p.defaultValue, value);
 
-  const err = localErr ?? p.error ?? null;
-  const warn = !err ? p.warning ?? null : null;
-  const labelText = p.labelText ?? (typeof p.label === 'string' ? p.label : 'field');
+  const err = localErr ?? (p.error ? u.text(p.error) : null);
+  const warn = !err && p.warning ? u.text(p.warning) : null;
+  const suffix = q ? u.sym(q) : p.unit;
+  const defText = p.defaultValue == null ? 'empty' : `${toText(p.defaultValue)}${suffix ? ' ' + suffix : ''}`;
+
+  const dot = modified ? (
+    <button
+      type="button"
+      className="nf-dot"
+      title={`Changed from default (${defText}). Click to restore.`}
+      aria-label={`${p.label} differs from its default. Restore default.`}
+      onClick={() => { setLocalErr(null); onChange(p.defaultValue ?? null); }}
+    />
+  ) : null;
 
   return (
-    <div className={`nf${err ? ' has-error' : warn ? ' has-warning' : ''}${p.disabled ? ' is-disabled' : ''}${p.className ? ` ${p.className}` : ''}`}>
-      <div className="nf-head">
-        <label htmlFor={id} className="nf-label">{p.label}</label>
-        {modified && (
-          <button
-            type="button"
-            className="nf-dot"
-            title={`Modified from default (${p.defaultValue == null ? 'empty' : show(p.defaultValue)}${p.unit ? ' ' + p.unit : ''}). Click to reset.`}
-            aria-label={`${labelText} differs from its default. Reset to default.`}
-            onClick={() => { setLocalErr(null); onChange(p.defaultValue ?? null); }}
-          />
-        )}
-        {p.help && <InfoTip help={p.help} label={labelText} />}
-      </div>
+    <FieldRow
+      label={p.label}
+      symbol={p.symbol}
+      help={p.help}
+      htmlFor={id}
+      modifiedDot={dot}
+      message={err ?? warn ?? p.note}
+      messageKind={err ? 'error' : warn ? 'warning' : 'note'}
+      messageId={msgId}
+      className={`nf${p.disabled ? ' is-disabled' : ''}${p.className ? ` ${p.className}` : ''}`}
+    >
       <div className="nf-box">
         <input
           id={id}
@@ -127,9 +143,9 @@ export function NumberField(p: NumberFieldProps) {
           disabled={p.disabled}
           placeholder={p.placeholder}
           aria-invalid={err ? true : undefined}
-          aria-describedby={err || warn || p.note ? errId : undefined}
+          aria-describedby={err || warn || p.note ? msgId : undefined}
           onFocus={() => { focused.current = true; }}
-          onBlur={() => { focused.current = false; setLocalErr(null); setDraft(show(value)); }}
+          onBlur={() => { focused.current = false; setLocalErr(null); setDraft(toText(value)); }}
           onChange={(e) => commit(e.target.value)}
           onKeyDown={(e) => {
             if (p.disabled) return;
@@ -139,13 +155,8 @@ export function NumberField(p: NumberFieldProps) {
             }
           }}
         />
-        {p.unit && <span className="nf-unit" aria-hidden="true">{p.unit}</span>}
+        {suffix && <span className="nf-unit" aria-hidden="true">{suffix}</span>}
       </div>
-      {(err || warn || p.note) && (
-        <div id={errId} className={`nf-msg${err ? ' is-error' : warn ? ' is-warning' : ''}`} role={err ? 'alert' : undefined}>
-          {err ?? warn ?? p.note}
-        </div>
-      )}
-    </div>
+    </FieldRow>
   );
 }

@@ -12,6 +12,7 @@ function blank(): ArmInputs {
     barMass_g: [0, 0, 0, 0, 0],
     barLength_mm: [100, 200, 150, 100, 50],
     payload_g: 0,
+    linkOffset_mm: [15, 15],
     alpha: [0, 0, 0, 0, 0],
     SF: 1.5,
     TdesFloor: 1.0,
@@ -34,12 +35,40 @@ describe('arm model: static torques, hand computed', () => {
     near(r.joints[2].TreqModel, G * 0.3, 1e-9, 'J3');
     near(r.joints[3].TreqModel, G * 0.05, 1e-9, 'J4');
     near(r.joints[4].TreqModel, G * 0.05, 1e-9, 'J5');
-    // output-bearing loads: weight 9.81 N everywhere, moment = gravity moment
+    // output-bearing loads: weight 9.81 N outboard of every joint
     for (let j = 0; j < 5; j++) near(r.joints[j].outboardWeight_N, G, 1e-9, `W J${j + 1}`);
-    near(r.joints[1].overturningMoment_Nm, G * 0.5, 1e-9, 'M J2');
-    near(r.joints[2].overturningMoment_Nm, G * 0.3, 1e-9, 'M J3');
-    near(r.joints[3].overturningMoment_Nm, G * 0.05, 1e-9, 'M J4 (roll gravity torque)');
-    near(r.joints[0].overturningMoment_Nm, G * 0.5, 1e-9, 'M J1 (arm moment on the yaw bearing)');
+    // J1: axial thrust = weight, no radial load, overturning moment = weight x horizontal reach (0.5 m)
+    near(r.joints[0].bearingAxial_N, G, 1e-9, 'J1 axial');
+    near(r.joints[0].bearingRadial_N, 0, 1e-12, 'J1 radial');
+    near(r.joints[0].bearingTiltMoment_Nm, G * 0.5, 1e-9, 'J1 overturning moment');
+    // J2 / J3: radial = weight, tilt = radial x 15 mm link offset (NOT the gravity torque)
+    near(r.joints[1].bearingRadial_N, G, 1e-9, 'J2 radial');
+    near(r.joints[1].bearingTiltMoment_Nm, G * 0.015, 1e-9, 'J2 tilt');
+    near(r.joints[2].bearingRadial_N, G, 1e-9, 'J3 radial');
+    near(r.joints[2].bearingTiltMoment_Nm, G * 0.015, 1e-9, 'J3 tilt');
+    // J4: radial = weight; payload at 50 mm along the roll axis when the tool is straight (bent: still 0 for the tool)
+    near(r.joints[3].bearingRadial_N, G, 1e-9, 'J4 radial');
+    near(r.joints[3].bearingTiltMoment_Nm, G * (0.1 + 0.05), 1e-9, 'J4 tilt (bar C length 100 mm + tool 50 mm)');
+    // J5 is a servo
+    near(r.joints[4].bearingRadial_N + r.joints[4].bearingAxial_N + r.joints[4].bearingTiltMoment_Nm, 0, 1e-12, 'J5');
+  });
+
+  it('bearing tilt moments: link offset scales J2/J3 only; J4 uses the straight tool (worse than bent)', () => {
+    const a = blank();
+    a.payload_g = 1000;
+    a.linkOffset_mm = [30, 0];
+    const r = computeArm(a);
+    near(r.joints[1].bearingTiltMoment_Nm, G * 0.03, 1e-9, 'J2 30 mm');
+    near(r.joints[2].bearingTiltMoment_Nm, 0, 1e-12, 'J3 0 mm');
+    near(r.joints[0].bearingTiltMoment_Nm, G * 0.5, 1e-9, 'J1 independent of the offset');
+    // every element on the roll axis: bar C 200 g at 50 mm, J5 300 g at 100 mm, bar D 400 g at 125 mm, payload 500 g at 150 mm
+    const b = blank();
+    b.barMass_g = [0, 0, 0, 200, 400];
+    b.jointMass_g = [0, 0, 0, 0, 300];
+    b.payload_g = 500;
+    const rb = computeArm(b);
+    near(rb.joints[3].bearingTiltMoment_Nm, G * (0.2 * 0.05 + 0.3 * 0.1 + 0.4 * 0.125 + 0.5 * 0.15), 1e-9, 'J4 straight tool');
+    near(rb.joints[3].TstaticModel, G * (0.4 * 0.025 + 0.5 * 0.05), 1e-9, 'gravity torque (bent tool) is a separate number');
   });
 
   it('uniform bar A (600 g, 200 mm): COM at the midpoint, loads J2 only', () => {

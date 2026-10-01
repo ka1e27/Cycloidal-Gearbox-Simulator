@@ -4,7 +4,7 @@ export * from './catalog';
 export * from './presets';
 export {
   checkGearbox, createGearboxModel, validateGearboxInputs, deriveGeometry, discShareOf,
-  contactLimits, statusOf, DEFAULT_NPF, DEFAULT_NTH, GREEN_LIMIT, UTIL_CAP,
+  contactLimits, statusOf, GEARBOX_MAX, DEFAULT_NPF, DEFAULT_NTH, GREEN_LIMIT, UTIL_CAP,
 } from './gearbox';
 export * from './arm';
 export * from './solver';

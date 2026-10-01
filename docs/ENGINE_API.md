@@ -38,7 +38,11 @@ interface GearboxInputs {
 * `defaultGearboxInputs()` – SPEC defaults (D 85, e 1.3, 6061-T6, M3 bolt + 5 mm bushing, M3 standoff, 61800).
 * `PRESETS.J1 | J2 | J3 | J4` (`JointId`) and `presetInputs(id)`, `JOINT_PRESET_SPECS` (labels, notes), `JOINT_IDS`.
 * `normalizeGearboxInputs(unknown)` – fills missing/garbage fields from the defaults. Use for localStorage/JSON import.
-* `validateGearboxInputs(inputs) -> { errors, warnings }` – for inline field validation.
+* `validateGearboxInputs(inputs) -> { errors, warnings }` – for inline field validation. Every number has an upper
+  bound (`GEARBOX_MAX`: D 10000 mm, e/L/rr/rw/t_min/gap/wall/pin diameters 1000 mm, Db 10000 mm, torques 1e6 N·m, Kc 100,
+  rpm 1e6, life 1e9 h, bearing ratings 1e9 N, E 1e7 MPa, strengths 1e6 MPa, density 100 g/cm³) with a message such as
+  "D must be at most 10000 mm", so no Infinity or NaN can reach a result or a message. A result whose loads are
+  not finite is returned as `valid: false`.
 
 **Pin construction semantics.** `outerPin.material` is the *bushing* (E, ν for E\*) when
 `boltBushing` (bending: `shankDia`, limit 0.4·`boltYield`); for `solid` it is the pin material
@@ -121,24 +125,38 @@ translated), `outerPins` (colour by `force / maxForce`), `innerHoles` (diameter 
 ```ts
 const arm = defaultArmInputs();          // placeholders; masses g, lengths mm, alpha rad/s², SF 1.5, floor 1.0 N·m
 arm.barMass_g[1] = 140;                  // arrays are [J1..J5] or [riser, barA, barB, barC, barD]
+arm.linkOffset_mm[0] = 20;               // [J2, J3] offset of the link from the output bearing along the axis, mm
 const a = computeArm(arm);               // ArmResult
-a.joints[1]  // ArmJointLoad: TstaticModel, TdynModel, TreqModel, inertia, Treq, Tdes (after overrides),
-             // treqOverridden, tdesOverridden, outboardWeight_N, overturningMoment_Nm
+a.joints[1]  // ArmJointLoad: TstaticModel (gravity torque about the axis), TdynModel, TreqModel, inertia, Treq, Tdes
+             // (after overrides), treqOverridden, tdesOverridden, outboardWeight_N,
+             // bearingRadial_N, bearingAxial_N, bearingTiltMoment_Nm
 a.totalMass_g, a.reach_mm, a.valid/errors/warnings
 ```
 
-`ArmInputs`: `jointMass_g[5]`, `barMass_g[5]`, `barLength_mm[5]`, `payload_g`, `alpha[5]`, `SF`, `TdesFloor`,
-`override[5] = {Treq|null, Tdes|null}`. `joints[0..4]` = J1..J5; J5 is the servo (`Treq` = torque to deliver,
-`Tdes = SF·Treq`, no floor, no gearbox check). `validateArmInputs(arm)` for inline validation.
+`ArmInputs`: `jointMass_g[5]`, `barMass_g[5]`, `barLength_mm[5]`, `payload_g`, `linkOffset_mm[2]` (J2, J3, default 15),
+`alpha[5]`, `SF`, `TdesFloor`, `override[5] = {Treq|null, Tdes|null}`. `joints[0..4]` = J1..J5; J5 is the servo (`Treq` =
+torque to deliver, `Tdes = SF·Treq`, no floor, no gearbox check). `validateArmInputs(arm)` for inline validation.
+**Ranges** (`ARM_LIMITS`): masses 0 to 1e6 g, lengths 0 to 1e5 mm, link offset 0 to 1e4 mm, α 0 to 1e4 rad/s², SF > 0 and at most 10
+(below 1 is a warning), torques 0 to 1e6 N·m. Anything else gives `valid: false` and a message ("Joint mass 3 must be at most 1000000 g").
+Every output is also checked for finiteness; `normalizeArmInputs` fills `linkOffset_mm` for sessions saved before it existed.
 
 Model (arm straight out): J2/J3 static = g·Σm·x outboard; J4 static = g(m_D·L_D/2 + m_payload·L_D); J1 static = 0,
 yaw T = α·I with the same inertia as J2. `outboardWeight_N` = weight outboard of the joint (excludes the joint's
-own lumped mass). `overturningMoment_Nm` = the gravity moment: J2/J3 static torque, J1 the arm moment Σm·x·g on
-the yaw bearing, J4 the roll gravity torque (= its static torque), J5 0.
+own lumped mass). The gravity torque about the axis goes through the gearbox; it is **not** the bearing's tilting moment.
+
+**Output-bearing loads** (information, not checks), per joint:
+
+| Joint | `bearingRadial_N` | `bearingAxial_N` | `bearingTiltMoment_Nm` |
+|---|---|---|---|
+| J1 (vertical axis) | 0 | outboard weight (thrust) | overturning moment g·Σm·(horizontal reach from the J1 axis) |
+| J2, J3 (horizontal axis) | outboard weight | 0 | radial load × `linkOffset_mm` (J2: [0], J3: [1]) |
+| J4 (roll, axis along the forearm) | outboard weight | 0 | g·Σm·(axial distance along the roll axis from the J4 bearing): bar C at L_C/2, J5 at L_C, bar D and payload with the tool **straight out** (L_C + L_D/2, L_C + L_D), the worse pose; a tool bent 90° gives bar D and the payload only L_C |
+| J5 (servo) | 0 | 0 | 0 |
 
 **Defaults (placeholders until CAD):** joint masses [450, 700, 577, 180, 120] g, bar masses [80, 110, 90, 40, 70] g,
-bar lengths [100, 230, 200, 80, 110] mm, payload 250 g, α 3 rad/s². Gives T_req J1 0.70, **J2 5.87**, **J3 2.25**,
-J4 0.32, J5 0.32 N·m. (J1's SPEC estimate 1.3 N·m is not reachable with a consistent arm: it equals J2's dynamic term.)
+bar lengths [100, 230, 200, 80, 110] mm, payload 250 g, α 3 rad/s², link offsets 15 mm. Gives T_req J1 0.70, **J2 5.87**, **J3 2.25**,
+J4 0.32, J5 0.32 N·m. (J1's SPEC estimate 1.3 N·m is not reachable with a consistent arm: it equals J2's dynamic term.) Bearing loads of
+the default arm: see `src/calc/__tests__/arm.test.ts`.
 
 Feed the gearbox: `{ ...gearboxInputs, Treq: a.joints[i].Treq, Tdes: a.joints[i].Tdes }` (see the summary helper).
 
@@ -203,7 +221,7 @@ summarizeAllJoints(arm: ArmInputs, gearboxes: Record<'J1'|'J2'|'J3'|'J4', Gearbo
 ```
 
 Returns `{ arm: ArmResult, rows: JointSummaryRow[4], servo: ServoRow, counts }`. Each row: `joint`, `loadsFromArm`, `Treq`, `Tdes`,
-`outboardWeight_N`, `overturningMoment_Nm`, `inputs` (as checked, torques applied), `result` (full `GearboxResult`), `verdict`,
+`outboardWeight_N`, `bearingRadial_N`, `bearingAxial_N`, `bearingTiltMoment_Nm`, `inputs` (as checked, torques applied), `result` (full `GearboxResult`), `verdict`,
 `governing` (label), `maxUtilization`, `discMass_g`, `geometry {Zp, ratio, D, e, K1, L, discs}`. If the arm is invalid the typed
 torques are used. `servo` = `{Treq, Tdes, Tstatic, Tdyn, outboardWeight_N}` for J5. The "Design" button just opens the advisor
 with `rows[i].inputs`.
@@ -234,6 +252,7 @@ client; the UI never creates it). Protocol types are in `messages.ts`.
 * `checkGearbox` at full resolution takes ~3–6 ms, so run it synchronously on every input change. Only the solver/advisor need the worker.
 * Sweep and drawing data come from the same model object: memoize `createGearboxModel(inputs)` on the inputs.
 * Reference conformance: the kernel (`kernel.ts`) is a line-by-line port of `unit_case()` in `reference/cycloidal_disc_check.py`
-  (same sampling, endpoint exclusion, profile index, `invR > 0` filter, Fb). Two deliberate differences: contact limits are the SPEC formulas
-  (1.67·Sy = 460.9, 0.577·σf/0.25 = 240.0) instead of the script's rounded 460/240, and an undercut (path curvature > 1/rr) also sets the cusp flag.
+  (same sampling, endpoint exclusion, profile index including the rounding of theta/Zc, `invR > 0` filter, Fb). Deliberate differences: contact limits are the SPEC formulas
+  (1.67·Sy = 460.9, 0.577·σf/0.25 = 240.0, weaker of disc and pin part) instead of the script's rounded 460/240, and an undercut (path curvature > 1/rr) also sets the cusp flag.
+  `npm run parity` checks all of this against the Python reference (see `scripts/parity/README.md`).
 * Polymer warning card: show when `result.polymerWarning`, text from `POLYMER_WARNING_LINES`. It is not a failed check.

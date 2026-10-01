@@ -15,6 +15,7 @@ import {
   type GearboxInputs,
   type JointId,
 } from '../calc';
+import { METRIC, normalizeUnits, type UnitPrefs } from './units';
 
 export type Step = 1 | 2 | 3 | 4;
 export type Slot = JointId | 'custom';
@@ -37,6 +38,8 @@ export interface Session {
   version: 1;
   step: Step;
   theme: ThemePref;
+  /** Display units only. Everything stored in this session stays SI (mm, g, N, N*m, MPa). */
+  units: UnitPrefs;
   arm: ArmInputs;
   /** Stored inputs for J1..J4 and the Custom slot. Torques here are the manual ones. */
   gearboxes: Record<Slot, GearboxInputs>;
@@ -64,6 +67,7 @@ export function defaultSession(): Session {
     version: 1,
     step: 1,
     theme: 'system',
+    units: { ...METRIC },
     arm: defaultArmInputs(),
     gearboxes,
     useArmLoads: { J1: true, J2: true, J3: true, J4: true },
@@ -84,11 +88,21 @@ export function normalizeSession(raw: unknown, base: Session = defaultSession())
   try {
     if (raw.step === 1 || raw.step === 2 || raw.step === 3 || raw.step === 4) out.step = raw.step;
     if (raw.theme === 'system' || raw.theme === 'light' || raw.theme === 'dark') out.theme = raw.theme;
+    if ('units' in raw) out.units = normalizeUnits(raw.units);
     if ('arm' in raw) out.arm = normalizeArmInputs(raw.arm);
     if (isObj(raw.gearboxes)) {
       for (const s of SLOTS) {
         const g = raw.gearboxes[s];
-        if (g !== undefined) out.gearboxes[s] = normalizeGearboxInputs(g);
+        if (g !== undefined) {
+          const n = normalizeGearboxInputs(g);
+          // a missing or garbled geometry/load field falls back to this joint's preset, not the generic default
+          const p = presetFor(s);
+          const have = isObj(g) ? g : {};
+          for (const k of ['D', 'e', 'Treq', 'Tdes', 'discs'] as const) {
+            if (!(typeof have[k] === 'number' && Number.isFinite(have[k]))) n[k] = p[k];
+          }
+          out.gearboxes[s] = n;
+        }
       }
     }
     if (isObj(raw.useArmLoads)) {
@@ -156,7 +170,7 @@ export function clearSavedSession(): void {
 export function exportSession(s: Session): string {
   const { arm, gearboxes, useArmLoads, selected, advisor } = s;
   return JSON.stringify(
-    { app: APP_ID, version: 1, exportedAt: new Date().toISOString(), arm, gearboxes, useArmLoads, selected, advisor },
+    { app: APP_ID, version: 1, exportedAt: new Date().toISOString(), note: 'All values in this file are SI: lengths in mm, masses in g, forces in N, torques in N*m, stresses in MPa, whatever display units were selected.', arm, gearboxes, useArmLoads, selected, advisor },
     null,
     2,
   );
@@ -182,9 +196,9 @@ export function importSession(text: string, current: Session): ImportOutcome {
     return { ok: false, error: `That file was saved by a newer version of the app (format ${raw.version}).` };
   }
   // Keep the importing user's own UI state (step, theme, hints); take the engineering data from the file.
-  const { step, theme, hintsSeen } = current;
+  const { step, theme, hintsSeen, units } = current;
   const base = defaultSession();
-  const merged = normalizeSession({ ...raw, step, theme, hintsSeen }, { ...base, step, theme, hintsSeen });
+  const merged = normalizeSession({ ...raw, step, theme, hintsSeen, units }, { ...base, step, theme, hintsSeen, units });
   const issues: string[] = [];
   const armErr = validateArmInputs(merged.arm).errors;
   if (armErr.length) issues.push(`Arm: ${armErr[0]}`);

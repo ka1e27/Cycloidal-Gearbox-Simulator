@@ -38,6 +38,7 @@ import {
   type Step,
   type ThemePref,
 } from './session';
+import { makeU, type U, type UnitPrefs } from './units';
 
 // ---------------------------------------------------------------------------
 // Reducer
@@ -46,6 +47,7 @@ import {
 type Action =
   | { type: 'step'; step: Step }
   | { type: 'theme'; theme: ThemePref }
+  | { type: 'units'; units: UnitPrefs }
   | { type: 'select'; slot: Slot }
   | { type: 'arm'; fn: (a: ArmInputs) => ArmInputs }
   | { type: 'gearbox'; slot: Slot; fn: (g: GearboxInputs) => GearboxInputs }
@@ -59,6 +61,7 @@ function reducer(s: Session, a: Action): Session {
   switch (a.type) {
     case 'step': return s.step === a.step ? s : { ...s, step: a.step };
     case 'theme': return { ...s, theme: a.theme };
+    case 'units': return { ...s, units: a.units };
     case 'select': return { ...s, selected: a.slot };
     case 'arm': return { ...s, arm: a.fn(s.arm) };
     case 'gearbox': return { ...s, gearboxes: { ...s.gearboxes, [a.slot]: a.fn(s.gearboxes[a.slot]) } };
@@ -68,7 +71,7 @@ function reducer(s: Session, a: Action): Session {
     case 'replace': return a.session;
     case 'reset': {
       const d = defaultSession();
-      return { ...d, theme: s.theme, hintsSeen: s.hintsSeen, step: s.step };
+      return { ...d, theme: s.theme, units: s.units, hintsSeen: s.hintsSeen, step: s.step };
     }
     default: return s;
   }
@@ -108,6 +111,8 @@ export function advisorKey(inputs: GearboxInputs, opts: AdvisorUiOptions): strin
 interface StoreValue {
   state: Session;
   dispatch: (a: Action) => void;
+  /** Unit helpers bound to the chosen display units */
+  u: U;
   arm: ArmResult;
   /** Inputs actually checked for a slot (arm torques applied when the toggle is on). */
   effective: (slot: Slot) => GearboxInputs;
@@ -182,6 +187,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [state.theme]);
 
   const arm = useMemo(() => computeArmResult(state.arm), [state.arm]);
+  const u = useMemo(() => makeU(state.units), [state.units]);
 
   const effective = useCallback((slot: Slot) => effectiveInputs(state, slot, arm), [arm, state]);
   const fromArm = useCallback((slot: Slot) => loadsFromArm(state, slot, arm), [arm, state]);
@@ -274,10 +280,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [notify]);
 
   const value = useMemo<StoreValue>(() => ({
-    state, dispatch, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, storageOk,
+    state, dispatch, u, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, storageOk,
     resolvedTheme, advisorRun, runAdvisor, cancelAdvisor, toasts, notify, dismissToast, exportJson,
     importJson, resetAll,
-  }), [state, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, storageOk, resolvedTheme,
+  }), [state, u, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, storageOk, resolvedTheme,
     advisorRun, runAdvisor, cancelAdvisor, toasts, notify, dismissToast, exportJson, importJson, resetAll]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -292,4 +298,9 @@ export function useEffectiveInputs(slot: Slot): GearboxInputs {
   const flag = slot === 'custom' ? false : state.useArmLoads[slot];
   // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => effectiveInputs(state, slot, arm), [g, flag, arm, slot]);
+}
+
+/** Unit helpers for the current display units. */
+export function useU(): U {
+  return useStore().u;
 }

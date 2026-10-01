@@ -1,5 +1,7 @@
 // Number formatting for the UI. Non-finite numbers never reach the screen as NaN / Infinity.
 
+import type { Quantity, U } from './units';
+
 export const DASH = '—';
 
 const nf = new Map<number, Intl.NumberFormat>();
@@ -51,20 +53,25 @@ export function util(u: number | null | undefined): string {
   return fixed(u, 2);
 }
 
-/** Text for a check value, handling the Infinity cases of the engine. */
-export function checkValue(id: string, value: number, unit: string): string {
-  if (id === 'bearingLife') return hours(value);
-  if (id === 'cusp') {
-    if (!Number.isFinite(value)) return 'no convex lobe';
-    return `${num(value, 2)} mm`;
-  }
+const QTY_OF_UNIT: Record<string, Quantity> = { MPa: 'stress', mm: 'length', N: 'force' };
+
+function withUnit(value: number, unit: string, u?: U, dp?: number): string {
   if (!Number.isFinite(value)) return DASH;
-  return `${unit === 'N' || unit === 'MPa' ? num(value, 0) : num(value, 2)} ${unit}`;
+  const q = QTY_OF_UNIT[unit];
+  if (u && q) return u.fu(q, value, { dp: dp ?? (q === 'length' ? 2 : 0) });
+  return `${num(value, unit === 'N' || unit === 'MPa' ? 0 : 2)} ${unit}`;
 }
 
-export function checkLimit(id: string, limit: number, unit: string, kind: 'max' | 'min'): string {
+/** Text for a check value (display units when `u` is given), handling the Infinity cases of the engine. */
+export function checkValue(id: string, value: number, unit: string, u?: U): string {
+  if (id === 'bearingLife') return hours(value);
+  if (id === 'cusp' && !Number.isFinite(value)) return 'no convex lobe';
+  return withUnit(value, unit, u);
+}
+
+export function checkLimit(id: string, limit: number, unit: string, kind: 'max' | 'min', u?: U): string {
   const op = kind === 'max' ? '≤' : '≥';
-  const v = id === 'bearingLife' ? `${num(limit, 0)} h` : `${unit === 'N' || unit === 'MPa' ? num(limit, 0) : num(limit, 2)} ${unit}`;
+  const v = id === 'bearingLife' ? `${num(limit, 0)} h` : withUnit(limit, unit, u);
   return `${op} ${v}`;
 }
 

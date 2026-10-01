@@ -12,7 +12,7 @@ export const HELP: Record<string, HelpEntry> = {
   Zw: { what: 'Number of inner (output) pins that carry torque from the disc to the output. More pins share the load but need more room.', typical: '6. Usual range 4 to 10; integer of at least 3.' },
   D: { what: 'Diameter of the circle through the centres of the outer pins. It mostly sets the size of the gearbox.', typical: '60 to 85 mm for this arm (30 to 150 mm searched by the advisor).' },
   e: { what: 'Eccentricity: how far the eccentric shaft offsets the disc. Larger e lets the lobes carry more load but thins the profile.', typical: 'About 0.9 to 1.6 mm. K1 = e·Zp / Rp should land between 0.40 and 0.85.' },
-  L: { what: 'Disc thickness. It is also the contact length between disc and pins, so thicker discs lower the contact stress.', typical: '6.35 mm (1/4 in plate) is the default. Stock: 3.175, 4.76, 6.35, 9.525, 12.7 mm.' },
+  L: { what: 'Disc thickness. It is also the contact length between disc and pins, so thicker discs lower the contact stress.', typical: '6.35 mm (1/4 in plate) is the default. Plate stock runs from 3.175 to 12.7 mm (1/8 to 1/2 in).' },
   rr: { what: 'Radius of the outer pin (the bushing outside diameter / 2). The pin OD is 2 × rr.', typical: '2.5 mm (5 mm OD bushing on an M3 bolt).' },
   rw: { what: 'Radius of the inner (output) pin. The disc holes are 2·rw + 2·e wide.', typical: '2.5 mm (5 mm OD standoff).' },
   Db: { what: 'Diameter of the centre bore in the disc. It equals the outside diameter of the eccentric bearing.', typical: '19 mm for a 61800 bearing.' },
@@ -36,7 +36,7 @@ export const HELP: Record<string, HelpEntry> = {
   standoffYield: { what: 'Yield strength of the standoff. The bending limit is 0.5 × this value.', typical: '300 MPa (low-carbon steel, assumed).' },
 
   // Loads & factors
-  Treq: { what: 'Working output torque the joint has to deliver. It drives the life checks (contact fatigue and bearing life).', typical: 'J2 about 5.9, J3 about 2.3 N·m with the default arm.' },
+  Treq: { what: 'Working output torque the joint has to deliver. It drives the life checks (contact fatigue and bearing life).', typical: 'J2 about 5.9 N·m and J3 about 2.3 N·m with the default arm.' },
   Tdes: { what: 'Design (peak) torque, about 1.5 × T_req. It drives the strength checks.', typical: 'SF × T_req, never below the T_des floor.' },
   Kc: { what: 'Load concentration factor for the strength case. Waterjet tolerances are larger than the elastic deflection, so only a few pins share the load.', typical: '2.0.' },
   KcLife: { what: 'Load concentration factor for the life case, after the parts have run in.', typical: '1.3.' },
@@ -51,6 +51,7 @@ export const HELP: Record<string, HelpEntry> = {
   barMass: { what: 'Mass of the link between two joints. It is treated as a uniform rod with its centre of mass at the midpoint.', typical: '40 to 120 g.' },
   barLength: { what: 'Centre-to-centre length of the link, along the arm.', typical: '80 to 230 mm.' },
   payload: { what: 'Mass carried at the tool tip.', typical: '250 g placeholder.' },
+  linkOffset: { what: 'How far the link’s load plane sits from this joint’s output bearing, measured along the joint axis. The radial load times this offset is the tilting moment on the bearing. Used for the two pitch joints (J2, J3) only.', typical: '15 mm placeholder; about half the bearing width plus the link thickness.' },
   alpha: { what: 'Maximum angular acceleration of the joint. It sets the dynamic torque term α · I.', typical: '3 rad/s².' },
   SF: { what: 'Service factor: T_des = max(SF × T_req, the T_des floor).', typical: '1.5.' },
   TdesFloor: { what: 'Smallest design torque you want a gearbox checked for, even when the model torque is tiny.', typical: '1.0 N·m.' },
@@ -66,10 +67,10 @@ export const HELP: Record<string, HelpEntry> = {
   altWindowMm: { what: 'How far above the smallest housing OD the advisor searches for the lightest and the most-margin alternatives.', typical: '15 mm.' },
 };
 
-/** Per-step first-visit hints. */
+/** One plain sentence under each page title. */
 export const STEP_HINTS: Record<number, string> = {
-  1: 'Enter the masses and lengths of your arm. The torques each gearbox must carry are computed live below.',
-  2: 'Pick a joint, then adjust the geometry and materials. The verdict and every check update as you type.',
-  3: 'Set a target utilization and press Run: the advisor searches for the smallest gearbox that passes every check.',
-  4: 'One row per gearbox joint. Press Design on a row to open the advisor for that joint.',
+  1: 'Enter the masses and lengths of your arm. The torque each joint must carry is worked out as you type.',
+  2: 'Pick a joint, then set its geometry and materials. The verdict and every check update as you type.',
+  3: 'Find the smallest gearbox that passes every check for the selected joint.',
+  4: 'Every gearbox joint checked side by side. Design opens the advisor for that joint.',
 };

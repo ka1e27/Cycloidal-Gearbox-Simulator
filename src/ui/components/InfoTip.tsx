@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { HelpEntry } from '../help';
+import { useU } from '../store';
 
 /**
  * "?" button with a popover. Opens on mouse hover, keyboard focus and click/tap (click pins it open).
@@ -8,6 +9,7 @@ import type { HelpEntry } from '../help';
  * never causes horizontal scroll, even at 380 px.
  */
 export function InfoTip({ help, label }: { help: HelpEntry; label: string }) {
+  const u = useU();
   const id = useId();
   const btn = useRef<HTMLButtonElement>(null);
   const pop = useRef<HTMLDivElement>(null);
@@ -80,7 +82,7 @@ export function InfoTip({ help, label }: { help: HelpEntry; label: string }) {
         onBlur={() => setKbFocus(false)}
         onClick={() => setPinned((v) => !v)}
       >
-        ?
+        i
       </button>
       {open &&
         createPortal(
@@ -93,10 +95,10 @@ export function InfoTip({ help, label }: { help: HelpEntry; label: string }) {
             data-above={pos?.above ? 'true' : undefined}
           >
             <strong className="infotip-title">{help.title ?? label}</strong>
-            <span>{help.what}</span>
+            <span>{u.text(help.what)}</span>
             {help.typical && (
               <span className="infotip-typical">
-                <em>Typical:</em> {help.typical}
+                <em>Typical:</em> {u.text(help.typical)}
               </span>
             )}
           </div>,

@@ -180,6 +180,7 @@ export function ringSweep(
   const Rx = new Float64Array(nth), Ry = new Float64Array(nth);
   const invRr = 1 / rr;
   const eZ = e * Zp;
+  const thStep = TWO_PI / nth;
   let P1 = 0, F = 0;
   for (let t = 0; t < nth; t++) {
     const ux = ct[t], uy = st[t];
@@ -197,7 +198,10 @@ export function ringSweep(
     }
     if (!(sumA2 > 0)) continue;
     const lam = 1000 / sumA2;
-    const thc = (t / nth) * TWO_PI / Zc; // theta / Zc
+    // theta / Zc, evaluated exactly as the reference does it (np.linspace gives theta = t * (2pi/nth)).
+    // The profile index below is a floor(), and for Zp - 1 dividing 25*t (Zp = 11, 16, 21, 26, ...) the
+    // exact value lands on an integer: only the same rounding picks the same profile sample as the script.
+    const thc = (t * thStep) / Zc;
     let mp = 0, mf = 0, rxs = 0, rys = 0;
     for (let i = 0; i < Zp; i++) {
       const arm = armA[i];

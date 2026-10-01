@@ -88,8 +88,8 @@ function makeCtx(inp: GearboxInputs): Ctx {
     inp,
     EsRing: effectiveModulus(inp.outerPin.material, inp.discMaterial),
     EsIn: effectiveModulus(inp.innerPin.material, inp.discMaterial),
-    limRing: contactLimits(inp.discMaterial, inp.outerPin.material, inp.outerPin.construction === 'solid'),
-    limIn: contactLimits(inp.discMaterial, inp.innerPin.material, inp.innerPin.construction === 'solid'),
+    limRing: contactLimits(inp.discMaterial, inp.outerPin.material),
+    limIn: contactLimits(inp.discMaterial, inp.innerPin.material),
     sStr: Math.sqrt(inp.Kc * inp.Tdes * s),
     sLife: Math.sqrt(inp.KcLife * inp.Treq * s),
   };

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkGearbox, computeArm } from '../../calc';
 import { checkValue, hours, num, torque, util } from '../format';
+import { IMPERIAL, METRIC } from '../units';
 import {
   defaultSession,
   effectiveInputs,
@@ -110,6 +111,39 @@ describe('session persistence', () => {
     expect(back.theme).toBe('dark');
     store.set(STORAGE_KEY, '{not json');
     expect(loadSession()).toEqual(defaultSession());
+  });
+});
+
+describe('units in the session', () => {
+  it('export stays SI whatever the display units are, and says so', () => {
+    const a = defaultSession();
+    const b = defaultSession();
+    b.units = { ...IMPERIAL };
+    const ja = JSON.parse(exportSession(a));
+    const jb = JSON.parse(exportSession(b));
+    expect(jb.arm).toEqual(ja.arm);
+    expect(jb.gearboxes).toEqual(ja.gearboxes);
+    expect(jb.gearboxes.J2.D).toBe(85);
+    expect(jb.note).toMatch(/SI/);
+    expect('units' in jb).toBe(false);
+  });
+
+  it('keeps the display units of the person importing and saves them with the session', () => {
+    const cur = defaultSession();
+    cur.units = { ...IMPERIAL };
+    const out = importSession(exportSession(defaultSession()), cur);
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.session.units).toEqual(IMPERIAL);
+    const round = normalizeSession(JSON.parse(JSON.stringify(cur)));
+    expect(round.units).toEqual(IMPERIAL);
+    expect(normalizeSession({ units: { length: 'cubit' } }).units).toEqual(METRIC);
+  });
+
+  it('switching units never changes the stored design', () => {
+    const s = defaultSession();
+    const before = JSON.stringify(s.gearboxes) + JSON.stringify(s.arm);
+    for (const u of [IMPERIAL, METRIC, { ...METRIC, length: 'in' as const }]) s.units = u;
+    expect(JSON.stringify(s.gearboxes) + JSON.stringify(s.arm)).toBe(before);
   });
 });
 

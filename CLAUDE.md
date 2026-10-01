@@ -52,9 +52,13 @@ Torque model (g = 9.81 m/s²; convert g→kg, mm→m):
 - J1 (yaw): no gravity torque. T_req = α·I_z with the arm fully extended horizontally
   (distances measured from the J1 axis; the riser J1→J2 is vertical and on-axis).
 - J5 (servo): report T_static + T_dyn about J5 for servo sizing only (no gearbox check).
-- Also report, per gearbox joint, the **output-bearing loads** as info: radial load = total
-  outboard weight (N), overturning moment = the gravity moment (N·m). These are what the joint's
-  output bearing/housing must carry.
+- Also report, per gearbox joint, the **output-bearing loads** as info. The gravity torque
+  about the axis goes through the gearbox, so it is NOT a bearing moment.
+  - J1 (vertical axis): axial thrust = outboard weight; tilting moment = g·Σm·(horizontal reach).
+  - J2/J3 (horizontal axis): radial = outboard weight; tilting moment = radial × link offset
+    from the output bearing along the axis (per-joint input, default 15 mm).
+  - J4 (roll): radial = outboard weight; tilting moment = g·Σm·(axial distance from the J4
+    bearing along the roll axis), worst of tool straight-out vs bent 90°.
 - Pick default masses/lengths that give roughly the SPEC.md preset torques (J2 ≈ 5.85 N·m,
   J3 ≈ 2.25 N·m T_req), and state the defaults are placeholders until CAD masses exist.
 - The gearbox tab gets a "Loads from arm model" toggle (default on) that feeds T_req/T_des of

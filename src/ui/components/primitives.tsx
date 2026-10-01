@@ -1,9 +1,11 @@
 import { useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
 import type { HelpEntry } from '../help';
-import { Icon, type IconName } from './Icon';
-export { Icon };
-import { InfoTip } from './InfoTip';
+import { useU } from '../store';
 import { useWidth } from '../viz/useWidth';
+import { Icon, type IconName } from './Icon';
+import { InfoTip } from './InfoTip';
+
+export { Icon };
 
 // ---------------------------------------------------------------------------
 // Button
@@ -13,6 +15,7 @@ export function Button({
   variant = 'secondary',
   size = 'md',
   icon,
+  iconAfter,
   className,
   children,
   ...rest
@@ -20,19 +23,37 @@ export function Button({
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   size?: 'sm' | 'md';
   icon?: IconName;
+  iconAfter?: IconName;
 }) {
   return (
     <button type="button" className={`btn btn-${variant} btn-${size}${className ? ` ${className}` : ''}`} {...rest}>
-      {icon && <Icon name={icon} size={size === 'sm' ? 15 : 17} />}
+      {icon && <Icon name={icon} size={size === 'sm' ? 14 : 16} />}
       {children}
+      {iconAfter && <Icon name={iconAfter} size={size === 'sm' ? 14 : 16} />}
     </button>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Card
+// Page head, blocks
 // ---------------------------------------------------------------------------
 
+export function PageHead({ title, sub, suffix, children }: { title: string; sub: ReactNode; suffix?: string; children?: ReactNode }) {
+  return (
+    <div className="pagehead">
+      <div className="pagehead-text">
+        <h1 className="pagehead-title">
+          {title}
+          {suffix && <span className="pagehead-suffix">{suffix}</span>}
+        </h1>
+        <p className="pagehead-sub">{sub}</p>
+      </div>
+      {children && <div className="pagehead-tools">{children}</div>}
+    </div>
+  );
+}
+
+/** A ruled block: mono caption, hairline, content. */
 export function Card({
   title,
   subtitle,
@@ -52,20 +73,30 @@ export function Card({
     <section className={`card${className ? ` ${className}` : ''}`} id={id}>
       {(title || actions) && (
         <header className="card-head">
-          <div className="card-titles">
-            {title && <h3 className="card-title">{title}</h3>}
-            {subtitle && <p className="card-sub">{subtitle}</p>}
-          </div>
+          <h3 className="card-title">{title}</h3>
           {actions && <div className="card-actions">{actions}</div>}
         </header>
       )}
+      {subtitle && <p className="card-sub">{subtitle}</p>}
       {children}
     </section>
   );
 }
 
+/** Next / Back navigation at the bottom of a step. */
+export function StepNav({ back, next }: { back?: { label: string; onClick: () => void }; next?: { label: string; onClick: () => void } }) {
+  return (
+    <nav className="stepnav" aria-label="Step navigation">
+      {back ? (
+        <Button variant="secondary" icon="back" onClick={back.onClick}>{back.label}</Button>
+      ) : <span />}
+      {next && <Button variant="primary" iconAfter="arrow" onClick={next.onClick}>{next.label}</Button>}
+    </nav>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Collapsible input section
+// Collapsible input sections
 // ---------------------------------------------------------------------------
 
 export function Section({
@@ -86,16 +117,10 @@ export function Section({
   return (
     <section className={`section${open ? ' is-open' : ''}`}>
       <h3 className="section-h">
-        <button
-          type="button"
-          className="section-toggle"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={() => setOpen((o) => !o)}
-        >
-          <Icon name="chevron" size={16} className="section-chevron" />
+        <button type="button" className="section-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
           <span className="section-title">{title}</span>
           {summary && <span className="section-summary">{summary}</span>}
+          <Icon name="chevron" size={14} className="section-chevron" />
         </button>
         {help && <InfoTip help={help} label={title} />}
       </h3>
@@ -106,33 +131,94 @@ export function Section({
   );
 }
 
+/** Secondary, collapsed-by-default group inside a section. */
+export function Advanced({ children, label = 'Advanced', defaultOpen = false }: { children: ReactNode; label?: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const id = useId();
+  return (
+    <div className={`adv${open ? ' is-open' : ''}`}>
+      <button type="button" className="adv-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
+        <Icon name="chevron" size={12} className="adv-chevron" />
+        {label}
+      </button>
+      <div className="adv-body" id={id} inert={!open}>
+        <div className="adv-inner">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Status chip and utilization bar
+// Form-sheet row: name + symbol on the left, control on the right
+// ---------------------------------------------------------------------------
+
+export function FieldRow({
+  label,
+  symbol,
+  help,
+  htmlFor,
+  children,
+  message,
+  messageKind,
+  messageId,
+  stacked,
+  modifiedDot,
+  className,
+}: {
+  label: ReactNode;
+  symbol?: string;
+  help?: HelpEntry;
+  htmlFor?: string;
+  children: ReactNode;
+  message?: ReactNode;
+  messageKind?: 'error' | 'warning' | 'note';
+  messageId?: string;
+  stacked?: boolean;
+  modifiedDot?: ReactNode;
+  className?: string;
+}) {
+  const u = useU();
+  const labelText = typeof label === 'string' ? label : 'field';
+  return (
+    <div className={`row${stacked ? ' row-stacked' : ''}${messageKind === 'error' ? ' has-error' : messageKind === 'warning' ? ' has-warning' : ''}${className ? ` ${className}` : ''}`}>
+      <div className="row-label">
+        {htmlFor ? <label htmlFor={htmlFor} className="row-name">{label}</label> : <span className="row-name">{label}</span>}
+        {symbol && <span className="row-sym" aria-hidden="true">{symbol}</span>}
+        {modifiedDot}
+        {help && <InfoTip help={help} label={labelText} />}
+      </div>
+      <div className="row-control">{children}</div>
+      {message && (
+        <div id={messageId} className={`row-msg${messageKind === 'error' ? ' is-error' : messageKind === 'warning' ? ' is-warning' : ''}`} role={messageKind === 'error' ? 'alert' : undefined}>
+          {typeof message === 'string' ? u.text(message) : message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Status marker (square + uppercase mono word) and utilization bar
 // ---------------------------------------------------------------------------
 
 export type StatusKind = 'ok' | 'marginal' | 'fail' | 'neutral';
-
-export const STATUS_ICON: Record<StatusKind, IconName> = {
-  ok: 'check-circle',
-  marginal: 'alert',
-  fail: 'x-circle',
-  neutral: 'info',
-};
 
 export function verdictKind(v: string): StatusKind {
   return v === 'pass' || v === 'ok' ? 'ok' : v === 'marginal' ? 'marginal' : v === 'fail' ? 'fail' : 'neutral';
 }
 
-export function StatusChip({ kind, children, size = 'md' }: { kind: StatusKind; children: ReactNode; size?: 'sm' | 'md' }) {
+export const STATUS_WORD: Record<StatusKind, string> = { ok: 'PASS', marginal: 'MARGINAL', fail: 'FAIL', neutral: 'N/A' };
+
+export function StatusChip({ kind, children }: { kind: StatusKind; children: ReactNode; size?: 'sm' | 'md' }) {
   return (
-    <span className={`chip chip-${kind} chip-${size}`}>
-      <Icon name={STATUS_ICON[kind]} size={size === 'sm' ? 13 : 15} />
+    <span className={`st st-${kind}`}>
+      <i className="st-sq" aria-hidden="true" />
       {children}
     </span>
   );
 }
 
-/** Utilization bar, scale 0..1.2 with ticks at 0.85 and 1.0. */
+/** Utilization bar: scale 0..1.2 with ticks at 0.85 and 1.0. */
 export function UtilBar({ value, kind, label }: { value: number; kind: StatusKind; label: string }) {
   const max = 1.2;
   const pct = Math.max(0, Math.min(1, value / max)) * 100;
@@ -165,7 +251,8 @@ export function Segmented<T extends string | number>({
   fullWidth?: boolean;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
-  const idx = Math.max(0, options.findIndex((o) => o.value === value));
+  const matched = options.findIndex((o) => o.value === value);
+  const idx = Math.max(0, matched);
   const onKey = (e: KeyboardEvent) => {
     let n = idx;
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') n = (idx + 1) % options.length;
@@ -186,7 +273,7 @@ export function Segmented<T extends string | number>({
           type="button"
           role="radio"
           aria-checked={o.value === value}
-          tabIndex={o.value === value ? 0 : -1}
+          tabIndex={i === idx ? 0 : -1}
           title={o.title}
           className={`seg-btn${o.value === value ? ' is-on' : ''}`}
           onClick={() => onChange(o.value)}
@@ -204,38 +291,38 @@ export function Segmented<T extends string | number>({
 
 export function SelectField({
   label,
+  symbol,
   value,
   onChange,
   options,
   help,
   note,
+  inline,
   className,
 }: {
   label: string;
+  symbol?: string;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string; disabled?: boolean }[];
   help?: HelpEntry;
   note?: ReactNode;
+  /** Label on the left, select on the right (short lists). Default is stacked: label above a full-width select. */
+  inline?: boolean;
   className?: string;
 }) {
   const id = useId();
   return (
-    <div className={`sf${className ? ` ${className}` : ''}`}>
-      <div className="nf-head">
-        <label htmlFor={id} className="nf-label">{label}</label>
-        {help && <InfoTip help={help} label={label} />}
-      </div>
+    <FieldRow label={label} symbol={symbol} help={help} htmlFor={id} stacked={!inline} message={note} className={className}>
       <div className="sf-box">
         <select id={id} className="sf-select" value={value} onChange={(e) => onChange(e.target.value)}>
           {options.map((o) => (
             <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
           ))}
         </select>
-        <Icon name="chevron" size={16} className="sf-chevron" />
+        <Icon name="chevron" size={14} className="sf-chevron" />
       </div>
-      {note && <div className="nf-msg">{note}</div>}
-    </div>
+    </FieldRow>
   );
 }
 
@@ -253,14 +340,7 @@ export function Switch({
   const id = useId();
   return (
     <div className="switch-row">
-      <button
-        id={id}
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        className={`switch${checked ? ' is-on' : ''}`}
-        onClick={() => onChange(!checked)}
-      >
+      <button id={id} type="button" role="switch" aria-checked={checked} className={`switch${checked ? ' is-on' : ''}`} onClick={() => onChange(!checked)}>
         <span className="switch-knob" />
       </button>
       <label htmlFor={id} className="switch-text">
@@ -272,8 +352,10 @@ export function Switch({
 }
 
 // ---------------------------------------------------------------------------
-// Notices, tiles, hint banner
+// Notices, data tables, empty states
 // ---------------------------------------------------------------------------
+
+const NOTICE_WORD = { info: 'NOTE', warning: 'WARNING', error: 'ERROR', success: 'DONE' } as const;
 
 export function Notice({
   kind = 'info',
@@ -286,10 +368,9 @@ export function Notice({
   children?: ReactNode;
   actions?: ReactNode;
 }) {
-  const icon: IconName = kind === 'error' ? 'x-circle' : kind === 'warning' ? 'alert' : kind === 'success' ? 'check-circle' : 'info';
   return (
     <div className={`notice notice-${kind}`} role={kind === 'error' ? 'alert' : undefined}>
-      <Icon name={icon} size={18} className="notice-icon" />
+      <span className="notice-tag">{NOTICE_WORD[kind]}</span>
       <div className="notice-body">
         {title && <strong className="notice-title">{title}</strong>}
         {children && <div className="notice-text">{children}</div>}
@@ -299,52 +380,26 @@ export function Notice({
   );
 }
 
-export function Tile({
-  label,
-  value,
-  unit,
-  sub,
-  kind,
-  help,
-}: {
-  label: string;
-  value: ReactNode;
-  unit?: string;
-  sub?: ReactNode;
-  kind?: StatusKind;
-  help?: HelpEntry;
-}) {
+/** Two-column spec table: label | value unit. */
+export function DataTable({ rows, columns = 2 }: { rows: { label: string; value: ReactNode; note?: ReactNode; flag?: StatusKind }[]; columns?: 1 | 2 }) {
   return (
-    <div className={`tile${kind ? ` tile-${kind}` : ''}`}>
-      <div className="tile-label">
-        {label}
-        {help && <InfoTip help={help} label={label} />}
-      </div>
-      <div className="tile-value">
-        <span className="tile-num">{value}</span>
-        {unit && <span className="tile-unit">{unit}</span>}
-      </div>
-      {sub && <div className="tile-sub">{sub}</div>}
-    </div>
+    <dl className={`dtable dtable-${columns}`}>
+      {rows.map((r) => (
+        <div className="dtable-row" key={r.label}>
+          <dt>{r.label}</dt>
+          <dd>
+            <span className={r.flag && r.flag !== 'ok' && r.flag !== 'neutral' ? `flag-${r.flag}` : undefined}>{r.value}</span>
+            {r.note && <small>{r.note}</small>}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
-export function HintBanner({ text, onDismiss }: { text: string; onDismiss: () => void }) {
-  return (
-    <div className="hintbar" role="note">
-      <Icon name="sparkles" size={16} className="hintbar-icon" />
-      <span className="hintbar-text">{text}</span>
-      <button type="button" className="hintbar-x" onClick={onDismiss} aria-label="Dismiss this tip">
-        <Icon name="x" size={15} />
-      </button>
-    </div>
-  );
-}
-
-export function EmptyState({ title, children, icon = 'info' }: { title: string; children?: ReactNode; icon?: IconName }) {
+export function EmptyState({ title, children }: { title: string; children?: ReactNode; icon?: IconName }) {
   return (
     <div className="empty">
-      <Icon name={icon} size={26} className="empty-icon" />
       <strong className="empty-title">{title}</strong>
       {children && <div className="empty-text">{children}</div>}
     </div>
@@ -361,7 +416,7 @@ export function ProgressBar({ fraction, label }: { fraction: number; label: stri
 }
 
 // ---------------------------------------------------------------------------
-// Table that turns into stacked cards when its container is narrower than `threshold` px
+// Table that turns into stacked rows when its container is narrower than `threshold` px
 // ---------------------------------------------------------------------------
 
 export function ResponsiveTable({ threshold, className, children }: { threshold: number; className?: string; children: ReactNode }) {
@@ -373,7 +428,7 @@ export function ResponsiveTable({ threshold, className, children }: { threshold:
   );
 }
 
-/** Unit text that only shows when a table is stacked into cards (the column headers carry units otherwise). */
+/** Unit text that only shows when a table is stacked (the column headers carry units otherwise). */
 export function Cu({ children }: { children: ReactNode }) {
   return <span className="cu">{' '}{children}</span>;
 }

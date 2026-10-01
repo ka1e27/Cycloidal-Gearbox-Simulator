@@ -52,16 +52,19 @@ export function discShareOf(discs: number, override: number | null | undefined):
   return discs === 2 ? 0.55 : 1.0;
 }
 
-/** Hertz contact limits (strength = line-contact yield onset, life = subsurface shear fatigue). */
+/**
+ * Hertz contact limits (strength = line-contact yield onset 1.67 Sy, life = subsurface shear fatigue
+ * 0.577 sigma_f / 0.25). The contact is between the pin part (bushing / standoff / solid pin) and the disc,
+ * so the weaker of the two sets the limit. With steel on 6061-T6 the disc governs, which gives the SPEC
+ * values (460.9 and 240.0 MPa).
+ */
 export function contactLimits(
-  disc: MaterialProps, pin: MaterialProps, pinIsSolid: boolean,
+  disc: MaterialProps, pin: MaterialProps,
 ): { strength: number; life: number; governedBy: 'disc' | 'pin' } {
-  const sy = pinIsSolid ? Math.min(disc.Sy, pin.Sy) : disc.Sy;
-  const sf = pinIsSolid ? Math.min(disc.sigmaF, pin.sigmaF) : disc.sigmaF;
   return {
-    strength: 1.67 * sy,
-    life: (0.577 * sf) / 0.25,
-    governedBy: pinIsSolid && (pin.Sy < disc.Sy || pin.sigmaF < disc.sigmaF) ? 'pin' : 'disc',
+    strength: 1.67 * Math.min(disc.Sy, pin.Sy),
+    life: (0.577 * Math.min(disc.sigmaF, pin.sigmaF)) / 0.25,
+    governedBy: pin.Sy < disc.Sy || pin.sigmaF < disc.sigmaF ? 'pin' : 'disc',
   };
 }
 
@@ -73,63 +76,77 @@ const fin = (x: unknown): x is number => typeof x === 'number' && Number.isFinit
 
 function checkMaterial(name: string, m: MaterialProps | undefined, errors: string[]) {
   if (!m) { errors.push(`${name}: material missing`); return; }
-  if (!fin(m.E) || m.E <= 0) errors.push(`${name}: E must be > 0 MPa`);
+  const rangeErr = (v: unknown, what: string, unit: string, max: number, lowMsg: string) => {
+    if (!fin(v) || v <= 0) errors.push(`${name}: ${what} ${lowMsg}`);
+    else if (v > max) errors.push(`${name}: ${what} must be at most ${max} ${unit}`);
+  };
+  rangeErr(m.E, 'E', 'MPa', 1e7, 'must be > 0 MPa');
   if (!fin(m.nu) || m.nu <= -1 || m.nu >= 0.5) errors.push(`${name}: Poisson ratio must be in (-1, 0.5)`);
-  if (!fin(m.Sy) || m.Sy <= 0) errors.push(`${name}: yield strength must be > 0 MPa`);
-  if (!fin(m.sigmaF) || m.sigmaF <= 0) errors.push(`${name}: fatigue strength must be > 0 MPa`);
-  if (!fin(m.density) || m.density <= 0) errors.push(`${name}: density must be > 0 g/cm3`);
+  rangeErr(m.Sy, 'yield strength', 'MPa', 1e6, 'must be > 0 MPa');
+  rangeErr(m.sigmaF, 'fatigue strength', 'MPa', 1e6, 'must be > 0 MPa');
+  rangeErr(m.density, 'density', 'g/cm3', 100, 'must be > 0 g/cm3');
 }
+
+/** Largest accepted values, so that no input can push a result to Infinity (SI units as entered). */
+export const GEARBOX_MAX = {
+  D: 1e4, e: 1e3, L: 1e3, rr: 1e3, rw: 1e3, Db: 1e4, tMin: 1e3, gap: 1e3, wall: 1e3,
+  torque: 1e6, K: 100, rpm: 1e6, hours: 1e9, Rw: 1e4, bearingN: 1e9, strengthMPa: 1e6,
+  pinDia: 1e3,
+} as const;
 
 /** Hard input errors (non-empty = cannot compute) and soft warnings. Never throws. */
 export function validateGearboxInputs(inp: GearboxInputs): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
   const warnings: string[] = [];
   try {
-    const num = (v: unknown, name: string, cond: (x: number) => boolean, msg: string) => {
+    /** Lower-bound messages are stable text; an upper bound adds its own "must be at most" message. */
+    const num = (v: unknown, name: string, cond: (x: number) => boolean, msg: string, max?: number, unit = '') => {
       if (!fin(v)) errors.push(`${name} is not a number`);
       else if (!cond(v)) errors.push(`${name} ${msg}`);
+      else if (max !== undefined && v > max) errors.push(`${name} must be at most ${max}${unit ? ' ' + unit : ''}`);
     };
+    const M = GEARBOX_MAX;
     num(inp.Zp, 'Zp', (x) => Number.isInteger(x) && x >= 8 && x <= 200, 'must be an integer from 8 to 200');
     num(inp.Zw, 'Zw', (x) => Number.isInteger(x) && x >= 3 && x <= 60, 'must be an integer from 3 to 60');
-    num(inp.D, 'D', (x) => x > 0, 'must be > 0 mm');
-    num(inp.e, 'e', (x) => x > 0, 'must be > 0 mm');
-    num(inp.L, 'L', (x) => x > 0, 'must be > 0 mm');
-    num(inp.rr, 'rr', (x) => x > 0, 'must be > 0 mm');
-    num(inp.rw, 'rw', (x) => x > 0, 'must be > 0 mm');
-    num(inp.Db, 'Db', (x) => x >= 0, 'must be >= 0 mm');
-    num(inp.tMin, 't_min', (x) => x >= 0, 'must be >= 0 mm');
+    num(inp.D, 'D', (x) => x > 0, 'must be > 0 mm', M.D, 'mm');
+    num(inp.e, 'e', (x) => x > 0, 'must be > 0 mm', M.e, 'mm');
+    num(inp.L, 'L', (x) => x > 0, 'must be > 0 mm', M.L, 'mm');
+    num(inp.rr, 'rr', (x) => x > 0, 'must be > 0 mm', M.rr, 'mm');
+    num(inp.rw, 'rw', (x) => x > 0, 'must be > 0 mm', M.rw, 'mm');
+    num(inp.Db, 'Db', (x) => x >= 0, 'must be >= 0 mm', M.Db, 'mm');
+    num(inp.tMin, 't_min', (x) => x >= 0, 'must be >= 0 mm', M.tMin, 'mm');
     num(inp.discs, 'discs', (x) => x === 1 || x === 2, 'must be 1 or 2');
-    num(inp.gap, 'gap', (x) => x >= 0, 'must be >= 0 mm');
-    num(inp.wall, 'wall', (x) => x >= 0, 'must be >= 0 mm');
-    num(inp.Treq, 'T_req', (x) => x >= 0, 'must be >= 0 N*m');
-    num(inp.Tdes, 'T_des', (x) => x >= 0, 'must be >= 0 N*m');
-    num(inp.Kc, 'Kc', (x) => x > 0, 'must be > 0');
-    num(inp.KcLife, 'Kc_life', (x) => x > 0, 'must be > 0');
-    num(inp.rpm, 'Input speed', (x) => x > 0, 'must be > 0 rpm');
-    num(inp.reqLifeH, 'Required life', (x) => x >= 0, 'must be >= 0 h');
+    num(inp.gap, 'gap', (x) => x >= 0, 'must be >= 0 mm', M.gap, 'mm');
+    num(inp.wall, 'wall', (x) => x >= 0, 'must be >= 0 mm', M.wall, 'mm');
+    num(inp.Treq, 'T_req', (x) => x >= 0, 'must be >= 0 N*m', M.torque, 'N*m');
+    num(inp.Tdes, 'T_des', (x) => x >= 0, 'must be >= 0 N*m', M.torque, 'N*m');
+    num(inp.Kc, 'Kc', (x) => x > 0, 'must be > 0', M.K);
+    num(inp.KcLife, 'Kc_life', (x) => x > 0, 'must be > 0', M.K);
+    num(inp.rpm, 'Input speed', (x) => x > 0, 'must be > 0 rpm', M.rpm, 'rpm');
+    num(inp.reqLifeH, 'Required life', (x) => x >= 0, 'must be >= 0 h', M.hours, 'h');
     if (inp.discShare != null) num(inp.discShare, 'Disc share', (x) => x > 0 && x <= 1, 'must be in (0, 1]');
-    if (inp.RwOverride != null) num(inp.RwOverride, 'Rw override', (x) => x > 0, 'must be > 0 mm');
+    if (inp.RwOverride != null) num(inp.RwOverride, 'Rw override', (x) => x > 0, 'must be > 0 mm', M.Rw, 'mm');
     if (!inp.bearing) errors.push('Bearing ratings missing');
     else {
-      num(inp.bearing.C, 'Bearing C', (x) => x > 0, 'must be > 0 N');
-      num(inp.bearing.C0, 'Bearing C0', (x) => x > 0, 'must be > 0 N');
+      num(inp.bearing.C, 'Bearing C', (x) => x > 0, 'must be > 0 N', M.bearingN, 'N');
+      num(inp.bearing.C0, 'Bearing C0', (x) => x > 0, 'must be > 0 N', M.bearingN, 'N');
     }
     checkMaterial('Disc material', inp.discMaterial, errors);
     if (!inp.outerPin) errors.push('Outer pin spec missing');
     else {
       checkMaterial('Outer pin material', inp.outerPin.material, errors);
       if (inp.outerPin.construction === 'boltBushing') {
-        num(inp.outerPin.shankDia, 'Bolt shank diameter', (x) => x > 0, 'must be > 0 mm');
-        num(inp.outerPin.boltYield, 'Bolt yield', (x) => x > 0, 'must be > 0 MPa');
+        num(inp.outerPin.shankDia, 'Bolt shank diameter', (x) => x > 0, 'must be > 0 mm', M.pinDia, 'mm');
+        num(inp.outerPin.boltYield, 'Bolt yield', (x) => x > 0, 'must be > 0 MPa', M.strengthMPa, 'MPa');
       } else if (inp.outerPin.construction !== 'solid') errors.push('Outer pin construction must be boltBushing or solid');
     }
     if (!inp.innerPin) errors.push('Inner pin spec missing');
     else {
       checkMaterial('Inner pin material', inp.innerPin.material, errors);
       if (inp.innerPin.construction === 'standoff') {
-        num(inp.innerPin.od, 'Standoff OD', (x) => x > 0, 'must be > 0 mm');
-        num(inp.innerPin.bore, 'Standoff bore', (x) => x >= 0, 'must be >= 0 mm');
-        num(inp.innerPin.standoffYield, 'Standoff yield', (x) => x > 0, 'must be > 0 MPa');
+        num(inp.innerPin.od, 'Standoff OD', (x) => x > 0, 'must be > 0 mm', M.pinDia, 'mm');
+        num(inp.innerPin.bore, 'Standoff bore', (x) => x >= 0, 'must be >= 0 mm', M.pinDia, 'mm');
+        num(inp.innerPin.standoffYield, 'Standoff yield', (x) => x > 0, 'must be > 0 MPa', M.strengthMPa, 'MPa');
         if (fin(inp.innerPin.od) && fin(inp.innerPin.bore) && inp.innerPin.bore >= inp.innerPin.od) {
           errors.push('Standoff bore must be smaller than its OD');
         }
@@ -257,19 +274,19 @@ export function scaleLoads(inp: GearboxInputs, g: DerivedGeometry, u: UnitInputs
 export function buildChecks(
   inp: GearboxInputs, g: DerivedGeometry, u: UnitInputs, l: ScaledLoads,
 ): Check[] {
-  const ringLim = contactLimits(inp.discMaterial, inp.outerPin.material, inp.outerPin.construction === 'solid');
-  const inLim = contactLimits(inp.discMaterial, inp.innerPin.material, inp.innerPin.construction === 'solid');
+  const ringLim = contactLimits(inp.discMaterial, inp.outerPin.material);
+  const inLim = contactLimits(inp.discMaterial, inp.innerPin.material);
   const boltLim = outerPinBendingLimit(inp.outerPin);
   const soLim = innerPinBendingLimit(inp.innerPin);
   const checks: Check[] = [
     mkCheck('ringContactStrength', 'Ring contact, strength', l.p0RingStrength, ringLim.strength, 'MPa', 'max',
-      '1.67 x Sy: line-contact yield onset'),
+      '1.67 x Sy of the weaker of disc and pin part: line-contact yield onset'),
     mkCheck('ringContactLife', 'Ring contact, life', l.p0RingLife, ringLim.life, 'MPa', 'max',
-      '0.577 x sigma_f / 0.25: subsurface shear (0.25 p0) vs shear fatigue'),
+      '0.577 x sigma_f / 0.25 (weaker of disc and pin part): subsurface shear (0.25 p0) vs shear fatigue'),
     mkCheck('innerContactStrength', 'Inner hole contact, strength', l.p0InnerStrength, inLim.strength, 'MPa', 'max',
-      '1.67 x Sy: line-contact yield onset'),
+      '1.67 x Sy of the weaker of disc and pin part: line-contact yield onset'),
     mkCheck('innerContactLife', 'Inner hole contact, life', l.p0InnerLife, inLim.life, 'MPa', 'max',
-      '0.577 x sigma_f / 0.25: subsurface shear (0.25 p0) vs shear fatigue'),
+      '0.577 x sigma_f / 0.25 (weaker of disc and pin part): subsurface shear (0.25 p0) vs shear fatigue'),
     mkCheck('ligamentBore', 'Ligament to bore', g.ligBore, inp.tMin, 'mm', 'min',
       'At least t_min between the inner holes and the centre bore'),
     mkCheck('ligamentHoles', 'Ligament between holes', g.ligHoles, inp.tMin, 'mm', 'min',
@@ -453,7 +470,7 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
   const sStr = Math.sqrt(inp.Kc * inp.Tdes * g.share);
   const sLife = Math.sqrt(inp.KcLife * inp.Treq * g.share);
   const kE = Math.sqrt(g.EstarRing / inp.L);
-  const ringLim = contactLimits(inp.discMaterial, inp.outerPin.material, inp.outerPin.construction === 'solid');
+  const ringLim = contactLimits(inp.discMaterial, inp.outerPin.material);
   const sweep: SweepData = {
     thetaDeg: [], p0Strength: [], p0Life: [], FPeak: [], bearingLoad: [],
     limitStrength: ringLim.strength, limitLife: ringLim.life,
@@ -471,8 +488,12 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
   const probe: [string, number][] = [
     ['ring contact', p0RingUnit], ['inner contact', p0InnerUnit], ['bearing load', FbUnit],
     ['bolt bending', loads.boltBendingSimple], ['standoff bending', loads.standoffBendingTie],
+    ['ring pin force', loads.FRingPeak], ['inner pin force', loads.FInnerPeak],
+    ['ring contact stress', loads.p0RingStrength], ['inner contact stress', loads.p0InnerStrength],
+    ['bearing peak load', loads.bearingPeak], ['disc area', prof.area],
   ];
-  for (const [name, val] of probe) if (!Number.isFinite(val)) errors.push(`${name} result is not finite`);
+  for (const [name, val] of probe) if (!Number.isFinite(val)) errors.push(`${name} result is not finite: the values are too extreme to compute`);
+  if (Number.isNaN(loads.L10h)) errors.push('bearing life result is not a number');
   if (errors.length) {
     return {
       result: invalidResult(errors, allWarn, g, res),

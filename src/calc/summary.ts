@@ -11,10 +11,14 @@ export interface JointSummaryRow {
   loadsFromArm: boolean;
   Treq: number;
   Tdes: number;
-  /** Output-bearing radial load (outboard weight), N */
+  /** Weight of everything outboard of the joint, N */
   outboardWeight_N: number;
-  /** Output-bearing overturning (gravity) moment, N*m */
-  overturningMoment_Nm: number;
+  /** Output-bearing radial load, N (0 for J1, which carries the weight axially) */
+  bearingRadial_N: number;
+  /** Output-bearing axial (thrust) load, N (J1 only) */
+  bearingAxial_N: number;
+  /** Output-bearing tilting moment, N*m (see ArmJointLoad.bearingTiltMoment_Nm) */
+  bearingTiltMoment_Nm: number;
   /** The inputs that were actually checked (torques applied) */
   inputs: GearboxInputs;
   result: GearboxResult;
@@ -80,7 +84,9 @@ export function summarizeAllJoints(
       Treq: inputs.Treq,
       Tdes: inputs.Tdes,
       outboardWeight_N: load.outboardWeight_N,
-      overturningMoment_Nm: load.overturningMoment_Nm,
+      bearingRadial_N: load.bearingRadial_N,
+      bearingAxial_N: load.bearingAxial_N,
+      bearingTiltMoment_Nm: load.bearingTiltMoment_Nm,
       inputs,
       result,
       verdict: result.verdict,

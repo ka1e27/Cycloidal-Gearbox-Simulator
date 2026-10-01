@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { DiscDrawing } from '../../calc';
-import { num } from '../format';
+import { useU } from '../store';
 import { forceColor, forceStops } from './colors';
 
 /** The disc in the ring frame. Outer pins are coloured by force; hover / focus a pin for its number. */
@@ -22,6 +22,7 @@ export function DiscSvg({
   size?: number | string;
   label?: string;
 }) {
+  const u = useU();
   const R = Rp + rr + Math.max(2, rr * 0.8);
   const path = useMemo(() => {
     if (!drawing) return '';
@@ -60,7 +61,7 @@ export function DiscSvg({
           style={p.loaded ? { fill: forceColor(peak > 0 ? p.force / peak : 0, theme) } : undefined}
           vectorEffect="non-scaling-stroke"
         >
-          <title>{`Pin ${p.index + 1}: ${p.loaded ? `${num(p.force, 0)} N` : 'unloaded'}`}</title>
+          <title>{`Pin ${p.index + 1}: ${p.loaded ? u.fu('force', p.force, { dp: 0 }) : 'unloaded'}`}</title>
         </circle>
       ))}
       {drawing.innerPins.map((p, i) => (
@@ -79,6 +80,7 @@ export function DiscSvg({
 }
 
 export function ForceLegend({ peak, theme }: { peak: number; theme: 'light' | 'dark' }) {
+  const u = useU();
   const [a, b, c] = forceStops(theme);
   return (
     <div className="legend" aria-label="Force colour scale">
@@ -87,9 +89,9 @@ export function ForceLegend({ peak, theme }: { peak: number; theme: 'light' | 'd
         <span>unloaded</span>
       </div>
       <div className="legend-ramp">
-        <span>0 N</span>
+        <span>0 {u.sym('force')}</span>
         <span className="legend-bar" style={{ background: `linear-gradient(90deg, ${a}, ${b}, ${c})` }} aria-hidden="true" />
-        <span>{num(peak, 0)} N</span>
+        <span>{u.fu('force', peak, { dp: 0 })}</span>
       </div>
       <div className="legend-note">Loaded pins, coloured by force at the design torque (peak over a revolution).</div>
     </div>

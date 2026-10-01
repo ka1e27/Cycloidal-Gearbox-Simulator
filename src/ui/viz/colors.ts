@@ -1,7 +1,7 @@
 // Sequential colour ramp for pin force (low -> high), one per theme.
 
-const LIGHT = ['#fbe7a1', '#f08a24', '#b3241c'];
-const DARK = ['#8a7420', '#e58a25', '#ff5b4d'];
+const LIGHT = ['#f8e3a3', '#f08a24', '#b3241c'];
+const DARK = ['#6b5a1c', '#e58a25', '#ff5b4d'];
 
 function hex(h: string): [number, number, number] {
   return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
