@@ -21,6 +21,7 @@ import {
 import { defaultLockState, normalizeLockState, type AdvisorLockState } from './advisorLocks';
 import { METRIC, normalizeUnits, type UnitPrefs } from './units';
 import type { PoseMode } from './viz/armLayout';
+import { ZOOM_MAX, ZOOM_MIN } from './viz/view3d';
 
 export type Step = 1 | 2 | 3 | 4;
 /** A gearbox slot: the id of a cycloidal joint of the arm (ArmJoint.id), or 'custom'. */
@@ -49,8 +50,12 @@ export interface PoseViewState {
   el: number;
   /** Show the weight arrows */
   weights: boolean;
+  /** View zoom (0.25..8) and pan (px) on top of the fitted frame */
+  zoom: number;
+  px: number;
+  py: number;
 }
-export const defaultPoseView = (): PoseViewState => ({ angles: {}, az: 0, el: 0, weights: true });
+export const defaultPoseView = (): PoseViewState => ({ angles: {}, az: 0, el: 0, weights: true, zoom: 1, px: 0, py: 0 });
 
 /** Safe pose view state from anything. Angles wrapped to (-180, 180], camera clamped. */
 export function normalizePoseView(raw: unknown): PoseViewState {
@@ -64,7 +69,10 @@ export function normalizePoseView(raw: unknown): PoseViewState {
       if (typeof v === 'number' && Number.isFinite(v) && k.length <= 24) angles[k] = Math.max(-180, Math.min(180, v));
     }
   }
-  return { angles, az: f(r.az, -180, 180, d.az), el: f(r.el, 0, 90, d.el), weights: typeof r.weights === 'boolean' ? r.weights : d.weights };
+  return {
+    angles, az: f(r.az, -180, 180, d.az), el: f(r.el, 0, 90, d.el), weights: typeof r.weights === 'boolean' ? r.weights : d.weights,
+    zoom: f(r.zoom, ZOOM_MIN, ZOOM_MAX, d.zoom), px: f(r.px, -1e5, 1e5, d.px), py: f(r.py, -1e5, 1e5, d.py),
+  };
 }
 
 export interface Session {

@@ -25,6 +25,8 @@ import {
 const RAD = Math.PI / 180;
 const LINK_W = 9;
 const SEG_PX = 16; // links are cut into pieces about this long on screen, each depth-sorted on its own
+const FILL_OV = 0.75; // px each piece's colour fill runs past its ends
+const EDGE_OV = 0.4; // px each piece's outline runs past its ends (less than the fill)
 const SEG_S = 2.6; // sweep: seconds per preset (2.0 s move + 0.6 s hold)
 const MOVE_S = 2.0;
 const SWEEP_KEYS: PosePresetName[] = ['ready', 'straight', 'folded', 'reachUp'];
@@ -95,7 +97,7 @@ function PoseExplorerBody({ arm, res, stored, onSave }: { arm: ArmInputs; res: A
   const init = useMemo(() => normalizePoseView(stored), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [angleMap, setAngleMap] = useState<Record<string, number>>(init.angles);
   const [cam, setCam] = useState<Camera>(clampCamera({ az: init.az, el: init.el }));
-  const [zp, setZp] = useState<ZoomPan>(NO_ZOOM);
+  const [zp, setZp] = useState<ZoomPan>({ zoom: init.zoom, px: init.px, py: init.py });
   const [weights, setWeights] = useState(init.weights);
   const [playing, setPlaying] = useState(false);
   const [dragging, setDragging] = useState<DragKind | null>(null);
@@ -111,16 +113,17 @@ function PoseExplorerBody({ arm, res, stored, onSave }: { arm: ArmInputs; res: A
     setAngleMap(v.angles);
     setCam(clampCamera({ az: v.az, el: v.el }));
     setWeights(v.weights);
+    setZp({ zoom: v.zoom, px: v.px, py: v.py });
   }, [stored]);
   useEffect(() => {
     if (playing) return;
     const t = window.setTimeout(() => {
-      const v: PoseViewState = { angles: angleMap, az: cam.az, el: cam.el, weights };
+      const v: PoseViewState = { angles: angleMap, az: cam.az, el: cam.el, weights, zoom: zp.zoom, px: zp.px, py: zp.py };
       lastSaved.current = v;
       onSave(v);
     }, 400);
     return () => window.clearTimeout(t);
-  }, [angleMap, cam, weights, playing]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [angleMap, cam, weights, zp, playing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ready = useMemo(() => posePreset(joints, 'ready'), [joints]);
   // what is shown is always inside the joint limits (a limit tightened after the angle was set clamps it)
@@ -193,7 +196,30 @@ function PoseExplorerBody({ arm, res, stored, onSave }: { arm: ArmInputs; res: A
   const pose = useMemo(() => computePose(arm, angles, res), [arm, res, angles.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
   const [figRef, W] = useWidth<HTMLDivElement>(640);
   const H = Math.round(Math.max(280, Math.min(560, W < 520 ? W * 0.95 : W * 0.72)));
-  const zoomBy = (k: number) => setZp((z) => zoomAbout(z, k, W / 2, H / 2, W, H));
+  // the arm's on-screen bounds at the current pose, written by the drawing on every render
+  const armBox = useRef<{ x1: number; x2: number; y1: number; y2: number } | null>(null);
+  /** +/- zoom about the arm's on-screen centre (the view centre when the arm is off-screen), so it never drifts out. */
+  const zoomBy = (k: number) => setZp((z) => {
+    const bx = armBox.current;
+    const cx = bx ? (bx.x1 + bx.x2) / 2 : W / 2;
+    const cy = bx ? (bx.y1 + bx.y2) / 2 : H / 2;
+    const on = bx && cx >= 0 && cx <= W && cy >= 0 && cy <= H;
+    return zoomAbout(z, k, on ? cx : W / 2, on ? cy : H / 2, W, H);
+  });
+  /** Fit: frame the arm's current-pose bounds with a margin (room for the labels). */
+  const fit = () => setZp((z) => {
+    const bx = armBox.current;
+    if (!bx) return NO_ZOOM;
+    const m = Math.min(70, Math.max(30, W * 0.08));
+    const bw = Math.max(bx.x2 - bx.x1, 24);
+    const bh = Math.max(bx.y2 - bx.y1, 24);
+    const k = Math.min((W - 2 * m) / bw, (H - 2 * m) / bh);
+    const cx = (bx.x1 + bx.x2) / 2;
+    const cy = (bx.y1 + bx.y2) / 2;
+    const z1 = zoomAbout(z, k, cx, cy, W, H);
+    // the box centre stays put under zoomAbout; then move it to the view centre
+    return { ...z1, px: z1.px + (W / 2 - cx), py: z1.py + (H / 2 - cy) };
+  });
 
   return (
     <div className="pz">
@@ -206,13 +232,13 @@ function PoseExplorerBody({ arm, res, stored, onSave }: { arm: ArmInputs; res: A
               <button type="button" className="icon-btn pz-zbtn" onClick={() => zoomBy(1 / 1.25)} disabled={zp.zoom <= ZOOM_MIN + 1e-9} aria-label="Zoom out" title="Zoom out">−</button>
               <span className="pz-zval mono" aria-live="off">{Math.round(zp.zoom * 100)}%</span>
               <button type="button" className="icon-btn pz-zbtn" onClick={() => zoomBy(1.25)} disabled={zp.zoom >= ZOOM_MAX - 1e-9} aria-label="Zoom in" title="Zoom in">+</button>
-              <Button size="sm" variant="ghost" onClick={() => setZp(NO_ZOOM)} title="Fit the arm in the view (zoom 100%, no pan)">Fit</Button>
+              <Button size="sm" variant="ghost" onClick={fit} title="Frame the arm at its current pose">Fit</Button>
               <Button size="sm" variant="ghost" icon="reset" onClick={() => { setCam({ ...VIEW_PRESETS.side }); setZp(NO_ZOOM); }} title="Side view, zoom and pan reset">Reset view</Button>
             </div>
           </div>
           <PoseSvg
             arm={arm} pose={pose} cam={cam} zp={zp} W={W} H={H} uid={uid} theme={resolvedTheme} weights={weights} dragging={dragging}
-            hold={playing || dragging === 'joint'} stop={stop}
+            hold={playing || dragging === 'joint'} stop={stop} armBox={armBox}
             onOrbit={(c) => setCam(clampCamera(c))}
             onZoomPan={setZp}
             onJoint={(i, deg) => {
@@ -330,6 +356,8 @@ interface SvgProps {
   dragging: DragKind | null;
   /** Freeze the framing (grow only): a joint drag or the sweep is running */
   hold: boolean;
+  /** Receives the arm's on-screen bounds (joints, link ends, tip) every render */
+  armBox: { current: { x1: number; x2: number; y1: number; y2: number } | null };
   /** A joint being dragged against one of its limits */
   stop: { i: number; side: 'min' | 'max' } | null;
   onOrbit: (c: Camera) => void;
@@ -340,7 +368,7 @@ interface SvgProps {
 
 const clean = (x: number) => (Number.isFinite(x) && x > 0 ? Math.min(x, 1e7) : 0);
 
-function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold, stop, onOrbit, onZoomPan, onJoint, onDragState }: SvgProps) {
+function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold, stop, armBox, onOrbit, onZoomPan, onJoint, onDragState }: SvgProps) {
   const { u } = useStore();
   const svgRef = useRef<SVGSVGElement>(null);
   const joints = arm.joints;
@@ -394,6 +422,14 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
   frameRef.current = f;
   const poseRef = useRef(pose);
   poseRef.current = pose;
+  {
+    // the arm's on-screen bounds for the zoom buttons and Fit: joints (with their symbol radius) and the tip
+    let x1 = Infinity, x2 = -Infinity, y1 = Infinity, y2 = -Infinity;
+    pose.joints.forEach((pj) => { const q = project(f, pj.pos_mm as V3); x1 = Math.min(x1, q.x - 16); x2 = Math.max(x2, q.x + 16); y1 = Math.min(y1, q.y - 16); y2 = Math.max(y2, q.y + 16); });
+    const t = project(f, pose.tip_mm as V3);
+    x1 = Math.min(x1, t.x - 12); x2 = Math.max(x2, t.x + 12); y1 = Math.min(y1, t.y - 12); y2 = Math.max(y2, t.y + 12);
+    armBox.current = Number.isFinite(x1) ? { x1, x2, y1, y2 } : null;
+  }
   const zpRef = useRef(zp);
   zpRef.current = zp;
 
@@ -611,6 +647,11 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
         if (len(sub(mid, pose.joints[jj].pos_mm as V3)) * f.scale < jointR[jj] + 1) depth = Math.min(depth, jointDepth[jj] - 1e-6);
       }
       const color = forceColor(Mat((t0 + t1) / 2) / Mref, theme);
+      // Neighbouring pieces overlap a little in screen space so no hairline shows between them at any zoom. The colour fill
+      // overlaps more than the outline, so whichever neighbour is drawn last, its fill covers the other's outline end.
+      const sl = Math.hypot(s1.x - s0.x, s1.y - s0.y);
+      const ux = sl > 1e-9 ? (s1.x - s0.x) / sl : 0;
+      const uy = sl > 1e-9 ? (s1.y - s0.y) / sl : 0;
       const capA = k === 0;
       const capB = k === n - 1;
       const EW = LINK_W + 2.5;
@@ -619,10 +660,10 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
         node: (
           <g className="pz-link" onPointerDown={startJoint(i)} data-joint={i}>
             <line className="pz-link-hit" x1={s0.x} y1={s0.y} x2={s1.x} y2={s1.y} />
-            <line className="pz-link-edge" x1={s0.x} y1={s0.y} x2={s1.x} y2={s1.y} strokeWidth={EW} />
+            <line className="pz-link-edge" x1={s0.x - ux * EDGE_OV} y1={s0.y - uy * EDGE_OV} x2={s1.x + ux * EDGE_OV} y2={s1.y + uy * EDGE_OV} strokeWidth={EW} />
             {capA && <circle className="pz-link-cap" cx={s0.x} cy={s0.y} r={EW / 2} />}
             {capB && <circle className="pz-link-cap" cx={s1.x} cy={s1.y} r={EW / 2} />}
-            <line x1={s0.x} y1={s0.y} x2={s1.x} y2={s1.y} stroke={color} strokeWidth={LINK_W} />
+            <line x1={s0.x - ux * FILL_OV} y1={s0.y - uy * FILL_OV} x2={s1.x + ux * FILL_OV} y2={s1.y + uy * FILL_OV} stroke={color} strokeWidth={LINK_W} />
             {capA && <circle cx={s0.x} cy={s0.y} r={LINK_W / 2} fill={color} />}
             {capB && <circle cx={s1.x} cy={s1.y} r={LINK_W / 2} fill={color} />}
           </g>
@@ -646,27 +687,38 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
     const st = `pz-joint pz-st-${STATUS_CLASS[pj.status]}`;
     const center = jointCenter[i];
     const rr = jointR[i];
-    let body: ReactNode;
     const axisLine = (ext: number, through: V3 = c) => {
       const e = ext / f.scale;
       const q1 = P(add(through, scl(a, -e)));
       const q2 = P(add(through, scl(a, e)));
       return <line className="dr-axis" x1={q1.x} y1={q1.y} x2={q2.x} y2={q2.y} />;
     };
+    // the housing cylinder, its axis and its half length along that axis (px)
+    let cy: Cyl;
+    let hPx: number;
+    let axisEl: ReactNode = null;
+    let frontExtra: ReactNode = null;
     if (i === 0 && j.motion === 'yaw') {
-      const t = cylinder(f, center, Z, rr, Math.max(1.5, toPx(turnH / 2)));
-      body = <>{axisLine(rr + 14, [0, 0, zG / 2 + colH / 2] as V3)}{cyl(t, st)}</>;
+      hPx = Math.max(1.5, toPx(turnH / 2));
+      cy = cylinder(f, center, Z, rr, hPx);
+      axisEl = axisLine(rr + 14, [0, 0, zG / 2 + colH / 2] as V3);
     } else if (j.motion === 'pitch') {
-      const cy = cylinder(f, c, a, r, r * 0.55);
-      const facing = Math.abs(dot(a, tor));
+      hPx = r * 0.55;
+      cy = cylinder(f, c, a, r, hPx);
       const cr = Math.min(3.5, r * 0.4);
       const fc = cy.front;
-      body = cyl(cy, st, facing > 0.5 ? <path className="dr-cross" d={`M${fc.cx - cr} ${fc.cy - cr} l${2 * cr} ${2 * cr} m0 ${-2 * cr} l${-2 * cr} ${2 * cr}`} /> : null);
+      if (Math.abs(dot(a, tor)) > 0.5) frontExtra = <path className="dr-cross" d={`M${fc.cx - cr} ${fc.cy - cr} l${2 * cr} ${2 * cr} m0 ${-2 * cr} l${-2 * cr} ${2 * cr}`} />;
     } else if (j.motion === 'yaw') {
-      body = <>{axisLine(r + 12)}{cyl(cylinder(f, c, a, r, r * 0.4), st)}</>;
+      hPx = r * 0.4;
+      cy = cylinder(f, c, a, r, hPx);
+      axisEl = axisLine(r + 12);
     } else {
-      body = <>{axisLine(rr + 14)}{cyl(cylinder(f, c, a, rr, 4), st)}</>;
+      hPx = 4;
+      cy = cylinder(f, c, a, rr, hPx);
+      axisEl = axisLine(rr + 14);
     }
+    const cylAxis = i === 0 && j.motion === 'yaw' ? Z : a;
+    const capOff = scl(cylAxis, (cy.frontSign * hPx) / f.scale);
 
     // torque direction arc: around the axis, centred on the screen-up side, arrowhead in the + or - direction
     let arc: ReactNode = null;
@@ -697,11 +749,22 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
     }
     const cs = P(center);
     const atStop = stop?.i === i;
+    // Three depth-sorted parts, so a joint interleaves correctly with an overlapping neighbour: the back cap (with the
+    // axis line) at the back cap's depth, the side at the centre, the front cap (cross, torque arc, stop ring) at the front cap's depth.
+    const grab = startJoint(i);
     items.push({
-      depth: jointDepth[i], key: `j${i}`,
+      depth: P(sub(center, capOff)).depth, key: `j${i}b`,
+      node: <g className={`pz-jpart ${st}`} onPointerDown={grab} data-joint={i}>{axisEl}{ell(cy.back, 'pz-cap pz-back')}</g>,
+    });
+    items.push({
+      depth: jointDepth[i], key: `j${i}s`,
+      node: <g className={`pz-jpart ${st}`} onPointerDown={grab} data-joint={i}><polygon className="pz-side" points={cy.side.map((q) => q.join(',')).join(' ')} /></g>,
+    });
+    items.push({
+      depth: P(add(center, capOff)).depth + 1e-9, key: `j${i}f`,
       node: (
-        <g className={`pz-jgrp${atStop ? ' is-stop' : ''}`} onPointerDown={startJoint(i)} data-joint={i}>
-          {body}
+        <g className={`pz-jgrp${atStop ? ' is-stop' : ''}`} onPointerDown={grab} data-joint={i}>
+          <g className={st}>{ell(cy.front, 'pz-cap')}{frontExtra}</g>
           {arc}
           {atStop && <circle className="pz-stop" cx={cs.x} cy={cs.y} r={rr + 4} />}
         </g>

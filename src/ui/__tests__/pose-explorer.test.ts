@@ -25,11 +25,12 @@ describe('pose view session state', () => {
     const old = defaultSession() as Partial<Session>;
     delete old.poseView;
     const s = normalizeSession(JSON.parse(JSON.stringify(old)));
-    expect(s.poseView).toEqual({ angles: {}, az: 0, el: 0, weights: true });
-    expect(normalizePoseView({ angles: { J2: 400, J3: NaN, J4: 'x', J5: -30 }, az: 999, el: -5, weights: 'no' }))
-      .toEqual({ angles: { J2: 180, J5: -30 }, az: 180, el: 0, weights: true });
-    expect(normalizePoseView(null)).toEqual({ angles: {}, az: 0, el: 0, weights: true });
-    const mine = { ...defaultSession(), poseView: { angles: { J2: 12 }, az: 30, el: 20, weights: false } };
+    expect(s.poseView).toEqual({ angles: {}, az: 0, el: 0, weights: true, zoom: 1, px: 0, py: 0 });
+    expect(normalizePoseView({ angles: { J2: 400, J3: NaN, J4: 'x', J5: -30 }, az: 999, el: -5, weights: 'no', zoom: 50, px: NaN, py: 1e9 }))
+      .toEqual({ angles: { J2: 180, J5: -30 }, az: 180, el: 0, weights: true, zoom: 8, px: 0, py: 1e5 });
+    expect(normalizePoseView({ zoom: 0.01, px: 12.5, py: -40 })).toMatchObject({ zoom: 0.25, px: 12.5, py: -40 });
+    expect(normalizePoseView(null)).toEqual({ angles: {}, az: 0, el: 0, weights: true, zoom: 1, px: 0, py: 0 });
+    const mine = { ...defaultSession(), poseView: { angles: { J2: 12 }, az: 30, el: 20, weights: false, zoom: 2.5, px: 30, py: -12 } };
     expect(exportSession(mine)).not.toContain('poseView');
     const imp = importSession(exportSession(defaultSession()), mine);
     expect(imp.ok && imp.session.poseView).toEqual(mine.poseView);
@@ -92,7 +93,7 @@ describe('the card on Arm & Loads', () => {
       it(`${name} / ${units.torque}: a joint symbol and a slider per joint, the readout table, finite coordinates`, () => {
         const base = defaultSession();
         const joints = motions.map((motion, i) => ({ ...base.arm.joints[Math.min(i, 4)], id: `J${i + 1}`, motion, drive: 'cycloidal' as const }));
-        const s = normalizeSession({ ...base, arm: { ...base.arm, joints }, units, poseView: { angles: { J2: 33 }, az: -38, el: 26, weights: true } });
+        const s = normalizeSession({ ...base, arm: { ...base.arm, joints }, units, poseView: { angles: { J2: 33 }, az: -38, el: 26, weights: true, zoom: 1.5, px: 10, py: 0 } });
         const html = render(s);
         const card = html;
         expect(card).not.toMatch(/NaN|Infinity|undefined/);
@@ -117,7 +118,7 @@ describe('the card on Arm & Loads', () => {
   it('joint limits: the slider range follows them and a stored angle outside is shown clamped', () => {
     const s = defaultSession();
     s.arm = { ...s.arm, joints: s.arm.joints.map((j) => (j.id === 'J2' ? { ...j, limits: { min: -30, max: 60 } } : j)) };
-    s.poseView = { angles: { J2: 90 }, az: 0, el: 0, weights: true };
+    s.poseView = { angles: { J2: 90 }, az: 0, el: 0, weights: true, zoom: 1, px: 0, py: 0 };
     const html = render(normalizeSession(JSON.parse(JSON.stringify(s))));
     expect(html).toMatch(/type="range" min="-30" max="60" step="1"[^>]*value="60"/);
     expect(text(html)).toContain('Limits -30° … 60°');
