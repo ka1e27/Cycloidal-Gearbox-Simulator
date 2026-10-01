@@ -213,6 +213,43 @@ within `altWindowMm` of the best housing OD. `best === null` means no design mee
 Typical time 150–350 ms for fixed ratio, ~1–3 s with `ratioVary`. Progress `{phase:'search'|'verify', fraction (0..1,
 monotonic), evaluated, bestHousingOD, D}`; `hooks = { onProgress?, shouldCancel? }`. Use the worker client below in the UI.
 
+### Design variable locks (CLAUDE.md Addition 6)
+
+```ts
+adviseDesign(inputs, { locks: { D: 60.5, e: 1.1, L: 7.3, Zw: 8, discs: 2, Zp: 18,
+  outerPin: { kind: 'catalog', index: 3 } | { kind: 'custom', od, shank },      // shank only matters for bolt + bushing
+  innerPin: { kind: 'catalog', index: 2 } | { kind: 'custom', od, bore },       // bore only matters for standoffs
+  bearing:  { kind: 'catalog', index: 5 } | { kind: 'custom', name?, bore?, OD, C, C0 },
+  maxHousingOD: 90 } })                                                          // a constraint, not a variable
+```
+
+Every present field is fixed and comes back **exactly** as given (any D, e, L; catalog or custom pins and bearing); absent
+fields are searched over the usual ranges with the same checks, objective and tie-breaks. `Zp` locked wins over `ratioVary`; with
+neither, the ratio is the input's Zp (reported as locked). With `e` locked and `D` free the D grid is searched with that e
+(K1 follows, only K1 < 1 is required). With all nine locked the advisor just evaluates that design with `checkGearbox`
+(`best` if it meets the target, else it comes back as `closest`). `validateAdvisorLocks(inputs, locks)` returns messages
+("Locked D must be > 0 mm"); invalid locks give `valid: false`. New options: `closest` and `hints` (both default true).
+
+New result fields: `locked: AdvisorLockKey[]` (explicit locks plus the ratio when it was not allowed to vary),
+`maxHousingOD`, and, only when `best` is null:
+
+* `closest: AdvisorDesign | null` (`slot: 'closest'`): lowest maximum utilization within the locks, found by a branch-and-bound
+  pass over the whole locked space (no target pruning; the 24 best coarse candidates with distinct ring geometry are re-checked
+  at full resolution and the lowest full-resolution max utilization wins). `governingLabel` says what governs it. `null` when
+  no geometrically valid design exists within the locks. A closest design that passes at full resolution (coarse false negative)
+  is promoted to `best`.
+* `relaxHints: RelaxHint[]` = `{ key, name, value, text, design }`: for every lock (and the housing limit) the advisor re-runs the
+  search with **only that lock released** (other locks kept, the free variables re-optimized; best-only, half-resolution
+  screening). A hint exists only if that run found a design that passes at full resolution; `design` is that design, so the text is
+  a verified statement ("Unlock pin circle D: a 62 mm pin circle passes (housing 76 mm, max utilization 0.84)."). Locks whose release
+  does not help produce no hint. The ratio re-run (8 values of Zp) is the expensive one: it runs last, and all re-runs share a
+  deterministic work cap (150,000 ring evaluations, about 3 s); a re-run that cannot finish inside it is reported in `warnings`
+  ("Too large to check quickly, so no hint was computed for: ...") rather than as "no hint".
+
+`AdvisorProgress.phase` can also be `'closest'` or `'hints'`. Timings (this machine): any lock combination with a feasible
+answer 1 to 400 ms (ratio free 1.5 s); infeasible with a few locks 20 to 400 ms; an unlocked, hopeless case (loads 66x too high)
+about 4 s in total (2 s for the target and closest passes, about 2 s for the ratio hint).
+
 ## 7. All-joints summary (`summary.ts`)
 
 ```ts

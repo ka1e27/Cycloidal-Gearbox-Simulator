@@ -1,5 +1,6 @@
 import { useDeferredValue, useMemo } from 'react';
 import { createGearboxModel, JOINT_PRESET_SPECS } from '../../calc';
+import { ExportDxfPanel } from '../components/ExportDxfPanel';
 import { JointChips } from '../components/JointChips';
 import { PageHead, StatusChip, StepNav, STATUS_WORD, verdictKind } from '../components/primitives';
 import { stepSubtitle } from '../components/StepHint';
@@ -42,6 +43,7 @@ export function GearboxScreen() {
             </>
           )}
           <SolverPanel slot={slot} eff={eff} K1={r.derived.K1} />
+          <ExportDxfPanel inputs={deferred} label={slot === 'custom' ? 'custom' : slot} model={model} />
         </div>
       </div>
       <StepNav

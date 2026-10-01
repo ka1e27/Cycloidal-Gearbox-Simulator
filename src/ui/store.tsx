@@ -38,6 +38,7 @@ import {
   type Step,
   type ThemePref,
 } from './session';
+import { toEngineLocks, type AdvisorLockState } from './advisorLocks';
 import { makeU, type U, type UnitPrefs } from './units';
 
 // ---------------------------------------------------------------------------
@@ -53,6 +54,7 @@ type Action =
   | { type: 'gearbox'; slot: Slot; fn: (g: GearboxInputs) => GearboxInputs }
   | { type: 'useArm'; joint: JointId; value: boolean }
   | { type: 'advisorOpts'; patch: Partial<AdvisorUiOptions> }
+  | { type: 'locks'; slot: Slot; fn: (l: AdvisorLockState) => AdvisorLockState }
   | { type: 'hint'; key: string }
   | { type: 'replace'; session: Session }
   | { type: 'reset' };
@@ -67,6 +69,7 @@ function reducer(s: Session, a: Action): Session {
     case 'gearbox': return { ...s, gearboxes: { ...s.gearboxes, [a.slot]: a.fn(s.gearboxes[a.slot]) } };
     case 'useArm': return { ...s, useArmLoads: { ...s.useArmLoads, [a.joint]: a.value } };
     case 'advisorOpts': return { ...s, advisor: { ...s.advisor, ...a.patch } };
+    case 'locks': return { ...s, advisorLocks: { ...s.advisorLocks, [a.slot]: a.fn(s.advisorLocks[a.slot]) } };
     case 'hint': return s.hintsSeen[a.key] ? s : { ...s, hintsSeen: { ...s.hintsSeen, [a.key]: true } };
     case 'replace': return a.session;
     case 'reset': {
@@ -97,11 +100,11 @@ const idleRun: AdvisorRun = { status: 'idle', slot: null, progress: null, result
 export type ToastKind = 'info' | 'success' | 'error';
 export interface Toast { id: number; kind: ToastKind; text: string }
 
-export function advisorKey(inputs: GearboxInputs, opts: AdvisorUiOptions): string {
-  // discShare is ignored by the advisor; Treq/Tdes matter.
+export function advisorKey(inputs: GearboxInputs, opts: AdvisorUiOptions, locks?: unknown): string {
+  // discShare is ignored by the advisor; Treq/Tdes matter. `locks` is what the advisor was given (toEngineLocks).
   const { discShare: _ignored, ...rest } = inputs;
   void _ignored;
-  return JSON.stringify([rest, opts]);
+  return JSON.stringify([rest, opts, locks ?? null]);
 }
 
 // ---------------------------------------------------------------------------
@@ -121,10 +124,13 @@ interface StoreValue {
   select: (slot: Slot) => void;
   updateArm: (fn: (a: ArmInputs) => ArmInputs) => void;
   updateGearbox: (slot: Slot, fn: (g: GearboxInputs) => GearboxInputs) => void;
+  /** Change the advisor lock state of a joint */
+  updateLocks: (slot: Slot, fn: (l: AdvisorLockState) => AdvisorLockState) => void;
   storageOk: boolean;
   resolvedTheme: 'light' | 'dark';
   advisorRun: AdvisorRun;
-  runAdvisor: (slot: Slot) => void;
+  /** Run the advisor. `change` first edits the lock state (e.g. "unlock D") and the run uses the edited state. */
+  runAdvisor: (slot: Slot, change?: (l: AdvisorLockState) => AdvisorLockState) => void;
   cancelAdvisor: () => void;
   toasts: Toast[];
   notify: (kind: ToastKind, text: string) => void;
@@ -208,22 +214,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const updateGearbox = useCallback(
     (slot: Slot, fn: (g: GearboxInputs) => GearboxInputs) => dispatch({ type: 'gearbox', slot, fn }), []);
 
+  const updateLocks = useCallback(
+    (slot: Slot, fn: (l: AdvisorLockState) => AdvisorLockState) => dispatch({ type: 'locks', slot, fn }), []);
+
   const cancelAdvisor = useCallback(() => {
     jobRef.current?.cancel();
     jobRef.current = null;
     setAdvisorRun((r) => (r.status === 'running' ? { ...r, status: r.result ? 'done' : 'idle', progress: null } : r));
   }, []);
 
-  const runAdvisor = useCallback((slot: Slot) => {
+  const runAdvisor = useCallback((slot: Slot, change?: (l: AdvisorLockState) => AdvisorLockState) => {
     jobRef.current?.cancel();
     const s = stateRef.current;
     const inputs = effectiveInputs(s, slot, computeArmResult(s.arm));
     const o = s.advisor;
-    const key = advisorKey(inputs, o);
+    const lockState = change ? change(s.advisorLocks[slot]) : s.advisorLocks[slot];
+    if (change) dispatch({ type: 'locks', slot, fn: () => lockState });
+    const { locks, ratioVary } = toEngineLocks(lockState, inputs);
+    const key = advisorKey(inputs, o, { locks, ratioVary });
     setAdvisorRun((r) => ({ ...r, status: 'running', slot, progress: null, usedTarget: o.target }));
     const job = getCalcClient().advise(
       inputs,
-      { target: o.target, ratioVary: o.ratioVary, Dmin: o.Dmin, Dmax: o.Dmax, minPinClearance: o.minPinClearance, altWindowMm: o.altWindowMm },
+      { target: o.target, ratioVary, locks, Dmin: o.Dmin, Dmax: o.Dmax, minPinClearance: o.minPinClearance, altWindowMm: o.altWindowMm },
       (p) => setAdvisorRun((r) => (jobRef.current === job ? { ...r, progress: p } : r)),
     );
     jobRef.current = job;
@@ -280,10 +292,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [notify]);
 
   const value = useMemo<StoreValue>(() => ({
-    state, dispatch, u, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, storageOk,
+    state, dispatch, u, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, updateLocks, storageOk,
     resolvedTheme, advisorRun, runAdvisor, cancelAdvisor, toasts, notify, dismissToast, exportJson,
     importJson, resetAll,
-  }), [state, u, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, storageOk, resolvedTheme,
+  }), [state, u, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, updateLocks, storageOk, resolvedTheme,
     advisorRun, runAdvisor, cancelAdvisor, toasts, notify, dismissToast, exportJson, importJson, resetAll]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -38,7 +38,7 @@ describe('audit: advisor cards show the design in the chosen units', () => {
     expect(t).toContain(`${best.housingOD.toFixed(1)} mm housing`);
     expect(t).toMatch(new RegExp(`Pin circle diameter, D ${best.D.toFixed(1)} mm`));
     expect(t).toMatch(new RegExp(`Eccentricity, e ${best.e.toFixed(3)} mm K1 ${best.K1.toFixed(3)}`));
-    expect(t).toMatch(new RegExp(`Disc thickness, L ${best.L.toFixed(2)} mm`));
+    expect(t).toMatch(new RegExp(`Disc thickness, L ${parseFloat(best.L.toFixed(3))} mm`));
     expect(t).toContain(`Eccentric bearing ${best.bearingName} OD ${best.bearingOD.toFixed(0)} mm`);
     expect(t).toMatch(/Disc mass \d+ g/);
     expect(t).not.toMatch(/NaN|undefined|Infinity/);

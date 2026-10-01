@@ -15,6 +15,7 @@ import {
   type GearboxInputs,
   type JointId,
 } from '../calc';
+import { defaultLockState, normalizeLockState, type AdvisorLockState } from './advisorLocks';
 import { METRIC, normalizeUnits, type UnitPrefs } from './units';
 
 export type Step = 1 | 2 | 3 | 4;
@@ -27,6 +28,7 @@ export const APP_ID = 'cycloidal-gearbox-designer';
 
 export interface AdvisorUiOptions {
   target: number;
+  /** Legacy (sessions from before the design-variable locks): true meant the ratio was free. The lock state is the source of truth now. */
   ratioVary: boolean;
   Dmin: number;
   Dmax: number;
@@ -47,9 +49,17 @@ export interface Session {
   useArmLoads: Record<JointId, boolean>;
   selected: Slot;
   advisor: AdvisorUiOptions;
+  /** Design Advisor locks per joint (and Custom): which variables are locked, and their values */
+  advisorLocks: Record<Slot, AdvisorLockState>;
   /** Steps whose first-visit hint was dismissed */
   hintsSeen: Record<string, boolean>;
 }
+
+export const defaultAdvisorLocks = (): Record<Slot, AdvisorLockState> => {
+  const out = {} as Record<Slot, AdvisorLockState>;
+  for (const s of SLOTS) out[s] = defaultLockState();
+  return out;
+};
 
 export const defaultAdvisorOptions = (): AdvisorUiOptions => ({
   target: 0.85, ratioVary: false, Dmin: 30, Dmax: 150, minPinClearance: 1, altWindowMm: 15,
@@ -73,6 +83,7 @@ export function defaultSession(): Session {
     useArmLoads: { J1: true, J2: true, J3: true, J4: true },
     selected: 'J2',
     advisor: defaultAdvisorOptions(),
+    advisorLocks: defaultAdvisorLocks(),
     hintsSeen: {},
   };
 }
@@ -84,7 +95,7 @@ const fin = (x: unknown, fallback: number, lo: number, hi: number) =>
 /** Build a full, safe Session from anything (localStorage, imported JSON). Never throws. */
 export function normalizeSession(raw: unknown, base: Session = defaultSession()): Session {
   if (!isObj(raw)) return base;
-  const out: Session = { ...base, gearboxes: { ...base.gearboxes }, useArmLoads: { ...base.useArmLoads } };
+  const out: Session = { ...base, gearboxes: { ...base.gearboxes }, useArmLoads: { ...base.useArmLoads }, advisorLocks: { ...base.advisorLocks } };
   try {
     if (raw.step === 1 || raw.step === 2 || raw.step === 3 || raw.step === 4) out.step = raw.step;
     if (raw.theme === 'system' || raw.theme === 'light' || raw.theme === 'dark') out.theme = raw.theme;
@@ -120,6 +131,15 @@ export function normalizeSession(raw: unknown, base: Session = defaultSession())
         minPinClearance: fin(a.minPinClearance, d.minPinClearance, 0, 20),
         altWindowMm: fin(a.altWindowMm, d.altWindowMm, 0, 100),
       };
+    }
+    // Locks: sessions saved before they existed have none (every joint gets the defaults). Their old "let ratio vary"
+    // switch becomes the ratio lock being off.
+    const legacyVary = isObj(raw.advisor) && raw.advisor.ratioVary === true;
+    for (const sl of SLOTS) {
+      const have = isObj(raw.advisorLocks) ? raw.advisorLocks[sl] : undefined;
+      const st = normalizeLockState(have, defaultLockState());
+      if (have === undefined && legacyVary) st.on.Zp = false;
+      out.advisorLocks[sl] = st;
     }
     if (isObj(raw.hintsSeen)) {
       const h: Record<string, boolean> = {};
@@ -168,9 +188,9 @@ export function clearSavedSession(): void {
 // ---------------------------------------------------------------------------
 
 export function exportSession(s: Session): string {
-  const { arm, gearboxes, useArmLoads, selected, advisor } = s;
+  const { arm, gearboxes, useArmLoads, selected, advisor, advisorLocks } = s;
   return JSON.stringify(
-    { app: APP_ID, version: 1, exportedAt: new Date().toISOString(), note: 'All values in this file are SI: lengths in mm, masses in g, forces in N, torques in N*m, stresses in MPa, whatever display units were selected.', arm, gearboxes, useArmLoads, selected, advisor },
+    { app: APP_ID, version: 1, exportedAt: new Date().toISOString(), note: 'All values in this file are SI: lengths in mm, masses in g, forces in N, torques in N*m, stresses in MPa, whatever display units were selected.', arm, gearboxes, useArmLoads, selected, advisor, advisorLocks },
     null,
     2,
   );

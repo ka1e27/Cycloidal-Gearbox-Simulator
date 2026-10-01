@@ -131,6 +131,20 @@ One table with J1–J4 as rows: loads from the arm model, current geometry, verd
 mode, max utilization, disc mass, and a "Design" button that opens the advisor for that joint.
 J5 row shows the servo torque requirement only.
 
+## Addition 5 — DXF export (overrides SPEC.md "out of scope")
+Export manufacturing DXFs for the current gearbox: cycloidal disc (profile + center bore + inner
+pin holes), ring-pin housing plate, output/tie plate, eccentric cam, and pin/bushing/standoff
+sections. Per-part files plus one "all parts" sheet (one layer per part). Pure writer in
+`src/export/` (no dependency), ASCII DXF R12 by default for CAM compatibility, units mm or inch,
+closed outlines, and user-set manufacturing allowances (hole clearances, profile offset). The
+disc profile is the SPEC "actual profile" from the engine.
+
+## Addition 6 — Design Advisor locks
+Every design variable in the advisor (ratio/Zp, D, e, outer pin size, inner pin size, Zw, L, discs,
+bearing) can be locked to a user value or left free. The advisor optimizes only the free ones
+under the same constraints and objective. If the locks make the target unreachable, it shows
+the closest design (lowest max utilization), what governs it, and which locks to relax.
+
 ## UI / UX — "very nice and very user friendly"
 - Clean engineering-tool look: light and dark themes (follow the OS, plus a toggle), one accent
   color, generous spacing, clear typographic hierarchy, cards, no clutter. Responsive down to

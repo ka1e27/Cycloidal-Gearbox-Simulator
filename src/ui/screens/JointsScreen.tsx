@@ -2,7 +2,7 @@ import { useDeferredValue, useMemo } from 'react';
 import { summarizeAllJoints, type JointSummaryRow } from '../../calc';
 import { Button, Card, Cu, Notice, PageHead, ResponsiveTable, STATUS_WORD, StatusChip, StepNav, UtilBar, verdictKind } from '../components/primitives';
 import { stepSubtitle } from '../components/StepHint';
-import { DASH, fixed, num, util } from '../format';
+import { DASH, fixed, num, thickness, util } from '../format';
 import { useStore } from '../store';
 import { JOINT_KIND } from '../jointNames';
 
@@ -88,7 +88,7 @@ export function JointsScreen() {
                   <td data-label="Geometry">
                     <span className="geo">
                       {num(g.ratio, 0)}:1, D {u.fu('length', g.D, { dp: 1, trim: true })}, e {u.fu('length', g.e, { dp: 3 })}
-                      <small>K1 {Number.isFinite(g.K1) ? fixed(g.K1, 3) : DASH} · L {u.fu('length', g.L, { dp: 2, trim: true })} · {g.discs} disc{g.discs > 1 ? 's' : ''}</small>
+                      <small>K1 {Number.isFinite(g.K1) ? fixed(g.K1, 3) : DASH} · L {thickness(u, g.L)} · {g.discs} disc{g.discs > 1 ? 's' : ''}</small>
                     </span>
                   </td>
                   <td data-label="Verdict"><StatusChip kind={kind}>{word}</StatusChip></td>

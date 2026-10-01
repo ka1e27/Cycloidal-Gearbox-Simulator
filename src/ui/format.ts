@@ -78,3 +78,12 @@ export function checkLimit(id: string, limit: number, unit: string, kind: 'max' 
 export function torque(x: number | null | undefined): string {
   return x == null || !Number.isFinite(x) ? DASH : fixed(x, 2);
 }
+
+/**
+ * Disc thickness L. Stock plate sizes must read exactly (3.175, 4.76, 6.35, 9.525, 12.7 mm): up to 3 decimals in mm with
+ * trailing zeros dropped, 3 decimals in inches (4 below 0.1 in, like every inch length).
+ */
+export function thickness(u: U, mm: number, withUnit = true): string {
+  const o = { dp: u.prefs.length === 'in' ? 2 : 3, trim: true };
+  return withUnit ? u.fu('length', mm, o) : u.f('length', mm, o);
+}

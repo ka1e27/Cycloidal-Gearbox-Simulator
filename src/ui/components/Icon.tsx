@@ -13,6 +13,8 @@ const PATHS = {
   x: ['M18 6 6 18', 'm6 6 12 12'],
   arrow: ['M4 12h16', 'm14 6 6 6-6 6'],
   back: ['M20 12H4', 'm10 6-6 6 6 6'],
+  lock: ['M5 11h14v10H5z', 'M8 11V7a4 4 0 0 1 8 0v4', 'M12 15v2.5'],
+  unlock: ['M5 11h14v10H5z', 'M8 11V7a4 4 0 0 1 7.6-1.8', 'M12 15v2.5'],
 } as const;
 
 export type IconName = keyof typeof PATHS;
