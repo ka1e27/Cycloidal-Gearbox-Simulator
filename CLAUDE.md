@@ -178,6 +178,23 @@ Each joint can carry motor data:
 - servo joints: check the servo's own torque against T_req/T_des
 The advisor can restrict the ratio to the motor-feasible range ("ratio from motor").
 
+## Addition 9 — Interactive Pose Explorer
+A card at the end of Arm & Loads with a movable 3D arm (orthographic SVG, orbitable camera,
+side view by default). Each joint has an angle, set by a slider or by dragging in the view.
+Live static gravity load at the current pose:
+- torque about each joint axis: τ_i = â_i · Σ_outboard (r_j − p_i) × (m_j·g), with rods as
+  their centre of mass
+- bending moment along each link
+Colors:
+- joints by |τ_i| / T_des,i (≤0.85 green, ≤1.0 amber, >1.0 red, matching the check colors)
+- links by bending moment on a sequential ramp
+- weight arrows at the masses
+Required invariants:
+- at every pose, |τ_i| ≤ the worst-case T_static,i from the arm model (+1e-9)
+- the worst-case pose of Addition 7 reproduces T_static for pitch joints
+- a base yaw with a vertical axis always reads 0
+Display only: the gearbox checks keep using the worst case.
+
 ## UI / UX — "very nice and very user friendly"
 - Clean engineering-tool look: light and dark themes (follow the OS, plus a toggle), one accent
   color, generous spacing, clear typographic hierarchy, cards, no clutter. Responsive down to

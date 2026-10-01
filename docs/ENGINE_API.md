@@ -384,3 +384,63 @@ Design Advisor: `AdvisorOptions.zpSet?: number[]` restricts the searched Zp to t
 
 UI state: `AdvisorLockState.ratioMotor: boolean | null` (null = automatic: "From motor" when the joint has usable motor data, else the old Locked / Free). `src/ui/motorUi.ts`
 (`ratioPlanFor`, `patchMotor`, presets, chip texts) and `src/ui/advisorLocks.ts` (`ratioModeOf`, `toEngineLocks(state, g, motorZps)`) hold the pure helpers.
+
+## 12. Pose explorer (`src/calc/pose.ts`, CLAUDE.md Addition 9)
+
+Forward kinematics and the static gravity load at any joint angles, for the Pose Explorer card. **Display only**: the gearbox checks, advisor,
+motor and DXF code keep using the worst case from `computeArm`. Pure, never throws, every output finite. Angles are degrees, positions mm, torques N*m (SI inside: g -> kg, mm -> m, g = 9.81).
+
+**Frames.** World z is up and joint 0 is at the origin. At q = 0 the arm is in the Addition 7 worst-case pose: links before the first pitch joint point +z (a column on
+the base axis), and from the first pitch joint on every link points +x. With no pitch joint, every link points up. Joint axes at q = 0 (`zeroPoseFrames`), right-handed, +q turns about them:
+
+* pitch: **-y** (horizontal, perpendicular to the link). This sign is a deliberate choice: **+q lifts the link** (counter-clockwise in the side view, seen from -y), so the Ready pose reads J2 = +90.
+* yaw: +z (for a yaw after a pitch, the axis perpendicular to both its link and the pitch axis).
+* roll: along its own link at q = 0 (+z in the column, +x after the first pitch).
+
+Product of exponentials with Rodrigues matrices (`rodrigues(k, theta)`): `R_i = R_{i-1} * Rot(a0_i, q_i)`, world axis `a_i = R_{i-1} a0_i`, `p_{i+1} = p_i + R_i (L_i d0_i)`.
+A joint's rotation acts on everything outboard. Masses: joint i's lumped mass at p_i, link i's mass at its midpoint, the payload at the tip. A joint's own mass does not
+load itself (lever 0) but loads every joint inboard, as in `arm.ts`.
+
+**Torque.** `tau_i = a_i . sum_{j outboard of i} (r_j - p_i) x (m_j g z)`: the holding torque the joint must supply, positive in its +q direction. Numerically it equals
+the gravity moment `a' . sum (r - p) x (-m g z)` about a' = -a_i (+y for pitch), so a pitch joint at q = 0 reads **+T_static**.
+**Bending:** at a cut on link i (fraction t = 0, 0.5, 1), the moment of everything outboard of the cut. The cut rod's outboard part (1 - t) is a point mass at that part's centre.
+The bending is the component perpendicular to the link, and the torsion (the component along it) is reported at the root.
+
+```ts
+computePose(arm: ArmInputs, anglesDeg: readonly number[], result?: ArmResult): PoseResult
+// missing / non-finite angles read 0; non-finite or negative masses and lengths read 0; `result` defaults to computeArm(arm)
+interface PoseResult {
+  joints: PoseJoint[];   // { index, id, motion, drive, angleDeg, pos_mm: Vec3, axis: Vec3 (unit, world), tau_Nm (signed), absTau_Nm,
+                         //   Tstatic_Nm (computeArm TstaticModel), Tdes_Nm (overrides included), util: |tau|/T_des | null, status: 'ok'|'marginal'|'fail'|'none' }
+  links: PoseLink[];     // { index, from_mm, to_mm, dir (unit, defined for zero length), length_mm, Mroot_Nm, Mmid_Nm, Mend_Nm, torsionRoot_Nm }
+  masses: PoseMass[];    // chain order joint 0, link 0, ..., payload: { kind: 'joint'|'link'|'payload', index (-1 payload), mass_g, pos_mm, weight_N }
+  tip_mm: Vec3; reach_mm (horizontal distance from the base axis); height_mm (above joint 0);
+  maxUtil: number | null; worstJoint: number (-1 if none);
+  Mmax_Nm (largest bending at this pose); Mref_Nm (largest bending at q = 0, an upper bound at every pose); armValid: boolean;
+}
+```
+
+`util` is null (status `'none'`) when the arm is invalid, or when T_des is 0 and the torque is not; 0 when both are 0. Status uses the check thresholds: <= 0.85 (`GREEN_LIMIT`) ok, <= 1.0 marginal, > 1.0 fail.
+
+**Presets** (`posePreset(joints, name)`; pitch joints get the listed angles in order, everything else 0):
+`straight` all 0 (the worst case); `ready` +90, -90 (upper arm up, forearm out: the drawing's ready pose); `folded` +80, -145, +65; `reachUp` +90 (all up).
+`randomPose(joints, rnd?)`: yaws +-150, the first pitch 0..120, other pitches +-120, rolls +-180, whole degrees. Helpers: `wrapDeg(x)` to (-180, 180] (NaN -> 0) and `lerpAngle(a, b, t)` (shortest way).
+
+**Invariants** (tested in `src/calc/__tests__/pose.test.ts`):
+
+* at q = 0, tau of every pitch joint equals `computeArm` T_static (to 1e-9);
+* a yaw with no pitch upstream (vertical axis) reads exactly 0 at every pose;
+* at every pose, `|tau_i| <= T_static,i + 1e-9` for every joint type (property test: 30 random 1..8-joint arms x 2000 random poses), and `Mmax_Nm <= Mref_Nm`.
+  The reason: |a x d| <= |d| <= the chain distance, which is the worst-case lever. For a roll, masses up to the next non-roll joint stay on its axis;
+* hand cases: a 2-pitch arm at 0/45/90 deg; the default arm in its Ready pose (J2 = J3 = 0.20915 g, J5 = 0.03135 g, tip (390, 0, 230)); a roll with J4 = 90 and J5 = 90 gives the roll worst case;
+* no NaN for any input, including zero-length links and invalid arms.
+
+UI: `src/ui/viz/view3d.ts` (orthographic camera, az = el = 0 is the side view from -y; projection, cylinder and arc helpers, drag math) and `src/ui/viz/PoseExplorer.tsx`.
+Session: `Session.poseView: { angles (deg, keyed by joint id; missing = ready pose), az, el, weights }`, normalized by `normalizePoseView`. It is display-only and not exported,
+and import and reset keep the current one.
+
+**Joint limits** (display only). `ArmJoint.limits?: { min, max }` is in degrees, with -180 <= min < max <= 180, and absent means ±180. It is stored with the arm, so it persists
+and is exported, but `computeArm` ignores it: the checks keep the worst case. The helpers are
+`validateJointLimits(min, max) -> string | null` and `normalizeJointLimits(raw)` (a bad pair or the full range gives undefined; `normalizeArmInputs` uses it),
+plus `jointLimits(j)`, `hasLimits(j)`, `clampAngle(j, deg)` (a limited joint clamps, a full-range joint wraps) and
+`clampPose(joints, angles) -> { angles, clamped: indices }`. `randomPose` always lands inside the limits.

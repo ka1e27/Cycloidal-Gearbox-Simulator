@@ -41,12 +41,40 @@ export interface AdvisorUiOptions {
   altWindowMm: number;
 }
 
+/** Pose explorer display state. Angles in degrees keyed by joint id; a joint without one uses the ready pose. */
+export interface PoseViewState {
+  angles: Record<string, number>;
+  /** Camera azimuth and elevation, degrees (0, 0 = side view) */
+  az: number;
+  el: number;
+  /** Show the weight arrows */
+  weights: boolean;
+}
+export const defaultPoseView = (): PoseViewState => ({ angles: {}, az: 0, el: 0, weights: true });
+
+/** Safe pose view state from anything. Angles wrapped to (-180, 180], camera clamped. */
+export function normalizePoseView(raw: unknown): PoseViewState {
+  const d = defaultPoseView();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return d;
+  const r = raw as Record<string, unknown>;
+  const f = (v: unknown, lo: number, hi: number, dflt: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt);
+  const angles: Record<string, number> = {};
+  if (r.angles && typeof r.angles === 'object' && !Array.isArray(r.angles)) {
+    for (const [k, v] of Object.entries(r.angles as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v) && k.length <= 24) angles[k] = Math.max(-180, Math.min(180, v));
+    }
+  }
+  return { angles, az: f(r.az, -180, 180, d.az), el: f(r.el, 0, 90, d.el), weights: typeof r.weights === 'boolean' ? r.weights : d.weights };
+}
+
 export interface Session {
   version: 2;
   step: Step;
   theme: ThemePref;
   /** Which pose the arm drawing shows. Display only: the torques always use the worst case. Not exported. */
   armPose: PoseMode;
+  /** Pose explorer: joint angles, camera and toggles. Display only (the checks use the worst case). Not exported. */
+  poseView: PoseViewState;
   /** Display units only. Everything stored in this session stays SI (mm, g, N, N*m, MPa). */
   units: UnitPrefs;
   arm: ArmInputs;
@@ -126,6 +154,7 @@ export function defaultSession(): Session {
     step: 1,
     theme: 'system',
     armPose: 'ready',
+    poseView: defaultPoseView(),
     units: { ...METRIC },
     arm,
     gearboxes,
@@ -200,6 +229,7 @@ export function normalizeSession(raw: unknown, base: Session = defaultSession())
     if (raw.step === 1 || raw.step === 2 || raw.step === 3 || raw.step === 4) out.step = raw.step;
     if (raw.theme === 'system' || raw.theme === 'light' || raw.theme === 'dark') out.theme = raw.theme;
     if (raw.armPose === 'ready' || raw.armPose === 'worst') out.armPose = raw.armPose;
+    if ('poseView' in raw) out.poseView = normalizePoseView(raw.poseView);
     if ('units' in raw) out.units = normalizeUnits(raw.units);
     // An arm in the old fixed format (five joints) is converted here, with identical results; its joint ids are J1..J5,
     // so the old per-joint keys (gearboxes, locks, toggles) carry over unchanged.
@@ -347,9 +377,9 @@ export function importSession(text: string, current: Session): ImportOutcome {
     return { ok: false, error: `That file was saved by a newer version of the app (format ${raw.version}).` };
   }
   // Keep the importing user's own UI state (step, theme, hints); take the engineering data from the file.
-  const { step, theme, hintsSeen, units, armPose } = current;
+  const { step, theme, hintsSeen, units, armPose, poseView } = current;
   const base = defaultSession();
-  const merged = normalizeSession({ ...raw, step, theme, hintsSeen, units, armPose }, { ...base, step, theme, hintsSeen, units, armPose });
+  const merged = normalizeSession({ ...raw, step, theme, hintsSeen, units, armPose, poseView }, { ...base, step, theme, hintsSeen, units, armPose, poseView });
   const issues: string[] = [];
   const armErr = validateArmInputs(merged.arm).errors;
   if (armErr.length) issues.push(`Arm: ${armErr[0]}`);

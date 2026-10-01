@@ -58,6 +58,36 @@ export interface ArmJoint {
    * enter the load model: the arm result is the same with or without it. Absent = no motor data.
    */
   motor?: MotorSpec;
+  /**
+   * Optional joint angle limits for the pose explorer, degrees, -180 <= min < max <= 180 (CLAUDE.md Addition 9). Display only:
+   * they do not enter the load model (the worst case is still assumed). Absent = -180 / 180.
+   */
+  limits?: JointLimits;
+}
+
+export interface JointLimits { min: number; max: number }
+/** Full range of a joint angle, degrees. */
+export const ANGLE_RANGE: JointLimits = { min: -180, max: 180 };
+
+/** Error text for a pair of angle limits, or null when they are usable. */
+export function validateJointLimits(min: unknown, max: unknown): string | null {
+  if (typeof min !== 'number' || !Number.isFinite(min)) return 'Minimum angle is not a number';
+  if (typeof max !== 'number' || !Number.isFinite(max)) return 'Maximum angle is not a number';
+  if (min < ANGLE_RANGE.min || min > ANGLE_RANGE.max) return 'Minimum angle must be between -180 and 180°';
+  if (max < ANGLE_RANGE.min || max > ANGLE_RANGE.max) return 'Maximum angle must be between -180 and 180°';
+  if (!(min < max)) return 'Minimum angle must be less than the maximum';
+  return null;
+}
+
+/** Usable limits from anything (an import, a saved session), or undefined (= the full range). */
+export function normalizeJointLimits(raw: unknown): JointLimits | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (validateJointLimits(r.min, r.max) !== null) return undefined;
+  const min = r.min as number;
+  const max = r.max as number;
+  if (min === ANGLE_RANGE.min && max === ANGLE_RANGE.max) return undefined;
+  return { min, max };
 }
 
 export interface ArmInputs {
@@ -542,6 +572,7 @@ export function normalizeArmInputs(partial: unknown): ArmInputs {
       const o = (r.override && typeof r.override === 'object' ? r.override : {}) as Record<string, unknown>;
       const dflt = NEW_JOINT[motion];
       const motor = normalizeMotor(r.motor);
+      const limits = normalizeJointLimits(r.limits);
       return {
         id,
         name: typeof r.name === 'string' ? r.name.slice(0, 40) : (i < d.joints.length ? base.name : motion),
@@ -553,6 +584,7 @@ export function normalizeArmInputs(partial: unknown): ArmInputs {
         linkMass_g: num(r.linkMass_g, i < d.joints.length ? base.linkMass_g : dflt.linkMass_g),
         override: { Treq: nullable(o.Treq), Tdes: nullable(o.Tdes) },
         ...(motor ? { motor } : {}),
+        ...(limits ? { limits } : {}),
       };
     });
   }

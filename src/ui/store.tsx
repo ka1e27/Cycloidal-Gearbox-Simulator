@@ -52,6 +52,7 @@ type Action =
   | { type: 'step'; step: Step }
   | { type: 'theme'; theme: ThemePref }
   | { type: 'pose'; pose: Session['armPose'] }
+  | { type: 'poseView'; value: Session['poseView'] }
   | { type: 'units'; units: UnitPrefs }
   | { type: 'select'; slot: Slot }
   | { type: 'arm'; fn: (a: ArmInputs) => ArmInputs }
@@ -68,6 +69,7 @@ function reducer(s: Session, a: Action): Session {
     case 'step': return s.step === a.step ? s : { ...s, step: a.step };
     case 'theme': return { ...s, theme: a.theme };
     case 'pose': return s.armPose === a.pose ? s : { ...s, armPose: a.pose };
+    case 'poseView': return s.poseView === a.value ? s : { ...s, poseView: a.value };
     case 'units': return { ...s, units: a.units };
     case 'select': return { ...s, selected: a.slot };
     // Editing the arm can add or remove joints: keep the per-joint gearbox / advisor state in step with it.
@@ -80,7 +82,7 @@ function reducer(s: Session, a: Action): Session {
     case 'replace': return a.session;
     case 'reset': {
       const d = defaultSession();
-      return { ...d, theme: s.theme, units: s.units, hintsSeen: s.hintsSeen, step: s.step, armPose: s.armPose };
+      return { ...d, theme: s.theme, units: s.units, hintsSeen: s.hintsSeen, step: s.step, armPose: s.armPose, poseView: s.poseView };
     }
     default: return s;
   }

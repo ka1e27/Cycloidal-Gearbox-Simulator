@@ -7,6 +7,7 @@ export {
   contactLimits, statusOf, GEARBOX_MAX, DEFAULT_NPF, DEFAULT_NTH, GREEN_LIMIT, UTIL_CAP,
 } from './gearbox';
 export * from './arm';
+export * from './pose';
 export * from './motor';
 export * from './solver';
 export * from './advisor';

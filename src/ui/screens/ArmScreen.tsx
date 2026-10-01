@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DRIVE_LABEL, JOINT_PRESET_SPECS, MAX_JOINTS, MIN_JOINTS, MOTION_LABEL, analyzeJointMotor, defaultArmInputs, jointLabel, validateArmInputs,
   type ArmInputs, type ArmJoint, type ArmJointLoad, type ArmResult, type DriveType, type MotionType,
@@ -19,6 +19,8 @@ import { useStore } from '../store';
 import { gearboxOf, presetIdFor, slotLabel } from '../session';
 
 const D = defaultArmInputs();
+// The pose explorer is below the fold: its chunk loads on demand.
+const PoseExplorer = lazy(() => import('../viz/PoseExplorer').then((m) => ({ default: m.PoseExplorer })));
 
 const MOTION_OPTIONS = (['yaw', 'pitch', 'roll'] as MotionType[]).map((m) => ({
   value: m,
@@ -122,6 +124,9 @@ export function ArmScreen() {
           <ServoCards armInputs={a} arm={arm} />
         </div>
       </div>
+      <Suspense fallback={<div className="card pose-card pose-loading" role="status"><h3 className="card-title">Pose explorer</h3><p className="muted small">Loading the 3D view…</p></div>}>
+        <PoseExplorer />
+      </Suspense>
       <StepNav next={{ label: 'Next: Gearbox', onClick: () => setStep(2) }} />
     </div>
   );
