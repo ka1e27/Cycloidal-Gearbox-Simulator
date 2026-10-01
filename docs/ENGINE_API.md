@@ -122,43 +122,71 @@ translated), `outerPins` (colour by `force / maxForce`), `innerHoles` (diameter 
 
 ## 4. Arm load model (`arm.ts`)
 
+The arm is an ordered list of 1 to 8 joints (CLAUDE.md Addition 7). Masses are grams, lengths mm.
+
 ```ts
-const arm = defaultArmInputs();          // placeholders; masses g, lengths mm, alpha rad/s², SF 1.5, floor 1.0 N·m
-arm.barMass_g[1] = 140;                  // arrays are [J1..J5] or [riser, barA, barB, barC, barD]
-arm.linkOffset_mm[0] = 20;               // [J2, J3] offset of the link from the output bearing along the axis, mm
-const a = computeArm(arm);               // ArmResult
-a.joints[1]  // ArmJointLoad: TstaticModel (gravity torque about the axis), TdynModel, TreqModel, inertia, Treq, Tdes
-             // (after overrides), treqOverridden, tdesOverridden, outboardWeight_N,
-             // bearingRadial_N, bearingAxial_N, bearingTiltMoment_Nm
-a.totalMass_g, a.reach_mm, a.valid/errors/warnings
+const arm = defaultArmInputs();            // 5 joints: yaw, pitch, pitch, roll (cycloidal) + wrist pitch (servo)
+arm.joints[1].linkMass_g = 140;            // each joint carries the link that runs from it to the next joint
+const a = computeArm(arm);                 // ArmResult, same order as arm.joints
+a.joints[1]  // ArmJointLoad: TstaticModel, TdynModel, TreqModel, inertia, Treq, Tdes (after overrides), treqOverridden,
+             // tdesOverridden, outboardWeight_N, bearingRadial_N, bearingAxial_N, bearingTiltMoment_Nm, tiltedYaw, note
+a.totalMass_g, a.reach_mm, a.notes, a.valid/errors/warnings
 ```
 
-`ArmInputs`: `jointMass_g[5]`, `barMass_g[5]`, `barLength_mm[5]`, `payload_g`, `linkOffset_mm[2]` (J2, J3, default 15),
-`alpha[5]`, `SF`, `TdesFloor`, `override[5] = {Treq|null, Tdes|null}`. `joints[0..4]` = J1..J5; J5 is the servo (`Treq` =
-torque to deliver, `Tdes = SF·Treq`, no floor, no gearbox check). `validateArmInputs(arm)` for inline validation.
-**Ranges** (`ARM_LIMITS`): masses 0 to 1e6 g, lengths 0 to 1e5 mm, link offset 0 to 1e4 mm, α 0 to 1e4 rad/s², SF > 0 and at most 10
-(below 1 is a warning), torques 0 to 1e6 N·m. Anything else gives `valid: false` and a message ("Joint mass 3 must be at most 1000000 g").
-Every output is also checked for finiteness; `normalizeArmInputs` fills `linkOffset_mm` for sessions saved before it existed.
+```ts
+type MotionType = 'yaw' | 'pitch' | 'roll';        // base yaw = vertical axis; pitch = axis perpendicular to the link; roll = axis along the link
+type DriveType = 'cycloidal' | 'servo';            // cycloidal gets a gearbox check; a servo only gets the torque requirement
+interface ArmJoint {
+  id: string;            // stable ("J1".."J8"): keys the gearbox inputs, locks and toggles; never reused while a larger id exists
+  name: string;          // free text shown as "J<position> <name>"; may be empty
+  motion; drive;
+  mass_g: number;        // lumped joint mass (motor + gearbox + housing)
+  alpha: number;         // max angular acceleration, rad/s^2
+  linkOffset_mm: number; // link load plane offset from the output bearing along the axis (pitch, tilted yaw)
+  length_mm: number;     // centre-to-centre length of the link to the NEXT joint; for the last joint it is the tool, joint to tip
+  linkMass_g: number;    // mass of that link (uniform rod); for the last joint the tool mass
+  override: { Treq: number | null; Tdes: number | null };   // manual torques, null = model
+}
+interface ArmInputs { joints: ArmJoint[]; payload_g: number; SF: number; TdesFloor: number }
+```
 
-Model (arm straight out): J2/J3 static = g·Σm·x outboard; J4 static = g(m_D·L_D/2 + m_payload·L_D); J1 static = 0,
-yaw T = α·I with the same inertia as J2. `outboardWeight_N` = weight outboard of the joint (excludes the joint's
-own lumped mass). The gravity torque about the axis goes through the gearbox; it is **not** the bearing's tilting moment.
+Helpers: `MIN_JOINTS`/`MAX_JOINTS` (1, 8), `MOTION_TYPES`, `DRIVE_TYPES`, `MOTION_LABEL`, `DRIVE_LABEL`, `makeJoint(existing, motion, drive?)`
+(auto name = the type word, fresh id from `nextJointId`), `jointLabel(joint, index)` ("J3 elbow"), `firstPitchIndex`, `isTiltedYaw(joints, i)`,
+`nextNonRoll(joints, i)`, `validateArmInputs(arm)`, `normalizeArmInputs(unknown)`.
 
-**Output-bearing loads** (information, not checks), per joint:
+**Old fixed format.** `LegacyArmInputs` (`jointMass_g[5]`, `barMass_g[5]`, `barLength_mm[5]`, `linkOffset_mm[2]`, `alpha[5]`, `override[5]`) is the format of
+sessions and exports saved before Addition 7. `armFromLegacy(old)` converts it (joint `i` takes mass `i`, link `i` = bar `i`; the two link offsets go to
+J2 and J3, the others keep 15 mm) and `normalizeArmInputs` does the same automatically when it sees the old keys, so old localStorage and JSON exports
+load with identical results (`src/calc/__tests__/arm-regression.test.ts` compares 300 random old arms against a verbatim copy of the old engine, every output, to 1e-12).
 
-| Joint | `bearingRadial_N` | `bearingAxial_N` | `bearingTiltMoment_Nm` |
+**Ranges** (`ARM_LIMITS`): masses 0 to 1e6 g, lengths 0 to 1e5 mm, link offset 0 to 1e4 mm, alpha 0 to 1e4 rad/s^2, SF > 0 and at most 10 (below 1 is a warning),
+torques 0 to 1e6 N*m, 1 to 8 joints, unique ids (`custom` is reserved), known motion and drive types. Anything else gives `valid: false` and a message
+("Joint mass 3 must be at most 1000000 g", with the joint number being the position; link fields keep their old names "Bar mass N", "Bar length N").
+Every output is also checked for finiteness. An invalid arm still returns one empty load per joint (5 default ones if the joint list itself is unusable).
+
+**Worst-case rules** (the pose every number is computed for): links before the first pitch joint form a vertical column on the base axis (horizontal
+lever 0); from the first pitch joint on every link is straight out horizontally. `x` below is the horizontal distance of an element's centre of mass from the joint axis.
+Elements outboard of joint j: its own link, every later joint mass and link, the payload (the joint's own lumped mass is not included).
+
+| Joint | Gravity torque `TstaticModel` | Inertia | Bearing |
 |---|---|---|---|
-| J1 (vertical axis) | 0 | outboard weight (thrust) | overturning moment g·Σm·(horizontal reach from the J1 axis) |
-| J2, J3 (horizontal axis) | outboard weight | 0 | radial load × `linkOffset_mm` (J2: [0], J3: [1]) |
-| J4 (roll, axis along the forearm) | outboard weight | 0 | g·Σm·(axial distance along the roll axis from the J4 bearing): bar C at L_C/2, J5 at L_C, bar D and payload with the tool **straight out** (L_C + L_D/2, L_C + L_D), the worse pose; a tool bent 90° gives bar D and the payload only L_C |
-| J5 (servo) | 0 | 0 | 0 |
+| pitch | `g * sum(m x)` over outboard elements | `sum m (x^2 + L_h^2/12)` (`L_h` = horizontal rod length) | radial = outboard weight, tilt = radial x `linkOffset_mm`, axial 0 |
+| yaw, no pitch upstream | 0 (vertical axis) | same sum, i.e. `I_z` with the arm straight out | axial = outboard weight, tilt = overturning moment `g * sum(m x)`, radial 0 |
+| yaw after a pitch (`tiltedYaw`) | counted like a pitch (the axis can be tilted horizontal), with a `note` | same | axial as a yaw, plus the worst-case radial = outboard weight; tilt = max(overturning moment, radial x offset) |
+| roll | let k be the next joint downstream that is not a roll. Elements up to and including joint k are on the axis (lever 0); everything beyond k is bent 90 degrees at k: `g * sum(m d)`, `d` = chain distance from k. No such k: 0, with a `note` | `sum m (d^2 + L^2/12)` over the elements beyond k (0 with no k) | radial = outboard weight, tilt = `g * sum(m s)` with `s` = axial distance along the roll axis from the roll bearing, the larger of straight out and bent at k (straight out always wins) |
+| servo (any motion) | as its motion type | as its motion type | all 0; `Tdes = SF * Treq` with no floor |
 
-**Defaults (placeholders until CAD):** joint masses [450, 700, 577, 180, 120] g, bar masses [80, 110, 90, 40, 70] g,
-bar lengths [100, 230, 200, 80, 110] mm, payload 250 g, α 3 rad/s², link offsets 15 mm. Gives T_req J1 0.70, **J2 5.87**, **J3 2.25**,
-J4 0.32, J5 0.32 N·m. (J1's SPEC estimate 1.3 N·m is not reachable with a consistent arm: it equals J2's dynamic term.) Bearing loads of
-the default arm: see `src/calc/__tests__/arm.test.ts`.
+`T_req = static + alpha * I`, `T_des = max(SF * T_req, TdesFloor)` for a cycloidal joint, manual overrides replace either. `reach_mm` = horizontal distance from the first
+pitch joint to the tip (0 with no pitch joint). `notes` collects the per-joint modelling notes (tilted yaw, roll with nothing off its axis).
+
+Default arm placeholders (g, mm): joint masses [450, 700, 577, 180, 120], link masses [80, 110, 90, 40, 70], link lengths [100 (base column), 230, 200, 80, 110 (tool)],
+payload 250 g, alpha 3 rad/s^2, link offsets 15 mm. Gives T_req J1 0.70, **J2 5.87**, **J3 2.25**, J4 0.32, J5 0.32 N*m. (J1's SPEC estimate 1.3 N*m is not reachable
+with a consistent arm: it equals J2's dynamic term.) The base column length only affects the drawing and the on-axis mass: a 0 mm column gives the same numbers.
 
 Feed the gearbox: `{ ...gearboxInputs, Treq: a.joints[i].Treq, Tdes: a.joints[i].Tdes }` (see the summary helper).
+
+**Gearboxes per joint.** `PRESETS`/`JOINT_PRESET_SPECS` stay keyed `J1..J4` (the SPEC joints). `closestPresetId(Treq)` returns the preset whose T_req is closest by ratio (J3 for a
+missing or non-positive torque); the UI uses it to start a newly added cycloidal joint (see `reconcileSession` in `src/ui/session.ts`).
 
 ## 5. Minimum-size solver (`solver.ts`)
 
@@ -253,15 +281,16 @@ about 4 s in total (2 s for the target and closest passes, about 2 s for the rat
 ## 7. All-joints summary (`summary.ts`)
 
 ```ts
-summarizeAllJoints(arm: ArmInputs, gearboxes: Record<'J1'|'J2'|'J3'|'J4', GearboxInputs>,
-                   opts?: { useArmLoads?: boolean | Partial<Record<JointId, boolean>>; resolution? }): AllJointsSummary
+summarizeAllJoints(arm: ArmInputs, gearboxes: Record<string /* joint id */, GearboxInputs>,
+                   opts?: { useArmLoads?: boolean | Record<string, boolean | undefined>; resolution? }): AllJointsSummary
 ```
 
-Returns `{ arm: ArmResult, rows: JointSummaryRow[4], servo: ServoRow, counts }`. Each row: `joint`, `loadsFromArm`, `Treq`, `Tdes`,
+Returns `{ arm: ArmResult, rows: JointSummaryRow[], servos: ServoRow[], counts }`. `rows` has one entry per **cycloidal** joint in arm order (a servo joint
+has no gearbox); `servos` one per servo joint. Each row: `joint` (the joint id), `index` (position), `name`, `motion`, `loadsFromArm`, `Treq`, `Tdes`,
 `outboardWeight_N`, `bearingRadial_N`, `bearingAxial_N`, `bearingTiltMoment_Nm`, `inputs` (as checked, torques applied), `result` (full `GearboxResult`), `verdict`,
-`governing` (label), `maxUtilization`, `discMass_g`, `geometry {Zp, ratio, D, e, K1, L, discs}`. If the arm is invalid the typed
-torques are used. `servo` = `{Treq, Tdes, Tstatic, Tdyn, outboardWeight_N}` for J5. The "Design" button just opens the advisor
-with `rows[i].inputs`.
+`governing` (label), `maxUtilization`, `discMass_g`, `geometry {Zp, ratio, D, e, K1, L, discs}`. A cycloidal joint missing from `gearboxes` is checked as its closest preset.
+If the arm is invalid the typed torques are used. A `ServoRow` is `{joint, index, name, motion, drive, Treq, Tdes, Tstatic, Tdyn, outboardWeight_N}`.
+`counts` covers the gearbox rows only. The "Design" button just opens the advisor with `rows[i].inputs`.
 
 ## 8. Worker client (`workerClient.ts`)
 
@@ -293,3 +322,12 @@ client; the UI never creates it). Protocol types are in `messages.ts`.
   (1.67·Sy = 460.9, 0.577·σf/0.25 = 240.0, weaker of disc and pin part) instead of the script's rounded 460/240, and an undercut (path curvature > 1/rr) also sets the cusp flag.
   `npm run parity` checks all of this against the Python reference (see `scripts/parity/README.md`).
 * Polymer warning card: show when `result.polymerWarning`, text from `POLYMER_WARNING_LINES`. It is not a failed check.
+
+## 10. Session format 2 (`src/ui/session.ts`)
+
+Export/localStorage store `arm` as the joint list and key everything per joint by the joint **id**:
+`gearboxes` (cycloidal joints plus `custom`; a servo keeps a hidden entry so switching its drive back restores it), `useArmLoads`, `advisorLocks`, and `presetBase`
+(for an added joint, which SPEC preset it started from, shown on the Gearbox page). `version` is 2 (`EXPORT_VERSION`). `normalizeSession` migrates format 1
+(fixed five-joint arm, ids `J1..J5`, gearboxes/locks/toggles keyed `J1..J4`) without loss; unknown keys are dropped; `reconcileSession(session)` makes the per-joint
+parts agree with the arm (new cycloidal joint: gearbox from `closestPresetId` of its arm-model T_req, toggle on, default locks; removed joint: all its state deleted;
+`selected` falls back to the first gearbox joint, or `custom`). `armPose` (`'ready' | 'worst'`) is display-only drawing state and is not exported.

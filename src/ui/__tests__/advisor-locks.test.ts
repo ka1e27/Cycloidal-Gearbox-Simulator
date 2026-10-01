@@ -7,7 +7,9 @@ import {
   defaultLockState, lockAllToInputs, lockErrors, lockRowError, normalizeLockState, resolveLockValues, toEngineLocks, unlockAll,
   bearingFromInputs, innerPinFromInputs, outerPinFromInputs,
 } from '../advisorLocks';
-import { defaultSession, exportSession, importSession, loadSession, normalizeSession, saveSession, SLOTS, STORAGE_KEY, type Session } from '../session';
+import { defaultSession, exportSession, importSession, loadSession, normalizeSession, saveSession, slotsOf, STORAGE_KEY, type Session } from '../session';
+
+const SLOTS = slotsOf(defaultSession());
 import { StoreProvider } from '../store';
 import { Alternatives, Hero } from '../screens/AdvisorScreen';
 import { AdvisorLocksPanel } from '../screens/AdvisorLocksPanel';

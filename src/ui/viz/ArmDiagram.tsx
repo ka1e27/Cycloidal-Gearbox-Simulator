@@ -1,68 +1,19 @@
 import { useId } from 'react';
-import type { ArmInputs } from '../../calc';
-import { useU } from '../store';
+import { jointLabel, type ArmInputs } from '../../calc';
+import { Segmented } from '../components/primitives';
+import { useStore } from '../store';
+
+import { hit, layoutArm, placeLabels, type Box, type LabelRequest, type PoseMode } from './armLayout';
+import { PitchJoint, RollSymbol, YawBack, YawFront } from './armSymbols';
 import { useWidth } from './useWidth';
 
-const clean = (x: number) => (Number.isFinite(x) && x > 0 ? x : 0);
-const RAD = Math.PI / 180;
+/** Drawing input: finite, non-negative, and capped so absurd values (an invalid arm) still give a finite picture. */
+const clean = (x: number) => (Number.isFinite(x) && x > 0 ? Math.min(x, 1e7) : 0);
 const A = 5; // arrowhead length
 const CHAR_W = 6.4; // IBM Plex Mono advance at 10.5 px, for label collision checks
 const textW = (s: string) => s.length * CHAR_W;
-
-/* ---- motion symbols (kinematic-diagram conventions), shared by the drawing and the legend ---- */
-
-/** Small curved arrow beside a pitch joint circle (axis into the page). */
-function PitchArrow({ cx, cy, r }: { cx: number; cy: number; r: number }) {
-  const R = r + 5;
-  const a0 = -18 * RAD;
-  const a1 = -68 * RAD;
-  const [xa, ya] = [cx + R * Math.cos(a0), cy + R * Math.sin(a0)];
-  const [xb, yb] = [cx + R * Math.cos(a1), cy + R * Math.sin(a1)];
-  const deg = Math.atan2(-Math.cos(a1), Math.sin(a1)) / RAD; // tangent direction at the end, angle decreasing
-  return (
-    <g>
-      <path className="dr-motion" d={`M${xa} ${ya} A${R} ${R} 0 0 0 ${xb} ${yb}`} />
-      <path className="dr-motion-head" d="M0 0 L-7 -3 L-7 3 Z" transform={`translate(${xb} ${yb}) rotate(${deg})`} />
-    </g>
-  );
-}
-
-/** Pitch joint: circle with an axis-into-page cross, plus the curved arrow. */
-function PitchJoint({ cx, cy, r }: { cx: number; cy: number; r: number }) {
-  return (
-    <g className="dr-joint">
-      <circle cx={cx} cy={cy} r={r} />
-      <path className="dr-cross" d={`M${cx - 3.5} ${cy - 3.5} l7 7 m0 -7 l-7 7`} />
-      <PitchArrow cx={cx} cy={cy} r={r} />
-    </g>
-  );
-}
-
-/** Yaw: an ellipse seen in perspective around the vertical axis. Back half dashed, front half solid with a head. */
-function YawBack({ cx, cy, rx, ry }: { cx: number; cy: number; rx: number; ry: number }) {
-  return <path className="dr-motion dr-motion-back" d={`M${cx - rx} ${cy} A${rx} ${ry} 0 0 1 ${cx + rx} ${cy}`} />;
-}
-function YawFront({ cx, cy, rx, ry }: { cx: number; cy: number; rx: number; ry: number }) {
-  return (
-    <g>
-      <path className="dr-motion" d={`M${cx - rx} ${cy} A${rx} ${ry} 0 0 0 ${cx + rx} ${cy}`} />
-      <path className="dr-motion-head" d={`M${cx + rx} ${cy - 2.5} l-3 6.5 h6 z`} />
-    </g>
-  );
-}
-
-/** Roll: a collar across the link plus an elliptical arrow around the link axis (axis runs left to right). */
-function RollSymbol({ cx, cy, ry, rx = 9 }: { cx: number; cy: number; ry: number; rx?: number }) {
-  const ch = Math.min(ry - 4, 9); // collar half-height, a little proud of the 9 px link
-  return (
-    <g className="dr-roll">
-      <path className="dr-motion dr-motion-back" d={`M${cx} ${cy - ry} A${rx} ${ry} 0 0 0 ${cx} ${cy + ry}`} />
-      <rect className="dr-collar" x={cx - 3.5} y={cy - ch} width={7} height={2 * ch} />
-      <path className="dr-motion" d={`M${cx} ${cy - ry} A${rx} ${ry} 0 0 1 ${cx} ${cy + ry}`} />
-      <path className="dr-motion-head" d={`M${cx - 2} ${cy + ry} l8 -3.6 v7.2 z`} />
-    </g>
-  );
-}
+const LINK_HALF = 4.5; // half the drawn link thickness
+const trunc = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** Tiny SVG legend: what the three motion symbols mean. */
 function Legend() {
@@ -93,152 +44,258 @@ function Legend() {
   );
 }
 
-interface Box { x1: number; x2: number; y1: number; y2: number }
-const hit = (a: Box, b: Box, pad = 3) => a.x1 < b.x2 + pad && a.x2 > b.x1 - pad && a.y1 < b.y2 + pad && a.y2 > b.y1 - pad;
+const POSES: { value: PoseMode; label: string; title: string }[] = [
+  { value: 'ready', label: 'Ready pose', title: 'Shoulder on the base, elbow above it, later links out' },
+  { value: 'worst', label: 'Worst case (straight out)', title: 'The pose every torque is computed for' },
+];
 
-/** Live side view of the arm, drawn to scale from the lengths (straight out, worst gravity pose). Drafting style. */
+/** Live side view of the arm, drawn to scale from the joint list. Drafting style. Any chain of 1 to 8 joints. */
 export function ArmDiagram({ arm }: { arm: ArmInputs }) {
-  const u = useU();
   const [ref, W] = useWidth<HTMLDivElement>(640);
+  const { state, dispatch, u } = useStore();
+  const mode = state.armPose;
+  const setMode = (m: PoseMode) => dispatch({ type: 'pose', pose: m });
   const hatchId = useId().replace(/:/g, '');
+  const joints = Array.isArray(arm?.joints) ? arm.joints : [];
+  const n = joints.length;
 
-  const len = arm.barLength_mm.map(clean);
-  const jm = arm.jointMass_g.map(clean);
-  const bm = arm.barMass_g.map(clean);
-  const payload = clean(arm.payload_g);
-  const column = len[0]; // base column, J1 to J2 (rotates with J1)
-  const horiz = len.slice(1);
-  const reach = horiz.reduce((s, x) => s + x, 0);
-
-  const rightM = W < 520 ? 46 : 64;
-  const topM = 4 + 3 * 34; // three dimension rows
   const len_ = (mm: number) => u.fu('length', mm, { dp: 1, trim: true });
   const mass_ = (g: number) => u.fu('mass', g, { dp: 1, trim: true });
+  const poseSwitch = (
+    <div className="armfig-tools">
+      <Segmented<PoseMode> value={mode} onChange={setMode} label="Drawing pose" size="sm" options={POSES} />
+    </div>
+  );
+  if (n === 0) return <div ref={ref} className="armfig">{poseSwitch}<p className="armfig-cap">Add a joint to see the arm.</p></div>;
+
+  const L = joints.map((j) => clean(j.length_mm));
+  const jm = joints.map((j) => clean(j.mass_g));
+  const lm = joints.map((j) => clean(j.linkMass_g));
+  const payload = clean(arm.payload_g);
+  const geo = layoutArm(joints.map((j, i) => ({ motion: j.motion, length_mm: L[i] })), mode);
+  const { points, dirs, vertical } = geo;
+  const modelW = geo.bbox.maxX - geo.bbox.minX;
+  const modelH = geo.bbox.maxY - geo.bbox.minY;
+  const nHoriz = vertical.filter((v) => !v).length;
+  const nVert = vertical.filter((v) => v).length;
+  const first = joints.findIndex((j) => j.motion === 'pitch');
+  const reachMm = first < 0 ? 0 : L.slice(first).reduce((s, x) => s + x, 0);
+  const showReach = mode === 'worst' && reachMm > 0;
+
+  // symbol sizes: grow a little with joint mass, shrink where links are short
   const maxMass = Math.max(1, ...jm);
-  const rJ = jm.map((m) => 10 + 7 * Math.sqrt(m / maxMass));
-
-  const pw = 14 + rJ[0]; // J1 rotating platform half width
+  const small = W < 520;
+  const rightM = small ? 46 : 64;
+  const baseR = 10 + 7 * Math.sqrt(jm[0] / maxMass);
+  const yawBase = joints[0].motion === 'yaw';
+  const pw = 12 + baseR; // turntable half width
   const bw = pw + 7; // fixed base plate half width
-  const cw = 8; // base column half width
-  // room on the left for the base column dimension text (length, mass, "column")
-  const colText = Math.max(textW(len_(column)), textW(mass_(bm[0])), textW('column'));
-  const j2Left = Math.ceil(rJ[1] + 6 + textW('J2 shoulder') + 4); // J2 label sits up and to the left of its circle
-  const leftM = Math.max(W < 520 ? 84 : 96, Math.ceil(bw + 12 + 6 + colText + 4), j2Left);
-  const scaleW = reach > 0 ? (W - leftM - rightM) / reach : 1;
-  const scale = Math.max(0.05, Math.min(scaleW, 1.1, column > 0 ? 210 / column : 99));
+  const vTextW = Math.max(0, ...joints.map((_, i) => (vertical[i] ? Math.max(textW(len_(L[i])), textW(mass_(lm[i]))) : 0)));
+  const leftM = nVert > 0 ? Math.max(small ? 84 : 96, Math.ceil(bw + 12 + 6 + vTextW + 6)) : Math.ceil(bw + 14);
+  const levels = Math.min(3, Math.max(1, nHoriz)) + (showReach ? 1 : 0);
+  const tipUp = dirs[n - 1].y > 0.5; // the payload sits on top of a vertical tool
+  const topM = 14 + (tipUp ? 32 : 0) + (nHoriz > 0 ? 34 * levels + 8 : 0);
+  const bottomM = 64;
+  const innerW = Math.max(60, W - leftM - rightM);
+  const innerH = 300;
+  const scale = Math.max(1e-9, Math.min(modelW > 0 ? innerW / modelW : 99, modelH > 0 ? innerH / modelH : 99, 1.15));
+  const H = Math.ceil(topM + modelH * scale + bottomM);
 
-  const x0 = leftM;
-  const xs = [x0];
-  for (const l of horiz) xs.push(xs[xs.length - 1] + l * scale); // J2, J3, J4, J5, tip
-  const y0 = topM + 18; // J2 axis (arm plane)
-  const columnPx = column * scale;
-  const yP = y0 + columnPx; // top of the turntable platform
+  const shiftX = Math.max(0, Math.min(90, (innerW - modelW * scale) / 2));
+  const px = (p: { x: number; y: number }) => ({ x: leftM + shiftX + (p.x - geo.bbox.minX) * scale, y: topM + (geo.bbox.maxY - p.y) * scale });
+  const P = points.map(px);
+  const linkPx = L.map((l) => l * scale);
+  const rMass = jm.map((m) => 10 + 7 * Math.sqrt(m / maxMass));
+  const rJ = rMass.map((r, i) => {
+    let cap = Infinity;
+    for (const k of [i - 1, i]) if (k >= 0 && k < n && linkPx[k] >= 6) cap = Math.min(cap, linkPx[k] * 0.46);
+    return Math.max(4.5, Math.min(r, cap));
+  });
+  const rollRy = (i: number) => Math.max(10, Math.min(15, rJ[i] + 3));
 
-  // turntable geometry (J1)
-  const yGround = yP + 20;
+  // base: turntable (yaw) or a plain block under the first joint
+  let baseY = P[0].y;
+  if (yawBase && n > 1 && vertical[0]) baseY = Math.max(baseY, P[1].y + rJ[1] + 3); // a short column: the shoulder sits right on the platform
+  if (!yawBase) baseY = P[0].y + (joints[0].motion === 'roll' ? rollRy(0) : rJ[0]) + 2;
+  const x0 = P[0].x;
+  const yGround = baseY + 20;
+  const totalMass = jm.reduce((s, x) => s + x, 0) + lm.reduce((s, x) => s + x, 0) + payload;
 
-  const jointX = [x0, xs[0], xs[1], xs[2], xs[3]]; // J1 (on the axis of the column), J2..J5
-  const rollRy = Math.max(15, rJ[3] + 3);
-  const halfH = [0, rJ[1], rJ[2], rollRy, rJ[4]]; // half height of each joint symbol
-  const tipX = xs[4];
+  const obstacles: Box[] = [];
+  const addBox = (x1: number, y1: number, x2: number, y2: number) => obstacles.push({ x1: Math.min(x1, x2), x2: Math.max(x1, x2), y1: Math.min(y1, y2), y2: Math.max(y1, y2) });
+  addBox(x0 - bw - 8, baseY - 12, x0 + bw + 8, yGround + 9); // base, turntable arrow and ground
+  P.slice(0, n).forEach((p, i) => {
+    const rr = joints[i].motion === 'roll' ? rollRy(i) : joints[i].motion === 'yaw' && i > 0 ? rJ[i] + 8 : rJ[i] + 5;
+    addBox(p.x - rr, p.y - rr, p.x + rr, p.y + rr);
+  });
+  const linkPoly: [number, number][][] = [];
+  for (let i = 0; i < n; i++) {
+    const a = P[i];
+    const b = P[i + 1];
+    const d = dirs[i];
+    const nx = d.y; // screen direction is (dx, -dy), so its normal is (dy, dx)
+    const ny = d.x;
+    const quad: [number, number][] = [
+      [a.x + nx * LINK_HALF, a.y + ny * LINK_HALF], [b.x + nx * LINK_HALF, b.y + ny * LINK_HALF],
+      [b.x - nx * LINK_HALF, b.y - ny * LINK_HALF], [a.x - nx * LINK_HALF, a.y - ny * LINK_HALF],
+    ];
+    linkPoly.push(quad);
+    addBox(a.x - LINK_HALF, a.y - LINK_HALF, b.x + LINK_HALF, b.y + LINK_HALF);
+  }
 
-  const totalMass = jm.reduce((s, x) => s + x, 0) + bm.reduce((s, x) => s + x, 0) + payload;
-  const label = `Arm side view to scale: reach ${len_(reach)}, base column ${len_(column)}, total mass ${u.fu('mass', totalMass, { dp: 1, trim: true })}. J1 turns the whole arm about a vertical axis; J2 pitches bar A.`;
-
-  const dimY = (level: number) => y0 - 34 * (level + 1) + 10;
-  const dims: { k: number; level: number }[] = [
-    { k: 0, level: 0 }, { k: 1, level: 1 }, { k: 2, level: 0 }, { k: 3, level: 1 },
-  ];
-  const mid = (a: number, b: number) => (a + b) / 2;
-  const dimLine = (key: string, xa: number, xb: number, y: number, textTop: string, textSub?: string) => (
-      <g className="dr-dim" key={key}>
+  // ---- dimensions: horizontal links get a dimension line above, vertical links one on the left ----
+  const dimTexts: Box[] = [];
+  const dimEls: React.ReactNode[] = [];
+  const extLines: React.ReactNode[] = [];
+  const clearBox = (b: Box) => !dimTexts.some((t) => hit(b, t, 2));
+  const ext = (key: string, x1: number, y1: number, x2: number, y2: number) => {
+    extLines.push(<line key={key} x1={x1} x2={x2} y1={y1} y2={y2} />);
+    addBox(x1 - 1, y1, x2 + 1, y2);
+  };
+  const vDimX = x0 - bw - 12;
+  for (let i = 0; i < n; i++) {
+    if (linkPx[i] < 16) continue;
+    const a = P[i];
+    const b = P[i + 1];
+    const top = len_(L[i]);
+    const sub = mass_(lm[i]);
+    if (!vertical[i]) {
+      const xa = a.x;
+      const xb = b.x;
+      const wide = xb - xa >= 112;
+      const tw = Math.max(textW(top) + (wide ? textW(sub) + 14 : 0), wide ? 0 : textW(sub));
+      let level = 0;
+      for (; level < 3; level++) {
+        const y = a.y - 22 - level * 34;
+        const box: Box = { x1: (xa + xb) / 2 - tw / 2, x2: (xa + xb) / 2 + tw / 2, y1: y - (wide ? 16 : 28), y2: y };
+        if (clearBox(box) || level === 2) { dimTexts.push(box); break; }
+      }
+      const y = a.y - 22 - level * 34;
+      obstacles.push({ ...dimTexts[dimTexts.length - 1], text: true });
+      ext(`e${i}a`, xa, a.y - rJ[i] - 2, xa, y - 4);
+      ext(`e${i}b`, xb, b.y - (i + 1 < n ? rJ[i + 1] : 6) - 2, xb, y - 4);
+      const mid = (xa + xb) / 2;
+      dimEls.push(
+        <g className="dr-dim" key={`d${i}`}>
+          <line x1={xa + A} x2={xb - A} y1={y} y2={y} />
+          <path d={`M${xa} ${y} l${A} -2 v4 z`} className="dr-arrow" />
+          <path d={`M${xb} ${y} l${-A} -2 v4 z`} className="dr-arrow" />
+          {wide ? (
+            <text x={mid} y={y - 5} textAnchor="middle" className="dr-text">{top}<tspan className="dr-sub">{'  '}{sub}</tspan></text>
+          ) : (
+            <>
+              <text x={mid} y={y - 5} textAnchor="middle" className="dr-text">{top}</text>
+              <text x={mid} y={y - 17} textAnchor="middle" className="dr-text dr-sub">{sub}</text>
+            </>
+          )}
+        </g>,
+      );
+    } else {
+      const ya = b.y; // top end (model y is up, screen y is down)
+      const yb = a.y;
+      const mid = (ya + yb) / 2;
+      const two = yb - ya >= 30;
+      let ty = mid;
+      const th = two ? 24 : 12;
+      let box: Box = { x1: vDimX - 6 - Math.max(textW(top), two ? textW(sub) : 0), x2: vDimX - 6, y1: ty - th / 2 - 2, y2: ty + th / 2 + 2 };
+      let guard = 0;
+      while (!clearBox(box) && guard++ < 6) { ty += 14; box = { ...box, y1: ty - th / 2 - 2, y2: ty + th / 2 + 2 }; }
+      dimTexts.push(box);
+      obstacles.push({ ...box, text: true });
+      ext(`e${i}a`, vDimX - 6, yb, a.x - rJ[i] - 2, yb);
+      ext(`e${i}b`, vDimX - 6, ya, b.x - (i + 1 < n ? rJ[i + 1] : 6) - 2, ya);
+      dimEls.push(
+        <g className="dr-dim" key={`d${i}`}>
+          <line x1={vDimX} x2={vDimX} y1={ya + A} y2={yb - A} />
+          <path d={`M${vDimX} ${ya} l-2 ${A} h4 z`} className="dr-arrow" />
+          <path d={`M${vDimX} ${yb} l-2 ${-A} h4 z`} className="dr-arrow" />
+          {two ? (
+            <>
+              <text x={vDimX - 6} y={ty - 1} textAnchor="end" className="dr-text">{top}</text>
+              <text x={vDimX - 6} y={ty + 11} textAnchor="end" className="dr-text dr-sub">{sub}</text>
+            </>
+          ) : (
+            <text x={vDimX - 6} y={ty + 4} textAnchor="end" className="dr-text">{top}</text>
+          )}
+        </g>,
+      );
+    }
+  }
+  // reach dimension (worst case only): from the first pitch joint to the tip
+  let reachEl: React.ReactNode = null;
+  if (showReach && first >= 0) {
+    const xa = P[first].x;
+    const xb = P[n].x;
+    const y = P[first].y - 22 - (levels - 1) * 34;
+    const txt = `REACH ${len_(reachMm)}`;
+    obstacles.push({ x1: (xa + xb) / 2 - textW(txt) / 2, x2: (xa + xb) / 2 + textW(txt) / 2, y1: y - 16, y2: y, text: true });
+    ext('re-a', xa, P[first].y - rJ[first] - 2, xa, y - 4);
+    ext('re-b', xb, P[n].y - 6, xb, y - 4);
+    reachEl = (
+      <g className="dr-dim">
         <line x1={xa + A} x2={xb - A} y1={y} y2={y} />
         <path d={`M${xa} ${y} l${A} -2 v4 z`} className="dr-arrow" />
         <path d={`M${xb} ${y} l${-A} -2 v4 z`} className="dr-arrow" />
-        {textSub && xb - xa < 112 ? (
-          <>
-            <text x={mid(xa, xb)} y={y - 5} textAnchor="middle" className="dr-text">{textTop}</text>
-            <text x={mid(xa, xb)} y={y - 17} textAnchor="middle" className="dr-text dr-sub">{textSub}</text>
-          </>
-        ) : (
-          <text x={mid(xa, xb)} y={y - 5} textAnchor="middle" className="dr-text">
-            {textTop}
-            {textSub && <tspan className="dr-sub">{'  '}{textSub}</tspan>}
-          </text>
-        )}
+        <text x={(xa + xb) / 2} y={y - 5} textAnchor="middle" className="dr-text">{txt}</text>
       </g>
-  );
+    );
+  }
 
+  // ---- payload at the tip ----
+  const tip = P[n];
+  const lastDir = dirs[n - 1];
+  const payloadText = mass_(payload);
+  let payloadEl: React.ReactNode;
+  if (lastDir.y > 0.5) {
+    // tool pointing up: the payload sits on the end of the tool, the label beside it
+    payloadEl = (
+      <g className="dr-payload">
+        <line x1={tip.x} x2={tip.x} y1={tip.y} y2={tip.y - 12} />
+        <rect x={tip.x - 8} y={tip.y - 28} width={16} height={16} />
+        <text x={tip.x + 13} y={tip.y - 16} textAnchor="start" className="dr-text">{payloadText}</text>
+      </g>
+    );
+    addBox(tip.x - 8, tip.y - 28, tip.x + 14 + textW(payloadText), tip.y);
+  } else {
+    payloadEl = (
+      <g className="dr-payload">
+        <line x1={tip.x} x2={tip.x} y1={tip.y} y2={tip.y + 16} />
+        <rect x={tip.x - 8} y={tip.y + 16} width={16} height={16} />
+        <path d={`M${tip.x} ${tip.y + 46} l-3.5 -7 h7 z`} className="dr-arrow" />
+        <text x={tip.x} y={tip.y + 62} textAnchor="middle" className="dr-text">{payloadText}</text>
+      </g>
+    );
+    const ph = Math.max(10, textW(payloadText) / 2 + 2);
+    addBox(tip.x - 10, tip.y, tip.x + 10, tip.y + 48);
+    addBox(tip.x - ph, tip.y + 50, tip.x + ph, tip.y + 68);
+  }
 
-  /* ---- joint labels: name + mass, placed below the arm in the first free slot ---- */
-  const NAMES = ['J1 base yaw', 'J2 shoulder', 'J3 elbow', 'J4 roll', 'J5 wrist'];
-  const ROW = 28;
-  const payloadHalf = Math.max(10, textW(mass_(payload)) / 2 + 2);
-  const obstacles: Box[] = [
-    { x1: x0 - cw - 1, x2: x0 + cw + 1, y1: y0, y2: yP }, // column
-    { x1: x0 - bw - 10, x2: x0 + bw + 10, y1: yP - 20, y2: yGround + 10 }, // turntable, yaw arrow and ground
-    { x1: x0 - bw - 14 - 64, x2: x0 - bw - 6, y1: y0 - 4, y2: yP + 2 }, // column dimension text
-    { x1: tipX - 10, x2: tipX + 10, y1: y0, y2: y0 + 48 }, // payload box and arrow
-    { x1: tipX - payloadHalf, x2: tipX + payloadHalf, y1: y0 + 50, y2: y0 + 68 }, // payload mass
-  ];
-  const j1w = Math.max(textW(NAMES[0]), textW(mass_(jm[0])));
-  const j1Top = yGround + 14;
-  const j1Box: Box = { x1: x0 - j1w / 2, x2: x0 + j1w / 2, y1: j1Top - 1, y2: j1Top + 26 };
-  obstacles.push(j1Box);
-
-  interface Placed { box: Box; x: number; top: number; i: number; lead: [number, number, number, number] | null }
-  // J2: name and mass up and to the left of the circle, clear of the column dimension; lifted when a short column
-  // brings the yaw arrow up beside it
-  const j2X = x0 - rJ[1] - 6;
-  const j2Y = y0 - 6 - (columnPx < 26 ? 14 : 0);
-  // J3..J5: every slot (row below the arm x horizontal shift) that clears the fixed parts, then the cheapest
-  // combination in which no label or leader line crosses another (small depth-first search).
-  const leadBox = (l: [number, number, number, number]): Box => ({ x1: Math.min(l[0], l[2]) - 1, x2: Math.max(l[0], l[2]) + 1, y1: l[1], y2: l[3] });
-  const options = [2, 3, 4].map((i) => {
-    const jx = jointX[i];
-    const w = Math.max(textW(NAMES[i]), textW(mass_(jm[i])));
-    const shifts = [-w / 2, -w + 12, -12, -w - 2, 2]; // x1 relative to the joint
-    const out: (Placed & { cost: number })[] = [];
-    for (let k = 0; k < 6; k++) {
-      const top = y0 + halfH[i] + 8 + k * ROW;
-      shifts.forEach((sh, si) => {
-        const x1 = Math.min(Math.max(jx + sh, 2), W - 2 - w);
-        const box: Box = { x1, x2: x1 + w, y1: top - 1, y2: top + 26 };
-        if (obstacles.some((o) => hit(box, o))) return;
-        const cx = Math.min(Math.max(jx, box.x1 + 2), box.x2 - 2);
-        const lead: [number, number, number, number] | null = k > 0 || Math.abs(cx - jx) > 3 ? [jx, y0 + halfH[i], cx, top - 2] : null;
-        if (lead && hit(leadBox(lead), j1Box, 1)) return;
-        out.push({ box, x: x1 + w / 2, top, i, lead, cost: k * 12 + si * 3 });
-      });
-    }
-    return out;
+  // ---- joint labels, placed clear of everything else ----
+  const reqs: LabelRequest[] = joints.map((j, i) => {
+    const l1 = trunc(jointLabel(j, i), 19);
+    const bracket = i === 0 && yawBase && vertical[0] && linkPx[0] < 16 && lm[0] > 0 ? ` + ${mass_(lm[0])} bracket` : '';
+    const l2 = `${mass_(jm[i])}${bracket}${j.drive === 'servo' ? ' · servo' : ''}`;
+    const w = Math.max(textW(l1), textW(l2));
+    const rr = j.motion === 'roll' ? rollRy(i) : j.motion === 'yaw' && i > 0 ? rJ[i] + 8 : rJ[i];
+    const base = i === 0 && yawBase;
+    const vert = vertical[i] || (i > 0 && vertical[i - 1] && !vertical[i]) ? 'v' : 'h';
+    const prefer = base ? ['S' as const] : vert === 'v' ? ['E' as const, 'W' as const, 'N' as const] : ['S' as const, 'N' as const, 'SE' as const, 'SW' as const];
+    return { key: i, ax: base ? x0 : P[i].x, ay: base ? yGround : P[i].y, r: base ? 2 : rr, w, h: 24, prefer, l1, l2 } as LabelRequest & { l1: string; l2: string };
   });
-  const clash = (a: Placed, b: Placed) =>
-    hit(a.box, b.box) || (!!a.lead && hit(leadBox(a.lead), b.box, 1)) || (!!b.lead && hit(leadBox(b.lead), a.box, 1));
-  let best: Placed[] | null = null;
-  let bestCost = Infinity;
-  const walk = (n: number, acc: (Placed & { cost: number })[], cost: number) => {
-    if (cost >= bestCost) return;
-    if (n === options.length) { best = acc.slice(); bestCost = cost; return; }
-    for (const o of options[n]) {
-      if (acc.some((p) => clash(p, o))) continue;
-      acc.push(o);
-      walk(n + 1, acc, cost + o.cost);
-      acc.pop();
-    }
-  };
-  walk(0, [], 0);
-  const placed: Placed[] = best ?? [2, 3, 4].map((i) => {
-    const w = Math.max(textW(NAMES[i]), textW(mass_(jm[i])));
-    const top = y0 + halfH[i] + 8 + (i - 2) * ROW;
-    return { box: { x1: jointX[i] - w / 2, x2: jointX[i] + w / 2, y1: top - 1, y2: top + 26 }, x: jointX[i], top, i, lead: null };
-  });
+  const placedLabels = placeLabels(reqs, obstacles, { W, H });
+  const labelText = reqs as (LabelRequest & { l1: string; l2: string })[];
 
-  const H = Math.ceil(Math.max(j1Box.y2, y0 + 72, ...placed.map((p) => p.box.y2)) + 8);
-  const hatchLines = [-bw + 2, -bw + 12, -bw + 22, -bw + 32, -bw + 42, -bw + 52, -bw + 62, -bw + 72].filter((dx) => dx <= bw + 4);
+  const label = mode === 'ready'
+    ? `Arm side view to scale in the ready pose: ${n} joint${n > 1 ? 's' : ''}, total mass ${u.fu('mass', totalMass, { dp: 1, trim: true })}. The torques use the worst case, arm straight out.`
+    : `Arm side view to scale, worst-case pose with the arm straight out: ${n} joint${n > 1 ? 's' : ''}, reach ${len_(reachMm)}, total mass ${u.fu('mass', totalMass, { dp: 1, trim: true })}.`;
+
+  const hatchLines: number[] = [];
+  for (let dx = -bw + 2; dx <= bw + 4; dx += 10) hatchLines.push(dx);
+  const chainPts = P.map((p) => `${p.x},${p.y}`).join(' ');
 
   return (
     <div ref={ref} className="armfig">
+      {poseSwitch}
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
         <title>{label}</title>
         <defs>
@@ -248,106 +305,101 @@ export function ArmDiagram({ arm }: { arm: ArmInputs }) {
           </pattern>
         </defs>
 
-        {/* ground and fixed base plate */}
+        {/* ground and the fixed base */}
         <g className="dr-ground">
           <line x1={x0 - bw - 8} x2={x0 + bw + 8} y1={yGround} y2={yGround} />
           {hatchLines.map((dx) => (
             <line key={dx} x1={x0 + dx + 8} x2={x0 + dx + 1} y1={yGround} y2={yGround + 7} />
           ))}
         </g>
-        <rect className="dr-bar" x={x0 - bw} y={yP + 11} width={2 * bw} height={9} />
+        <rect className="dr-bar" x={x0 - (yawBase ? bw : Math.max(18, rJ[0] + 12))} y={baseY + 11} width={2 * (yawBase ? bw : Math.max(18, rJ[0] + 12))} height={9} />
 
-        {/* extension lines from the joints up to the dimension rows */}
-        <g className="dr-ext">
-          {xs.map((x, i) => (
-            <line key={i} x1={x} x2={x} y1={y0 - (i === 4 ? 6 : halfH[i + 1]) - 2} y2={dimY(i === 0 || i === 4 ? 2 : 1) - 4} />
-          ))}
-        </g>
+        {/* a plain base (first joint is not a yaw): a pedestal from the joint down to the plate */}
+        {!yawBase && <rect className="dr-bar" x={x0 - 9} y={P[0].y} width={18} height={baseY + 11 - P[0].y} />}
 
-        {/* yaw arrow, back half (behind the column) */}
-        <YawBack cx={x0} cy={yP - 12} rx={pw + 7} ry={5.5} />
+        {/* extension lines up to the dimension rows */}
+        <g className="dr-ext">{extLines}</g>
 
-        {/* rotating body: platform + base column, one piece that turns with J1 */}
-        <g className="dr-body">
-          <path
-            d={`M${x0 - pw} ${yP + 8} V${yP} H${x0 - cw} V${y0} H${x0 + cw} V${yP} H${x0 + pw} V${yP + 8} Z`}
-            fill={`url(#${hatchId}-body)`}
-          />
-          {/* turntable bearing between the platform and the base plate */}
-          <rect className="dr-bearing" x={x0 - pw + 4} y={yP + 8} width={2 * pw - 8} height={3} />
-        </g>
+        {/* base yaw: arrow, back half */}
+        {yawBase && <YawBack cx={x0} cy={baseY - 3} rx={pw + 7} ry={5.5} />}
 
-        {/* J1 axis, vertical dash-dot through the whole base */}
-        <line className="dr-axis" x1={x0} x2={x0} y1={y0 + rJ[1]} y2={yGround + 6} />
+        {/* rotating platform of a base yaw */}
+        {yawBase && (
+          <g className="dr-body">
+            <path d={`M${x0 - pw} ${baseY + 8} V${baseY} H${x0 + pw} V${baseY + 8} Z`} fill={`url(#${hatchId}-body)`} />
+            <rect className="dr-bearing" x={x0 - pw + 4} y={baseY + 8} width={2 * pw - 8} height={3} />
+          </g>
+        )}
+        {yawBase && <line className="dr-axis" x1={x0} x2={x0} y1={Math.min(P[0].y, baseY) - 2} y2={yGround + 6} />}
 
-        {/* yaw arrow, front half */}
-        <YawFront cx={x0} cy={yP - 12} rx={pw + 7} ry={5.5} />
-
-        {/* driven links: bars A to D */}
+        {/* links */}
         <g className="dr-links">
-          {horiz.map((_, i) => (
-            <rect key={i} className="dr-bar" x={xs[i]} y={y0 - 4.5} width={Math.max(xs[i + 1] - xs[i], 0.1)} height={9} />
+          {linkPoly.map((q, i) => (
+            linkPx[i] > 0.3 ? (
+              <polygon key={i} className="dr-bar" points={q.map((p) => p.join(',')).join(' ')}
+                style={i === 0 && yawBase && vertical[0] ? { fill: `url(#${hatchId}-body)` } : undefined} />
+            ) : null
           ))}
-          <line className="dr-center" x1={xs[0]} x2={tipX} y1={y0} y2={y0} />
+          <polyline className="dr-center" points={chainPts} fill="none" />
         </g>
+        {yawBase && baseY > P[0].y && <rect className="dr-bar" style={{ fill: `url(#${hatchId}-body)` }} x={x0 - LINK_HALF} y={P[0].y} width={2 * LINK_HALF} height={baseY - P[0].y} />}
 
-        {/* payload at the tip */}
-        <g className="dr-payload">
-          <line x1={tipX} x2={tipX} y1={y0} y2={y0 + 16} />
-          <rect x={tipX - 8} y={y0 + 16} width={16} height={16} />
-          <path d={`M${tipX} ${y0 + 46} l-3.5 -7 h7 z`} className="dr-arrow" />
-          <text x={tipX} y={y0 + 62} textAnchor="middle" className="dr-text">{mass_(payload)}</text>
-        </g>
-
-        {/* dimensions */}
-        {dims.map(({ k, level }) => dimLine(`d${k}`, xs[k], xs[k + 1], dimY(level), len_(horiz[k]), mass_(bm[k + 1])))}
-        {dimLine('reach', xs[0], xs[4], dimY(2), `REACH ${len_(reach)}`)}
-
-        {/* base column dimension on the left: J2 axis down to the turntable top */}
-        {(() => {
-          const dx = x0 - bw - 12;
-          const ty = Math.max(mid(y0, yP), y0 + 22); // keep the text below the J2 label when the column is short
-          return (
-            <g className="dr-dim">
-              <line x1={dx} x2={dx} y1={y0 + A} y2={yP - A} />
-              <path d={`M${dx} ${y0} l-2 ${A} h4 z`} className="dr-arrow" />
-              <path d={`M${dx} ${yP} l-2 ${-A} h4 z`} className="dr-arrow" />
-              <line x1={dx - 6} x2={x0 - rJ[1] - 2} y1={y0} y2={y0} className="dr-ext-line" />
-              <line x1={dx - 6} x2={x0 - pw - 2} y1={yP} y2={yP} className="dr-ext-line" />
-              <text x={dx - 6} y={ty - 12} textAnchor="end" className="dr-text dr-sub">column</text>
-              <text x={dx - 6} y={ty - 1} textAnchor="end" className="dr-text">{len_(column)}</text>
-              <text x={dx - 6} y={ty + 11} textAnchor="end" className="dr-text dr-sub">{mass_(bm[0])}</text>
-            </g>
-          );
-        })()}
+        {/* yaw joints further along the chain: back half behind the joint */}
+        {joints.map((j, i) => (j.motion === 'yaw' && i > 0 ? <YawBack key={`yb${i}`} cx={P[i].x} cy={P[i].y} rx={rJ[i] + 8} ry={4.5} /> : null))}
 
         {/* joints */}
-        <PitchJoint cx={jointX[1]} cy={y0} r={rJ[1]} />
-        <PitchJoint cx={jointX[2]} cy={y0} r={rJ[2]} />
-        <RollSymbol cx={jointX[3]} cy={y0} ry={rollRy} />
-        <PitchJoint cx={jointX[4]} cy={y0} r={rJ[4]} />
+        {joints.map((j, i) => {
+          const p = P[i];
+          if (j.motion === 'pitch') return <PitchJoint key={i} cx={p.x} cy={p.y} r={rJ[i]} />;
+          if (j.motion === 'roll') {
+            return (
+              <RollSymbol key={i} cx={p.x} cy={p.y} ry={rollRy(i)} rx={Math.min(9, rollRy(i) * 0.7)} angle={dirs[i].y > 0.5 ? 90 : 0} />
+            );
+          }
+          if (i === 0) return <YawFront key={i} cx={x0} cy={baseY - 3} rx={pw + 7} ry={5.5} />;
+          return (
+            <g key={i}>
+              <line className="dr-axis" x1={p.x} x2={p.x} y1={p.y - rJ[i] - 12} y2={p.y + rJ[i] + 12} />
+              <g className="dr-joint"><circle cx={p.x} cy={p.y} r={rJ[i]} /></g>
+              <YawFront cx={p.x} cy={p.y} rx={rJ[i] + 8} ry={4.5} />
+            </g>
+          );
+        })}
+
+        {/* payload */}
+        {payloadEl}
+
+        {/* dimensions */}
+        {dimEls}
+        {reachEl}
 
         {/* joint labels */}
         <g className="dr-labels">
-          <text x={x0} y={j1Top + 9} textAnchor="middle" className="dr-joint-name">{NAMES[0]}</text>
-          <text x={x0} y={j1Top + 21} textAnchor="middle" className="dr-text">{mass_(jm[0])}</text>
-          <text x={j2X} y={j2Y - 12} textAnchor="end" className="dr-joint-name">{NAMES[1]}</text>
-          <text x={j2X} y={j2Y} textAnchor="end" className="dr-text">{mass_(jm[1])}</text>
-          {placed.map((p) => (
-            <g key={p.i}>
-              {p.lead && <line className="dr-lead" x1={p.lead[0]} y1={p.lead[1]} x2={p.lead[2]} y2={p.lead[3]} />}
-              <text x={p.x} y={p.top + 9} textAnchor="middle" className="dr-joint-name">{NAMES[p.i]}</text>
-              <text x={p.x} y={p.top + 21} textAnchor="middle" className="dr-text">{mass_(jm[p.i])}</text>
-            </g>
-          ))}
+          {placedLabels.map((p, k) => {
+            const t = labelText[k];
+            const cx = (p.box.x1 + p.box.x2) / 2;
+            const anchorLeft = p.box.x1 > reqs[k].ax + 4;
+            const anchorRight = p.box.x2 < reqs[k].ax - 4;
+            const x = anchorLeft ? p.box.x1 : anchorRight ? p.box.x2 : cx;
+            const ta = anchorLeft ? 'start' : anchorRight ? 'end' : 'middle';
+            return (
+              <g key={p.key}>
+                {p.lead && <line className="dr-lead" x1={p.lead[0]} y1={p.lead[1]} x2={p.lead[2]} y2={p.lead[3]} />}
+                <text x={x} y={p.box.y1 + 10} textAnchor={ta} className="dr-joint-name">{t.l1}</text>
+                <text x={x} y={p.box.y1 + 22} textAnchor={ta} className="dr-text">{t.l2}</text>
+              </g>
+            );
+          })}
         </g>
       </svg>
       <Legend />
       <p className="armfig-cap">
-        Side view, to scale, arm straight out (worst gravity pose). J1 turns the whole arm, base column included, about the
-        vertical axis; J2 pitches bar A, the first link. Symbols grow a little with joint mass.
+        {mode === 'ready'
+          ? 'Ready pose, to scale. The shoulder (first pitch) sits on the base, the upper arm points up so the elbow is above it, and later links point out. '
+          : 'Worst-case pose, to scale: the base column is vertical and every link from the first pitch joint on is straight out. '}
+        <strong>The torques and bearing loads below always use the worst case (arm straight out)</strong>, whichever pose is drawn.
+        Symbols grow a little with joint mass.
       </p>
     </div>
   );
 }
-

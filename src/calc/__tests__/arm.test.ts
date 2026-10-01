@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { computeArm, defaultArmInputs, G } from '../index';
-import type { ArmInputs } from '../index';
+import { armFromLegacy, computeArm as computeJoints, defaultArmInputs, G } from '../index';
+import type { ArmInputs, LegacyArmInputs } from '../index';
+
+// These tests describe the original fixed five-joint arm (bars and joints in arrays). The expected numbers are
+// unchanged; only the way the input is built differs: it is converted to the joint list before it is computed.
+const computeArm = (a: LegacyArmInputs | ArmInputs) => computeJoints(!a || 'joints' in a ? (a as ArmInputs) : armFromLegacy(a));
 
 const near = (got: number, want: number, rel = 1e-9, label = '') =>
   expect(Math.abs(got - want), `${label} got ${got} want ${want}`).toBeLessThanOrEqual(Math.max(1e-12, Math.abs(want) * rel));
 
 /** Everything massless and zero alpha unless the test sets it. Lengths in mm: riser, A, B, C, D. */
-function blank(): ArmInputs {
+function blank(): LegacyArmInputs {
   return {
     jointMass_g: [0, 0, 0, 0, 0],
     barMass_g: [0, 0, 0, 0, 0],
@@ -197,7 +201,7 @@ describe('arm model: defaults and bad input', () => {
   it('never throws on garbage and reports errors', () => {
     const a = defaultArmInputs();
     a.payload_g = NaN;
-    a.barLength_mm[2] = -5;
+    a.joints[2].length_mm = -5;
     const r = computeArm(a);
     expect(r.valid).toBe(false);
     expect(r.errors.length).toBeGreaterThan(0);

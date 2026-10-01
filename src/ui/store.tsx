@@ -19,17 +19,19 @@ import {
   type ArmResult,
   type CalcJob,
   type GearboxInputs,
-  type JointId,
 } from '../calc';
 import {
+  armToggle,
   computeArmResult,
   defaultAdvisorOptions,
   defaultSession,
   effectiveInputs,
   exportSession,
+  gearboxOf,
   importSession,
   loadSession,
   loadsFromArm,
+  reconcileSession,
   saveSession,
   clearSavedSession,
   type AdvisorUiOptions,
@@ -38,7 +40,7 @@ import {
   type Step,
   type ThemePref,
 } from './session';
-import { toEngineLocks, type AdvisorLockState } from './advisorLocks';
+import { defaultLockState, toEngineLocks, type AdvisorLockState } from './advisorLocks';
 import { makeU, type U, type UnitPrefs } from './units';
 
 // ---------------------------------------------------------------------------
@@ -48,11 +50,12 @@ import { makeU, type U, type UnitPrefs } from './units';
 type Action =
   | { type: 'step'; step: Step }
   | { type: 'theme'; theme: ThemePref }
+  | { type: 'pose'; pose: Session['armPose'] }
   | { type: 'units'; units: UnitPrefs }
   | { type: 'select'; slot: Slot }
   | { type: 'arm'; fn: (a: ArmInputs) => ArmInputs }
   | { type: 'gearbox'; slot: Slot; fn: (g: GearboxInputs) => GearboxInputs }
-  | { type: 'useArm'; joint: JointId; value: boolean }
+  | { type: 'useArm'; joint: string; value: boolean }
   | { type: 'advisorOpts'; patch: Partial<AdvisorUiOptions> }
   | { type: 'locks'; slot: Slot; fn: (l: AdvisorLockState) => AdvisorLockState }
   | { type: 'hint'; key: string }
@@ -63,18 +66,20 @@ function reducer(s: Session, a: Action): Session {
   switch (a.type) {
     case 'step': return s.step === a.step ? s : { ...s, step: a.step };
     case 'theme': return { ...s, theme: a.theme };
+    case 'pose': return s.armPose === a.pose ? s : { ...s, armPose: a.pose };
     case 'units': return { ...s, units: a.units };
     case 'select': return { ...s, selected: a.slot };
-    case 'arm': return { ...s, arm: a.fn(s.arm) };
-    case 'gearbox': return { ...s, gearboxes: { ...s.gearboxes, [a.slot]: a.fn(s.gearboxes[a.slot]) } };
+    // Editing the arm can add or remove joints: keep the per-joint gearbox / advisor state in step with it.
+    case 'arm': return reconcileSession({ ...s, arm: a.fn(s.arm) });
+    case 'gearbox': return { ...s, gearboxes: { ...s.gearboxes, [a.slot]: a.fn(gearboxOf(s, a.slot)) } };
     case 'useArm': return { ...s, useArmLoads: { ...s.useArmLoads, [a.joint]: a.value } };
     case 'advisorOpts': return { ...s, advisor: { ...s.advisor, ...a.patch } };
-    case 'locks': return { ...s, advisorLocks: { ...s.advisorLocks, [a.slot]: a.fn(s.advisorLocks[a.slot]) } };
+    case 'locks': return { ...s, advisorLocks: { ...s.advisorLocks, [a.slot]: a.fn(s.advisorLocks[a.slot] ?? defaultLockState()) } };
     case 'hint': return s.hintsSeen[a.key] ? s : { ...s, hintsSeen: { ...s.hintsSeen, [a.key]: true } };
     case 'replace': return a.session;
     case 'reset': {
       const d = defaultSession();
-      return { ...d, theme: s.theme, units: s.units, hintsSeen: s.hintsSeen, step: s.step };
+      return { ...d, theme: s.theme, units: s.units, hintsSeen: s.hintsSeen, step: s.step, armPose: s.armPose };
     }
     default: return s;
   }
@@ -228,7 +233,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const s = stateRef.current;
     const inputs = effectiveInputs(s, slot, computeArmResult(s.arm));
     const o = s.advisor;
-    const lockState = change ? change(s.advisorLocks[slot]) : s.advisorLocks[slot];
+    const lockState = change ? change(s.advisorLocks[slot] ?? defaultLockState()) : (s.advisorLocks[slot] ?? defaultLockState());
     if (change) dispatch({ type: 'locks', slot, fn: () => lockState });
     const { locks, ratioVary } = toEngineLocks(lockState, inputs);
     const key = advisorKey(inputs, o, { locks, ratioVary });
@@ -307,7 +312,7 @@ export { defaultAdvisorOptions };
 export function useEffectiveInputs(slot: Slot): GearboxInputs {
   const { state, arm } = useStore();
   const g = state.gearboxes[slot];
-  const flag = slot === 'custom' ? false : state.useArmLoads[slot];
+  const flag = armToggle(state, slot);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => effectiveInputs(state, slot, arm), [g, flag, arm, slot]);
 }

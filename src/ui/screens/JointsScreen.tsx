@@ -1,19 +1,26 @@
 import { useDeferredValue, useMemo } from 'react';
-import { summarizeAllJoints, type JointSummaryRow } from '../../calc';
+import { summarizeAllJoints, type JointSummaryRow, type ServoRow } from '../../calc';
 import { Button, Card, Cu, Notice, PageHead, ResponsiveTable, STATUS_WORD, StatusChip, StepNav, UtilBar, verdictKind } from '../components/primitives';
 import { stepSubtitle } from '../components/StepHint';
 import { DASH, fixed, num, thickness, util } from '../format';
 import { useStore } from '../store';
-import { JOINT_KIND } from '../jointNames';
+import { JointTag } from '../components/JointTag';
 
 
 export function JointsScreen() {
   const { state, select, setStep, runAdvisor, u } = useStore();
   const dep = useDeferredValue({ arm: state.arm, gb: state.gearboxes, use: state.useArmLoads });
-  const sum = useMemo(
-    () => summarizeAllJoints(dep.arm, { J1: dep.gb.J1, J2: dep.gb.J2, J3: dep.gb.J3, J4: dep.gb.J4 }, { useArmLoads: dep.use }),
-    [dep],
-  );
+  const sum = useMemo(() => summarizeAllJoints(dep.arm, dep.gb, { useArmLoads: dep.use }), [dep]);
+  // gearbox rows and servo rows together, in arm order
+  const lines = useMemo(() => {
+    const all: ({ kind: 'gear'; i: number; row: JointSummaryRow } | { kind: 'servo'; i: number; row: ServoRow })[] = [
+      ...sum.rows.map((row) => ({ kind: 'gear' as const, i: row.index, row })),
+      ...sum.servos.map((row) => ({ kind: 'servo' as const, i: row.index, row })),
+    ];
+    return all.sort((a, b) => a.i - b.i);
+  }, [sum]);
+  const nGear = sum.rows.length;
+  const nServo = sum.servos.length;
 
   const open = (row: JointSummaryRow, what: 'gearbox' | 'design') => {
     select(row.joint);
@@ -43,8 +50,13 @@ export function JointsScreen() {
         </Notice>
       )}
 
-      <Card title="Gearbox joints J1 to J4">
-        <p className="card-sub">Live check of the geometry stored for each joint, with loads from the arm model unless a joint has that switch off. Joint names open the Gearbox page.</p>
+      <Card title={`Joints: ${nGear} gearbox${nGear === 1 ? '' : 'es'}${nServo ? `, ${nServo} servo${nServo === 1 ? '' : 's'}` : ''}`}>
+        <p className="card-sub">Live check of the geometry stored for each cycloidal joint, with loads from the arm model unless a joint has that switch off. Servo joints show only the torque the servo must deliver. Joint names open the Gearbox page.</p>
+        {nGear === 0 && (
+          <Notice kind="info" title="No cycloidal joints">
+            Every joint of this arm is a servo, so there is no gearbox to check. Change a joint{'’'}s drive to Cycloidal on the Arm & Loads page.
+          </Notice>
+        )}
         <ResponsiveTable threshold={980} className="joints-table">
           <thead>
             <tr>
@@ -60,17 +72,41 @@ export function JointsScreen() {
             </tr>
           </thead>
           <tbody>
-            {sum.rows.map((row, i) => {
+            {lines.map((line) => {
+              const jn = state.arm.joints[line.i];
+              if (!jn) return null;
+              if (line.kind === 'servo') {
+                const sv = line.row;
+                return (
+                  <tr className="is-servo" key={sv.joint}>
+                    <th scope="row" data-label="Joint">
+                      <JointTag joint={jn} index={line.i} />
+                    </th>
+                    <td className="num" data-label="T_req / T_des">
+                      {sum.arm.valid ? <>{T(sv.Treq)} / {T(sv.Tdes)}<Cu>{nm}</Cu></> : DASH}
+                    </td>
+                    <td className="num" data-label="Output bearing">{DASH}</td>
+                    <td colSpan={5} className="servo-note" data-label="Note">
+                      Direct-drive servo, no gearbox check. Pick a servo rated for {sum.arm.valid ? u.fu('torque', sv.Treq, { fixed: true }) : DASH} continuous
+                      and {sum.arm.valid ? u.fu('torque', sv.Tdes, { fixed: true }) : DASH} peak
+                      {sum.arm.valid ? ` (static ${T(sv.Tstatic)} + dynamic ${T(sv.Tdyn)}).` : '.'}
+                    </td>
+                    <td className="act" data-label="" />
+                  </tr>
+                );
+              }
+              const row = line.row;
               const kind = verdictKind(row.verdict);
               const g = row.geometry;
               const word = row.verdict === 'invalid' ? 'INVALID' : STATUS_WORD[kind];
               return (
                 <tr key={row.joint}>
                   <th scope="row" data-label="Joint">
-                    <button type="button" className="linkish strong" onClick={() => open(row, 'gearbox')} title="Open this joint on the Gearbox page">
-                      {row.joint}
-                    </button>
-                    <span className="joint-kind">{JOINT_KIND[i]}</span>
+                    <JointTag joint={jn} index={line.i} showDrive={false}>
+                      <button type="button" className="linkish strong" onClick={() => open(row, 'gearbox')} title="Open this joint on the Gearbox page">
+                        J{line.i + 1}
+                      </button>
+                    </JointTag>
                   </th>
                   <td className="num" data-label="T_req / T_des">
                     {T(row.Treq)} / {T(row.Tdes)}<Cu>{nm}</Cu>
@@ -79,8 +115,8 @@ export function JointsScreen() {
                   <td className="num" data-label="Output bearing">
                     {sum.arm.valid
                       ? <>
-                          {row.bearingAxial_N > 0 ? 'axial ' : 'radial '}
-                          {u.f('force', row.bearingAxial_N > 0 ? row.bearingAxial_N : row.bearingRadial_N, { fixed: true })}<Cu>{u.sym('force')}</Cu>
+                          {row.motion === 'yaw' ? 'axial ' : 'radial '}
+                          {u.f('force', row.motion === 'yaw' ? row.bearingAxial_N : row.bearingRadial_N, { fixed: true })}<Cu>{u.sym('force')}</Cu>
                           {' · tilt '}{T(row.bearingTiltMoment_Nm)}<Cu>{nm}</Cu>
                         </>
                       : DASH}
@@ -112,22 +148,6 @@ export function JointsScreen() {
                 </tr>
               );
             })}
-            <tr className="is-servo">
-              <th scope="row" data-label="Joint">
-                <span className="joint-name">J5</span>
-                <span className="joint-kind">{JOINT_KIND[4]}</span>
-              </th>
-              <td className="num" data-label="T_req / T_des">
-                {sum.arm.valid ? <>{T(sum.servo.Treq)} / {T(sum.servo.Tdes)}<Cu>{nm}</Cu></> : DASH}
-              </td>
-              <td className="num" data-label="Output bearing">{DASH}</td>
-              <td colSpan={5} className="servo-note" data-label="Note">
-                Direct-drive servo, no gearbox check. Pick a servo rated for {sum.arm.valid ? u.fu('torque', sum.servo.Treq, { fixed: true }) : DASH} continuous
-                and {sum.arm.valid ? u.fu('torque', sum.servo.Tdes, { fixed: true }) : DASH} peak
-                {sum.arm.valid ? ` (static ${T(sum.servo.Tstatic)} + dynamic ${T(sum.servo.Tdyn)}).` : '.'}
-              </td>
-              <td className="act" data-label="" />
-            </tr>
           </tbody>
         </ResponsiveTable>
       </Card>

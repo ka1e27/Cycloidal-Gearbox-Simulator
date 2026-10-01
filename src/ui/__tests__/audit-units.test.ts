@@ -249,7 +249,7 @@ describe('audit: units are display-only, the stored and exported session is SI',
     const o = JSON.parse(txt);
     expect(o.units).toBeUndefined();
     expect(o.arm.payload_g).toBe(250);
-    expect(o.arm.barLength_mm[1]).toBe(230);
+    expect(o.arm.joints[1].length_mm).toBe(230);
     expect(o.gearboxes.J2.D).toBe(85);
     expect(o.gearboxes.J2.e).toBe(1.6);
     expect(o.gearboxes.J2.Treq).toBe(5.85);

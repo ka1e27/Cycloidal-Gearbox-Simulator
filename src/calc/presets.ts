@@ -76,6 +76,24 @@ export const PRESETS: Record<JointId, GearboxInputs> = {
   J4: presetInputs('J4'),
 };
 
+/** The preset a joint with no preset of its own starts from when the torque is unknown or unusable. */
+export const FALLBACK_PRESET: JointId = 'J3';
+
+/**
+ * The SPEC.md preset whose working torque T_req is closest (as a ratio) to the given torque. Used to give a newly
+ * added cycloidal joint a sensible starting gearbox. Falls back to the J3 preset for a missing or non-positive torque.
+ */
+export function closestPresetId(Treq: number | null | undefined): JointId {
+  if (typeof Treq !== 'number' || !Number.isFinite(Treq) || Treq <= 0) return FALLBACK_PRESET;
+  let best: JointId = FALLBACK_PRESET;
+  let bestD = Infinity;
+  for (const id of JOINT_IDS) {
+    const d = Math.abs(Math.log(Treq / JOINT_PRESET_SPECS[id].Treq));
+    if (d < bestD - 1e-12) { bestD = d; best = id; }
+  }
+  return best;
+}
+
 /**
  * Fill any missing or non-numeric field of a partial/imported object from the defaults,
  * so that a hand-edited JSON never crashes the engine. Returns a complete GearboxInputs.

@@ -1,8 +1,11 @@
-// One place for the joint names so the Arm table, All Joints, the chips and the diagram agree.
-// J1..J4 are the gearbox joints, J5 is the direct-drive wrist servo.
+// One place for joint labels so the Arm table, All Joints, the chips and the diagram agree.
+// A joint is shown as "J<position> <name>"; the position follows the joint list, the name is the user's text.
+import { DRIVE_LABEL, MOTION_LABEL, jointLabel, jointPos, type ArmJoint } from '../calc';
 
-/** What each joint does, in the order J1..J5. */
-export const JOINT_KIND = ['base yaw', 'shoulder pitch', 'elbow pitch', 'forearm roll', 'wrist pitch (servo)'] as const;
+export { jointLabel, jointPos };
 
-/** "J2 shoulder pitch" for a joint index 0..4. */
-export const jointFullName = (i: number) => `J${i + 1} ${JOINT_KIND[i]}`;
+/** "base yaw", "pitch", "roll" in lower case, for running text. */
+export const motionWord = (m: ArmJoint['motion']): string => (m === 'yaw' ? 'base yaw' : m);
+
+/** "Pitch · Servo" style summary of how a joint moves and what drives it. */
+export const jointKind = (j: Pick<ArmJoint, 'motion' | 'drive'>): string => `${MOTION_LABEL[j.motion]} · ${DRIVE_LABEL[j.drive]}`;

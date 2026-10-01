@@ -14,7 +14,7 @@ const GROUPS: { title: string; items: string[] }[] = [
       'Hard anodizing improves wear, not subsurface fatigue. It is not modeled.',
       'Bushing-on-bolt friction, pin rotation, disc tilt, thermal effects and dynamic impact are not modeled. The TMC2209 current limit should cap motor torque near T_des.',
       'Contact length assumes the full disc thickness bears on each pin.',
-      'J1 and J4 torques are estimates until link masses come from CAD.',
+      'The default yaw and roll torques are estimates until link masses come from CAD.',
     ],
   },
   {
@@ -31,12 +31,14 @@ const GROUPS: { title: string; items: string[] }[] = [
     title: 'Arm load model',
     items: [
       'The default masses and lengths are placeholders until CAD masses exist. They were chosen to give roughly the SPEC torques at J2 (5.85 N·m) and J3 (2.25 N·m).',
-      'The arm is evaluated fully extended horizontally, the worst gravity pose. Joint masses are lumped at the joint centres; links are uniform rods with their centre of mass at the midpoint.',
+      'The arm is an ordered list of 1 to 8 joints, each a base yaw, a pitch or a roll, driven by a cycloidal gearbox or a direct-drive servo. Joint masses are lumped at the joint centres; links are uniform rods with their centre of mass at the midpoint.',
+      'Every torque uses the worst gravity pose, whichever pose the drawing shows: links before the first pitch joint are a vertical column on the base axis, and from the first pitch joint on every link is straight out horizontally.',
       'Dynamic torque is α · I about the joint axis with the same α for everything outboard. Friction, payload swing, shocks and cable forces are ignored.',
-      'J4 (roll) torque assumes J5 is bent 90°, so the tool is horizontal and perpendicular to the roll axis. J1 (yaw) has no gravity torque, only α · I.',
-      'J5 is a direct-drive servo: the app reports the torque it must deliver but does not check a gearbox for it.',
+      'A roll joint treats everything up to the next joint that is not a roll as lying on the roll axis. Everything beyond that joint is bent 90°, perpendicular to the axis, so its lever is its distance from that joint. A roll with nothing off its axis downstream (a roll at the tip) has no gravity or inertia torque; use a manual torque if your tool is off-axis. A roll that comes before the first pitch joint uses the same rule, which is conservative because its axis is vertical.',
+      'A base yaw with no pitch joint upstream keeps a vertical axis: no gravity torque, only α · I_z with the arm straight out. A yaw that comes after a pitch joint could be tilted horizontal, so its gravity torque is counted like a pitch joint (worst case), and its bearing loads include the radial worst case.',
+      'A servo joint is a direct drive: the app reports the torque it must deliver, with no T_des floor and no bearing loads, and does not check a gearbox for it.',
       'Output-bearing loads are information for sizing the joint bearing or housing, not pass/fail checks. The gravity torque about the axis goes through the gearbox; it is not the tilting moment on the bearing.',
-      'J1 (vertical axis): the outboard weight is an axial thrust, and its horizontal reach gives an overturning moment. J2 and J3 (horizontal axis): radial load = outboard weight, tilting moment = radial load × the link offset from the output bearing along the axis (an input, default 15 mm). J4 (roll): radial load = outboard weight, tilting moment = Σ m·g × axial distance along the roll axis with the forearm and tool straight out, the worse pose for the bearing. J5 is a servo and has none.',
+      'Yaw (vertical axis): the outboard weight is an axial thrust, and its horizontal reach gives an overturning moment. Pitch (horizontal axis): radial load = outboard weight, tilting moment = radial load × the link offset from the output bearing along the axis (an input, default 15 mm). Roll: radial load = outboard weight, tilting moment = Σ m·g × axial distance along the roll axis with everything straight out, the worse pose for the bearing. A servo has none.',
     ],
   },
 ];

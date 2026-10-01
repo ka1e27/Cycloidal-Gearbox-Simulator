@@ -15,6 +15,7 @@ import {
 import type { HelpEntry } from '../help';
 import {
   LOCK_VAR_KEYS,
+  defaultLockState,
   lockAllToInputs,
   lockRowError,
   lockRowWarning,
@@ -149,7 +150,7 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
   onCancel: () => void;
 }) {
   const { state, updateLocks, u } = useStore();
-  const ls = state.advisorLocks[slot];
+  const ls = state.advisorLocks[slot] ?? defaultLockState();
   const r = resolveLockValues(ls, eff);
   const bolt = eff.outerPin.construction === 'boltBushing';
   const standoff = eff.innerPin.construction === 'standoff';

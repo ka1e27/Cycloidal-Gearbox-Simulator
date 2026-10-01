@@ -14,8 +14,7 @@ describe('arm model: range validation and overflow', () => {
   it('rejects values around 1e308 with a friendly message and no Infinity', () => {
     const a = defaultArmInputs();
     a.payload_g = 1e308;
-    a.barLength_mm = [1e308, 1e308, 1e308, 1e308, 1e308];
-    a.jointMass_g = [1e308, 1e308, 1e308, 1e308, 1e308];
+    a.joints.forEach((j) => { j.length_mm = 1e308; j.mass_g = 1e308; });
     const r = computeArm(a);
     expect(r.valid).toBe(false);
     expect(r.errors.length).toBeGreaterThan(0);
@@ -34,28 +33,24 @@ describe('arm model: range validation and overflow', () => {
       expect(e.some((x) => text.test(x)), `${text} in ${JSON.stringify(e)}`).toBe(true);
       expect(computeArm(a).valid).toBe(false);
     };
-    t((a) => { a.jointMass_g[2] = L.mass_g[1] + 1; }, /Joint mass 3 must be at most 1000000 g/);
-    t((a) => { a.barMass_g[0] = -1; }, /Bar mass 1 must be >= 0 g/);
-    t((a) => { a.barLength_mm[4] = L.length_mm[1] + 1; }, /Bar length 5 must be at most 100000 mm/);
-    t((a) => { a.alpha[1] = L.alpha[1] + 1; }, /Angular acceleration 2 must be at most 10000/);
+    t((a) => { a.joints[2].mass_g = L.mass_g[1] + 1; }, /Joint mass 3 must be at most 1000000 g/);
+    t((a) => { a.joints[0].linkMass_g = -1; }, /Bar mass 1 must be >= 0 g/);
+    t((a) => { a.joints[4].length_mm = L.length_mm[1] + 1; }, /Bar length 5 must be at most 100000 mm/);
+    t((a) => { a.joints[1].alpha = L.alpha[1] + 1; }, /Angular acceleration 2 must be at most 10000/);
     t((a) => { a.SF = 11; }, /Service factor must be at most 10/);
     t((a) => { a.SF = 0; }, /Service factor must be > 0/);
     t((a) => { a.payload_g = 2e6; }, /Payload must be at most 1000000 g/);
-    t((a) => { a.linkOffset_mm[0] = -1; }, /Link offset J2 must be >= 0 mm/);
-    t((a) => { a.linkOffset_mm[1] = 1e5; }, /Link offset J3 must be at most 10000 mm/);
-    t((a) => { a.override[2] = { Treq: 1e9, Tdes: null }; }, /Manual T_req for J3 must be at most 1000000 N\*m/);
+    t((a) => { a.joints[1].linkOffset_mm = -1; }, /Link offset J2 must be >= 0 mm/);
+    t((a) => { a.joints[2].linkOffset_mm = 1e5; }, /Link offset J3 must be at most 10000 mm/);
+    t((a) => { a.joints[2].override = { Treq: 1e9, Tdes: null }; }, /Manual T_req for J3 must be at most 1000000 N\*m/);
     t((a) => { a.TdesFloor = Number.NaN; }, /T_des floor is not a number/);
   });
 
   it('every output is finite when every input sits at its upper limit', () => {
     const a = defaultArmInputs();
-    a.jointMass_g = [1e6, 1e6, 1e6, 1e6, 1e6];
-    a.barMass_g = [1e6, 1e6, 1e6, 1e6, 1e6];
-    a.barLength_mm = [1e5, 1e5, 1e5, 1e5, 1e5];
+    a.joints.forEach((j) => { j.mass_g = 1e6; j.linkMass_g = 1e6; j.length_mm = 1e5; j.alpha = 1e4; j.linkOffset_mm = 1e4; });
     a.payload_g = 1e6;
-    a.alpha = [1e4, 1e4, 1e4, 1e4, 1e4];
     a.SF = 10;
-    a.linkOffset_mm = [1e4, 1e4];
     const r = computeArm(a);
     expect(r.valid).toBe(true);
     for (const j of r.joints) for (const v of Object.values(j)) if (typeof v === 'number') expect(Number.isFinite(v)).toBe(true);
@@ -63,11 +58,16 @@ describe('arm model: range validation and overflow', () => {
   });
 
   it('a session exported before the link offset existed loads with the default offsets', () => {
-    const old: Record<string, unknown> = { ...defaultArmInputs() };
-    delete old.linkOffset_mm;
-    expect(normalizeArmInputs(old).linkOffset_mm).toEqual([15, 15]);
-    expect(normalizeArmInputs({ ...old, linkOffset_mm: [20, 'x'] }).linkOffset_mm).toEqual([20, 15]);
-    expect(normalizeArmInputs({ ...old, linkOffset_mm: 7 }).linkOffset_mm).toEqual([15, 15]);
+    const d = defaultArmInputs();
+    const old: Record<string, unknown> = {
+      jointMass_g: d.joints.map((j) => j.mass_g), barMass_g: d.joints.map((j) => j.linkMass_g),
+      barLength_mm: d.joints.map((j) => j.length_mm), payload_g: d.payload_g, alpha: d.joints.map((j) => j.alpha),
+      SF: d.SF, TdesFloor: d.TdesFloor, override: d.joints.map((j) => j.override),
+    };
+    const offs = (a: ArmInputs) => a.joints.map((j) => j.linkOffset_mm).slice(1, 3);
+    expect(offs(normalizeArmInputs(old))).toEqual([15, 15]);
+    expect(offs(normalizeArmInputs({ ...old, linkOffset_mm: [20, 'x'] }))).toEqual([20, 15]);
+    expect(offs(normalizeArmInputs({ ...old, linkOffset_mm: 7 }))).toEqual([15, 15]);
     const n = normalizeArmInputs(old);
     expect(computeArm(n).valid).toBe(true);
   });

@@ -1,12 +1,21 @@
-import { JOINT_IDS, JOINT_PRESET_SPECS } from '../../calc';
-import type { Slot } from '../session';
+import { useMemo } from 'react';
+import { jointLabel } from '../../calc';
+import { CUSTOM, gearboxJoints, type Slot } from '../session';
+import { MotionIcon } from '../viz/armSymbols';
+import { useStore } from '../store';
 
-/** J1 J2 J3 J4 Custom chips (radio group). */
+/** One chip per cycloidal joint of the arm (servo joints have no gearbox), then Custom. Radio group. */
 export function JointChips({ value, onChange, label = 'Joint' }: { value: Slot; onChange: (s: Slot) => void; label?: string }) {
-  const items: { slot: Slot; text: string; title: string }[] = [
-    ...JOINT_IDS.map((j) => ({ slot: j as Slot, text: j, title: JOINT_PRESET_SPECS[j].label })),
-    { slot: 'custom', text: 'Custom', title: 'Your own geometry and torques' },
-  ];
+  const { state } = useStore();
+  const arm = state.arm;
+  const items = useMemo(() => {
+    const list: { slot: Slot; text: string; sub: string; title: string; motion: 'yaw' | 'pitch' | 'roll' | null }[] = gearboxJoints(arm).map((j) => {
+      const i = arm.joints.findIndex((x) => x.id === j.id);
+      return { slot: j.id, text: `J${i + 1}`, sub: j.name.trim(), title: jointLabel(j, i), motion: j.motion };
+    });
+    list.push({ slot: CUSTOM, text: 'Custom', sub: '', title: 'Your own geometry and torques', motion: null });
+    return list;
+  }, [arm]);
   const onKey = (e: React.KeyboardEvent) => {
     const i = items.findIndex((x) => x.slot === value);
     let n = i;
@@ -18,20 +27,24 @@ export function JointChips({ value, onChange, label = 'Joint' }: { value: Slot; 
     const el = (e.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('button')[n];
     el?.focus();
   };
+  const sel = items.findIndex((x) => x.slot === value);
   return (
     <div className="chips" role="radiogroup" aria-label={label} onKeyDown={onKey}>
-      {items.map((it) => (
+      {items.map((it, k) => (
         <button
           key={it.slot}
           type="button"
           role="radio"
           aria-checked={it.slot === value}
-          tabIndex={it.slot === value ? 0 : -1}
+          tabIndex={it.slot === value || (sel < 0 && k === 0) ? 0 : -1}
           title={it.title}
+          aria-label={it.title}
           className={`chip-btn${it.slot === value ? ' is-on' : ''}`}
           onClick={() => onChange(it.slot)}
         >
-          {it.text}
+          {it.motion && <MotionIcon motion={it.motion} size={16} />}
+          <span className="chip-text">{it.text}</span>
+          {it.sub && <span className="chip-sub">{it.sub}</span>}
         </button>
       ))}
     </div>

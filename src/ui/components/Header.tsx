@@ -249,7 +249,7 @@ export function Header() {
         <div className="titleblock-inner">
           <div className="tb-left">
             <span className="tb-title">Cycloidal Gearbox Simulator</span>
-            <span className="tb-sub">Pin-type cycloidal reducers for a 5-DOF arm</span>
+            <span className="tb-sub">Pin-type cycloidal reducers for a robot arm of 1 to 8 joints</span>
           </div>
           <div className="tb-right">
             <UnitsControl />

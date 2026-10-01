@@ -36,7 +36,7 @@ export const HELP: Record<string, HelpEntry> = {
   standoffYield: { what: 'Yield strength of the standoff. The bending limit is 0.5 × this value.', typical: '300 MPa (low-carbon steel, assumed).' },
 
   // Loads & factors
-  Treq: { what: 'Working output torque the joint has to deliver. It drives the life checks (contact fatigue and bearing life).', typical: 'J2 about 5.9 N·m and J3 about 2.3 N·m with the default arm.' },
+  Treq: { what: 'Working output torque the joint has to deliver. It drives the life checks (contact fatigue and bearing life).', typical: 'The shoulder about 5.9 N·m and the elbow about 2.3 N·m with the default arm.' },
   Tdes: { what: 'Design (peak) torque, about 1.5 × T_req. It drives the strength checks.', typical: 'SF × T_req, never below the T_des floor.' },
   Kc: { what: 'Load concentration factor for the strength case. Waterjet tolerances are larger than the elastic deflection, so only a few pins share the load.', typical: '2.0.' },
   KcLife: { what: 'Load concentration factor for the life case, after the parts have run in.', typical: '1.3.' },
@@ -48,12 +48,18 @@ export const HELP: Record<string, HelpEntry> = {
 
   // Arm
   jointMass: { what: 'Mass of the joint: motor, gearbox and housing, lumped at the joint centre.', typical: '100 to 800 g for this arm (placeholders until CAD masses exist).' },
-  barMass: { what: 'Mass of the link between two joints. It is treated as a uniform rod with its centre of mass at the midpoint.', typical: '40 to 120 g.' },
-  barLength: { what: 'Centre-to-centre length of the link, along the arm.', typical: '80 to 230 mm.' },
-  baseColumnLength: { what: 'Height of the base column, from the top of the J1 turntable up to the J2 shoulder axis. The column rotates with J1 (it is part of the base, not a driven link), so it adds weight and height but no yaw inertia.', typical: '100 mm placeholder. 0 puts the J2 axis right on the turntable.' },
-  baseColumnMass: { what: 'Mass of the base column, J1 to J2. It is a vertical rod on the J1 axis, so it adds axial load on the J1 bearing but no gravity torque or yaw inertia.', typical: '40 to 120 g.' },
+  barMass: { what: 'Mass of the link that runs from this joint to the next one. It is treated as a uniform rod with its centre of mass at the midpoint.', typical: '40 to 120 g.' },
+  barLength: { what: 'Centre-to-centre length of the link from this joint to the next one, along the arm.', typical: '80 to 230 mm.' },
+  toolMass: { what: 'Mass of the tool or gripper that runs from the last joint to the tool tip. It is treated as a uniform rod with its centre of mass at the midpoint. The payload sits at the tip.', typical: '40 to 100 g.' },
+  toolLength: { what: 'Length of the tool or gripper from the last joint to the tool tip, where the payload is carried.', typical: '50 to 150 mm.' },
+  baseColumnLength: { what: 'Height from the turntable up to the next joint axis (the shoulder). A link before the first pitch joint is vertical and on the base axis, so it adds weight and height but no yaw inertia or gravity torque.', typical: 'Usually 0 to 50 mm. 0 (the default) puts the shoulder right on the turntable; the drawing and the numbers handle any value.' },
+  baseColumnMass: { what: 'Mass of the turntable top plate and the shoulder bracket (or the base column, if you have one). It sits on the base axis, so it adds axial load on the yaw bearing but no gravity torque or yaw inertia.', typical: '40 to 120 g.' },
+  jointName: { what: 'Your label for the joint. It is shown after the position, for example "J2 shoulder", on every page.', typical: 'shoulder, elbow, wrist.' },
+  jointMotion: { what: 'How the joint moves. Base yaw turns about a vertical axis. Pitch bends about an axis perpendicular to the link. Roll turns about the link axis. The worst-case torque rules depend on this.', typical: 'Base yaw first, then pitch joints, with a roll in the forearm.' },
+  jointDrive: { what: 'Cycloidal: the joint gets a gearbox page, an advisor and a row in All Joints. Servo: direct drive, you only get the torque the servo must deliver.', typical: 'Cycloidal for the heavy joints, servo for the wrist.' },
+  jointCount: { what: 'Degrees of freedom: one per joint. An arm has 1 to 8 joints.', typical: '5 for the default arm.' },
   payload: { what: 'Mass carried at the tool tip.', typical: '250 g placeholder.' },
-  linkOffset: { what: 'How far the link’s load plane sits from this joint’s output bearing, measured along the joint axis. The radial load times this offset is the tilting moment on the bearing. Used for the two pitch joints (J2, J3) only.', typical: '15 mm placeholder; about half the bearing width plus the link thickness.' },
+  linkOffset: { what: 'How far the link’s load plane sits from this joint’s output bearing, measured along the joint axis. The radial load times this offset is the tilting moment on the bearing. Used for pitch joints, and for a yaw that sits after a pitch joint (its axis may tilt).', typical: '15 mm placeholder; about half the bearing width plus the link thickness.' },
   alpha: { what: 'Maximum angular acceleration of the joint. It sets the dynamic torque term α · I.', typical: '3 rad/s².' },
   SF: { what: 'Service factor: T_des = max(SF × T_req, the T_des floor).', typical: '1.5.' },
   TdesFloor: { what: 'Smallest design torque you want a gearbox checked for, even when the model torque is tiny.', typical: '1.0 N·m.' },
@@ -71,7 +77,7 @@ export const HELP: Record<string, HelpEntry> = {
 
 /** One plain sentence under each page title. */
 export const STEP_HINTS: Record<number, string> = {
-  1: 'Enter the masses and lengths of your arm. The torque each joint must carry is worked out as you type.',
+  1: 'Build your arm: add or remove joints, give each a motion type, then enter masses and lengths. The torque each joint must carry is worked out as you type.',
   2: 'Pick a joint, then set its geometry and materials. The verdict and every check update as you type.',
   3: 'Find the smallest gearbox that passes every check for the selected joint.',
   4: 'Every gearbox joint checked side by side. Design opens the advisor for that joint.',

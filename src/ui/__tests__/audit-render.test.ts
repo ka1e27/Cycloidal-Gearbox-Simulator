@@ -228,15 +228,14 @@ function hostile(name: string): Session {
       }
       break;
     case 'arm negatives':
-      s.arm.jointMass_g = [-1, -2, -3, -4, -5]; s.arm.barLength_mm = [-1, 0, 0, 0, 0]; s.arm.SF = -1; s.arm.payload_g = -9;
+      s.arm.joints.forEach((j, i) => { j.mass_g = -(i + 1); j.length_mm = i === 0 ? -1 : 0; }); s.arm.SF = -1; s.arm.payload_g = -9;
       break;
     case 'arm 1e308':
-      s.arm.jointMass_g = [1e308, 1e308, 1e308, 1e308, 1e308]; s.arm.barMass_g = [1e308, 1e308, 1e308, 1e308, 1e308];
-      s.arm.barLength_mm = [1e308, 1e308, 1e308, 1e308, 1e308]; s.arm.payload_g = 1e308; s.arm.alpha = [1e308, 1e308, 1e308, 1e308, 1e308];
+      s.arm.joints.forEach((j) => { j.mass_g = 1e308; j.linkMass_g = 1e308; j.length_mm = 1e308; j.alpha = 1e308; }); s.arm.payload_g = 1e308;
       break;
     case 'arm zeros':
-      s.arm.jointMass_g = [0, 0, 0, 0, 0]; s.arm.barMass_g = [0, 0, 0, 0, 0]; s.arm.barLength_mm = [0, 0, 0, 0, 0];
-      s.arm.payload_g = 0; s.arm.alpha = [0, 0, 0, 0, 0]; s.arm.SF = 0.0001; s.arm.TdesFloor = 0;
+      s.arm.joints.forEach((j) => { j.mass_g = 0; j.linkMass_g = 0; j.length_mm = 0; j.alpha = 0; });
+      s.arm.payload_g = 0; s.arm.SF = 0.0001; s.arm.TdesFloor = 0;
       break;
     case 'material zeros':
       for (const slot of ['J1', 'J2', 'J3', 'J4', 'custom'] as const) {
@@ -341,14 +340,14 @@ describe('audit: one bad field shows its own inline message, never the "cannot b
   });
 
   const armCases: [string, (a: Session['arm']) => void, string][] = [
-    ['bar length', (a) => { a.barLength_mm[1] = -5; }, 'Bar length 2 must be >= 0'],
-    ['joint mass', (a) => { a.jointMass_g[2] = -5; }, 'Joint mass 3 must be >= 0'],
-    ['bar mass', (a) => { a.barMass_g[0] = -5; }, 'Bar mass 1 must be >= 0'],
-    ['alpha', (a) => { a.alpha[4] = -1; }, 'Angular acceleration 5 must be >= 0'],
+    ['bar length', (a) => { a.joints[1].length_mm = -5; }, 'Bar length 2 must be >= 0'],
+    ['joint mass', (a) => { a.joints[2].mass_g = -5; }, 'Joint mass 3 must be >= 0'],
+    ['bar mass', (a) => { a.joints[0].linkMass_g = -5; }, 'Bar mass 1 must be >= 0'],
+    ['alpha', (a) => { a.joints[4].alpha = -1; }, 'Angular acceleration 5 must be >= 0'],
     ['payload', (a) => { a.payload_g = -1; }, 'Payload must be >= 0 g'],
     ['SF', (a) => { a.SF = 0; }, 'Service factor must be > 0'],
     ['floor', (a) => { a.TdesFloor = -1; }, 'T_des floor must be >= 0 N*m'],
-    ['override', (a) => { a.override[1].Treq = -2; }, 'Manual T_req for J2 must be >= 0'],
+    ['override', (a) => { a.joints[1].override.Treq = -2; }, 'Manual T_req for J2 must be >= 0'],
   ];
   for (const [name, patch, msg] of armCases) {
     it(`arm: ${name}`, () => {
@@ -404,6 +403,8 @@ describe('audit: every number is tagged with the right quantity', () => {
   it('arm diagram: lengths and masses on the right labels, converted once', () => {
     const s = defaultSession();
     s.step = 1;
+    s.armPose = 'worst'; // the reach dimension belongs to the worst-case (straight out) view
+    s.arm.joints[0].length_mm = 100; // the default column is 0 mm (no dimension drawn); give it the old 100 mm to check the unit conversion
     s.units = { ...IMPERIAL };
     const t = text(render(s, ArmScreen));
     // riser 100 mm / 80 g, bar A 230 mm / 110 g, B 200 / 90, C 80 / 40, D 110 / 70, payload 250 g
@@ -425,14 +426,17 @@ describe('audit: every number is tagged with the right quantity', () => {
     s.step = 1;
     const html = render(s, ArmScreen);
     const t = text(html);
-    for (const name of ['J1 base yaw', 'J2 shoulder', 'J3 elbow', 'J4 roll', 'J5 wrist', 'column']) expect(t, name).toContain(name);
+    // joints are labelled "J<position> <name>" everywhere, in the drawing, the editor and the torque table
+    for (const name of ['J1 base yaw', 'J2 shoulder pitch', 'J3 elbow pitch', 'J4 forearm roll', 'J5 wrist pitch']) expect(t, name).toContain(name);
     expect(t).not.toMatch(/riser/i);
-    expect(html).toContain('Base column, J1 to J2');
-    expect(html).toContain('Base column mass');
-    expect(html).toContain('class="dr-roll"'); // roll symbol, not a pitch circle
-    expect(html).toContain('dr-axis'); // vertical J1 axis
-    expect(html.match(/class="dr-joint"/g)?.length).toBe(4); // pitch circles: J2, J3, J5 and the legend swatch, never J1 or J4
-    for (const kind of ['base yaw', 'shoulder pitch', 'elbow pitch', 'forearm roll', 'wrist pitch (servo)']) expect(t, kind).toContain(kind);
+    expect(html).toContain('Link length to the next joint');
+    expect(html).toContain('Tool length, joint to tip'); // the last joint carries the tool
+    const fig = html.slice(html.indexOf('<div class="armfig">'), html.indexOf('</svg>', html.indexOf('<div class="armfig">')));
+    expect(fig).toContain('class="dr-roll"'); // roll symbol, not a pitch circle
+    expect(fig).toContain('dr-axis'); // vertical J1 axis
+    expect(fig.match(/class="dr-joint"/g)?.length).toBe(3); // pitch circles: J2, J3, J5, never J1 (turntable) or J4 (roll collar)
+    expect(t).toContain('DOF 5');
+    expect(t).toContain('Ready pose');
   });
 
   it('charts: axis units and limit labels follow the stress and force units', () => {

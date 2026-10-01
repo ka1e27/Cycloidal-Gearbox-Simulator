@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { createGearboxModel, JOINT_PRESET_SPECS, type AdvisorDesign, type AdvisorLockKey, type RelaxHint } from '../../calc';
+import { createGearboxModel, type AdvisorDesign, type AdvisorLockKey, type RelaxHint } from '../../calc';
 import { ExportDxfPanel } from '../components/ExportDxfPanel';
 import { JointChips } from '../components/JointChips';
 import { NumberField } from '../components/NumberField';
@@ -10,8 +10,8 @@ import {
 import { stepSubtitle } from '../components/StepHint';
 import { HELP } from '../help';
 import { fixed, num, thickness, util } from '../format';
-import { toEngineLocks, type AdvisorLockState } from '../advisorLocks';
-import { presetFor } from '../session';
+import { defaultLockState, toEngineLocks, type AdvisorLockState } from '../advisorLocks';
+import { gearboxOf, presetFor, slotLabel } from '../session';
 import { advisorKey, defaultAdvisorOptions, useEffectiveInputs, useStore } from '../store';
 import { DiscSvg } from '../viz/DiscFigure';
 import { AdvisorLocksPanel } from './AdvisorLocksPanel';
@@ -24,11 +24,11 @@ export function AdvisorScreen() {
   const slot = state.selected;
   const eff = useEffectiveInputs(slot);
   const opts = state.advisor;
-  const lockState = state.advisorLocks[slot];
+  const lockState = state.advisorLocks[slot] ?? defaultLockState();
   const engine = useMemo(() => toEngineLocks(lockState, eff), [lockState, eff]);
-  const ref = presetFor(slot);
+  const ref = presetFor(slot, state.presetBase);
   const set = (patch: Partial<typeof opts>) => dispatch({ type: 'advisorOpts', patch });
-  const label = slot === 'custom' ? 'Custom' : JOINT_PRESET_SPECS[slot].label;
+  const label = slotLabel(state.arm, slot);
   const running = advisorRun.status === 'running';
   const res = advisorRun.result;
   const stale = res != null && (advisorRun.key !== advisorKey(eff, opts, engine) || advisorRun.slot !== slot);
@@ -71,7 +71,7 @@ export function AdvisorScreen() {
                   <output className="target-out" htmlFor="adv-target">{opts.target.toFixed(2)}</output>
                 </div>
               </FieldRow>
-              <NumberField label="Housing wall thickness" quantity="length" value={state.gearboxes[slot].wall}
+              <NumberField label="Housing wall thickness" quantity="length" value={gearboxOf(state, slot).wall}
                 onChange={(x) => updateGearbox(slot, (g) => ({ ...g, wall: x ?? 0 }))} defaultValue={ref.wall} help={HELP.advWall} step={0.5} />
               <Advanced label="Advanced: search limits">
                 <NumberField label="Smallest pin circle" symbol="D min" quantity="length" value={opts.Dmin} onChange={(x) => set({ Dmin: x ?? 0 })}

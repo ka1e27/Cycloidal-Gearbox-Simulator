@@ -1,7 +1,7 @@
 // Import / storage robustness beyond session.test.ts: hostile JSON shapes, prototype keys, deep garbage.
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkGearbox, computeArm, summarizeAllJoints } from '../../calc';
-import { defaultSession, importSession, loadSession, normalizeSession, saveSession, STORAGE_KEY, SLOTS } from '../session';
+import { defaultSession, importSession, loadSession, normalizeSession, saveSession, STORAGE_KEY, slotsOf } from '../session';
 
 const g = globalThis as unknown as { window?: unknown };
 afterEach(() => { delete g.window; });
@@ -10,7 +10,7 @@ const cur = defaultSession();
 
 /** Whatever an import produces, every engine entry point must cope with it and return finite-or-flagged results. */
 function engineCopes(s: ReturnType<typeof defaultSession>) {
-  for (const slot of SLOTS) {
+  for (const slot of slotsOf(s)) {
     const r = checkGearbox(s.gearboxes[slot]);
     expect(typeof r.valid).toBe('boolean');
     if (r.valid) {
@@ -22,8 +22,8 @@ function engineCopes(s: ReturnType<typeof defaultSession>) {
   }
   const arm = computeArm(s.arm);
   expect(typeof arm.valid).toBe('boolean');
-  const sum = summarizeAllJoints(s.arm, { J1: s.gearboxes.J1, J2: s.gearboxes.J2, J3: s.gearboxes.J3, J4: s.gearboxes.J4 }, { useArmLoads: s.useArmLoads });
-  expect(sum.rows.length).toBe(4);
+  const sum = summarizeAllJoints(s.arm, s.gearboxes, { useArmLoads: s.useArmLoads });
+  expect(sum.rows.length + sum.servos.length).toBe(s.arm.joints.length);
 }
 
 describe('audit: malformed JSON imports', () => {

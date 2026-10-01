@@ -20,7 +20,7 @@ import {
 import { Advanced, Button, FieldRow, Notice, Section, SelectField, Segmented, Switch } from '../components/primitives';
 import { NumberField } from '../components/NumberField';
 import { HELP } from '../help';
-import { presetFor, type Slot } from '../session';
+import { CUSTOM, armToggle, gearboxOf, presetFor, presetIdFor, type Slot } from '../session';
 import { useStore } from '../store';
 import { inchFraction, type U } from '../units';
 
@@ -129,8 +129,9 @@ function MaterialPicker({
 
 export function GearboxInputsPanel({ slot, eff, result }: { slot: Slot; eff: GearboxInputs; result: GearboxResult }) {
   const { state, arm, updateGearbox, dispatch, setStep, fromArm, u } = useStore();
-  const g = state.gearboxes[slot];
-  const ref = useMemo(() => presetFor(slot), [slot]);
+  const g = gearboxOf(state, slot);
+  const ref = useMemo(() => presetFor(slot, state.presetBase), [slot, state.presetBase]);
+  const startedFrom = slot !== CUSTOM && !(JOINT_IDS as readonly string[]).includes(slot) && state.presetBase[slot] ? presetIdFor(slot, state.presetBase) : null;
   const set = (patch: Partial<GearboxInputs>) => updateGearbox(slot, (x) => ({ ...x, ...patch }));
   const v = useMemo(() => validateGearboxInputs(eff), [eff]);
   const pick = (list: string[], ...prefixes: string[]) => list.find((m) => prefixes.some((p) => m.startsWith(p))) ?? null;
@@ -141,9 +142,9 @@ export function GearboxInputsPanel({ slot, eff, result }: { slot: Slot; eff: Gea
     'Inner pin material', 'Bolt ', 'Standoff '];
   const orphan = v.errors.filter((m) => !usedPrefixes.some((p) => m.startsWith(p)));
 
-  const arm_ = slot === 'custom' ? null : arm.joints[JOINT_IDS.indexOf(slot)];
+  const arm_ = slot === CUSTOM ? null : arm.joints.find((x) => x.joint === slot) ?? null;
   const fromArmNow = fromArm(slot);
-  const toggle = slot === 'custom' ? null : state.useArmLoads[slot];
+  const toggle = slot === CUSTOM ? null : armToggle(state, slot);
 
   const outerMatch = OUTER_PIN_OPTIONS.find((o) => Math.abs(2 * g.rr - o.od) < 1e-9);
   const innerMatch = INNER_PIN_OPTIONS.find((o) => Math.abs(2 * g.rw - o.od) < 1e-9);
@@ -181,11 +182,18 @@ export function GearboxInputsPanel({ slot, eff, result }: { slot: Slot; eff: Gea
           />
         ) : (
           <Button size="sm" variant="ghost" onClick={() => updateGearbox(slot, () => structuredClone(ref))}
-            disabled={JSON.stringify(g) === JSON.stringify(ref)} title={`Restore the ${JOINT_PRESET_SPECS[slot].label} preset`}>
+            disabled={JSON.stringify(g) === JSON.stringify(ref)} title={`Restore the ${JOINT_PRESET_SPECS[presetIdFor(slot, state.presetBase)].label} preset`}>
             Reset to preset
           </Button>
         )}
       </div>
+
+      {startedFrom && (
+        <Notice kind="info" title="Started from a preset">
+          This joint was added after the SPEC joints, so its gearbox started from the {JOINT_PRESET_SPECS[startedFrom].label} preset, the one whose
+          working torque is closest to this joint{'’'}s torque. Change anything below, or use Reset to preset to return to it.
+        </Notice>
+      )}
 
       {orphan.length > 0 && (
         <Notice kind="error" title="This geometry cannot be computed">
@@ -399,8 +407,8 @@ export function GearboxInputsPanel({ slot, eff, result }: { slot: Slot; eff: Gea
         </Advanced>
         {arm_ && arm.valid && (
           <p className="section-note">
-            Output bearing of this joint, from the arm model: {arm_.bearingAxial_N > 0
-              ? `axial thrust ${u.fu('force', arm_.bearingAxial_N, { fixed: true })}, overturning moment`
+            Output bearing of this joint, from the arm model: {arm_.motion === 'yaw'
+              ? `axial thrust ${u.fu('force', arm_.bearingAxial_N, { fixed: true })}${arm_.tiltedYaw ? `, radial load ${u.fu('force', arm_.bearingRadial_N, { fixed: true })}` : ''}, overturning moment`
               : `radial load ${u.fu('force', arm_.bearingRadial_N, { fixed: true })}, tilting moment`} {u.fu('torque', arm_.bearingTiltMoment_Nm, { fixed: true })}.
           </p>
         )}

@@ -574,3 +574,52 @@ button:disabled, input:disabled { cursor: not-allowed; }
 @media (max-width: 640px) {
   .units-pop { position: fixed; left: 12px; right: 12px; top: 54px; width: auto; }
 }
+
+/* ---------------------------------------------------------------- configurable arm: joint editor */
+.dof-badge {
+  display: inline-block; margin-left: 8px; padding: 1px 7px; border: 1px solid var(--ink); font-family: var(--font-mono);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--ink); vertical-align: 1px;
+}
+.joint-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.jcard { border: 1px solid var(--rule); background: var(--surface); min-width: 0; }
+.jcard.is-open { border-color: var(--field-border); }
+.jcard-head { display: flex; align-items: stretch; min-width: 0; }
+.jcard-toggle {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 6px 4px 6px 10px; min-height: 40px;
+  background: transparent; border: 0; text-align: left; color: var(--ink); font-size: 13.5px;
+}
+.jcard-toggle:hover { background: var(--hl); }
+.jcard-pos { font-weight: 700; font-size: 12.5px; flex: none; }
+.jcard-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.jcard-sum { margin-left: auto; padding-left: 6px; color: var(--ink-2); font-size: 11.5px; font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@media (max-width: 480px) { .jcard-sum { display: none; } }
+.jcard-actions { display: flex; align-items: center; gap: 1px; padding: 0 6px 0 2px; flex: none; }
+.icon-btn {
+  width: 30px; height: 30px; padding: 0; display: inline-grid; place-items: center; background: transparent; border: 1px solid transparent;
+  color: var(--ink-2); font-size: 11px; line-height: 1;
+}
+.icon-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--field-border); background: var(--hl); }
+.icon-btn:disabled { opacity: 0.3; }
+.icon-btn-danger:hover:not(:disabled) { color: var(--bad-ink); border-color: var(--bad-ink); }
+.jcard-body { padding: 2px 12px 10px; border-top: 1px solid var(--rule); }
+.jcard-body > .adv { margin-top: 8px; }
+.jcard-confirm { padding: 10px 12px; border-top: 1px solid var(--bad-ink); background: var(--hl); display: grid; gap: 8px; font-size: 13px; }
+.jcard-confirm p { margin: 0; }
+.jcard-confirm-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.joint-add { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin-top: 10px; }
+.seg-icon { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.motion-icon { display: block; flex: none; overflow: visible; }
+.text-input {
+  width: 100%; height: 32px; padding: 0 8px; background: var(--surface); border: 1px solid var(--field-border); border-radius: 0;
+  font-size: 13.5px; color: var(--ink);
+}
+.text-input:hover { border-color: var(--ink); }
+.text-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--ink); }
+.name-pre { display: block; margin-top: 3px; font-size: 11px; color: var(--ink-2); }
+.note-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.armfig-tools { display: flex; justify-content: flex-start; }
+.chip-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.chip-sub { font-family: var(--font-body, inherit); font-weight: 500; font-size: 11.5px; opacity: 0.85; max-width: 11ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 560px) { .chip-sub { display: none; } }
+.joint-name .motion-icon { display: inline-block; vertical-align: -3px; margin-right: 6px; }
+.joints-table.is-cards td[data-label="Output bearing"] { white-space: normal; text-align: right; }

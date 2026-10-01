@@ -145,6 +145,26 @@ bearing) can be locked to a user value or left free. The advisor optimizes only 
 under the same constraints and objective. If the locks make the target unreachable, it shows
 the closest design (lowest max utilization), what governs it, and which locks to relax.
 
+## Addition 7 — Configurable arm (DOF, joint motion types)
+The arm is an ordered list of 1–8 joints instead of a fixed J1–J5. Each joint has a name, a
+**motion type** (base yaw = rotation about a vertical axis; pitch = axis perpendicular to the
+link; roll = axis along the link), a **drive** (cycloidal gearbox, which gets a gearbox check,
+or direct-drive servo, which gets only a torque requirement), a mass, α, and the link to the next
+joint (length, mass). A payload sits at the tip. Worst-case rules, generalizing Addition 1:
+- Pitch (and a yaw whose axis can be tilted horizontal by an upstream pitch): T_static =
+  g·Σ m·r with everything outboard straight out horizontally; I = Σ m r² (+ rods L²/12).
+- Base yaw whose axis stays vertical (no pitch joint upstream): gravity torque 0, I_z with the arm
+  straight out from the axis.
+- Roll: masses between the roll joint and the next downstream non-roll joint k are on the axis.
+  Masses beyond k have lever = distance from k (bent 90° at k). With no such k, gravity torque is 0.
+- Bearing loads per type follow the Addition 1 rules (yaw: axial + overturning; pitch: radial +
+  offset tilt; roll: radial + axial-distance tilt).
+- The default 5-joint arm [yaw, pitch, pitch, roll, pitch-servo] must reproduce today's numbers
+  exactly.
+Diagram: the default view is a "ready pose": the shoulder sits on the yaw base, the link after the
+first pitch joint points up (elbow above shoulder), and later links point out horizontally. A
+toggle shows the worst-case straight-out pose used for the torques.
+
 ## UI / UX — "very nice and very user friendly"
 - Clean engineering-tool look: light and dark themes (follow the OS, plus a toggle), one accent
   color, generous spacing, clear typographic hierarchy, cards, no clutter. Responsive down to

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  JOINT_IDS, PRESETS, JOINT_PRESET_SPECS, computeArm, defaultArmInputs, summarizeAllJoints, checkGearbox,
+  JOINT_IDS, PRESETS, JOINT_PRESET_SPECS, computeArm, defaultArmInputs, summarizeAllJoints, checkGearbox, closestPresetId,
+  makeJoint, presetInputs,
 } from '../index';
+import type { GearboxInputs } from '../index';
 
 describe('joint presets (SPEC.md table)', () => {
   it('match the SPEC.md values', () => {
@@ -15,7 +17,7 @@ describe('joint presets (SPEC.md table)', () => {
 });
 
 describe('all-joints summary', () => {
-  const gearboxes = { J1: PRESETS.J1, J2: PRESETS.J2, J3: PRESETS.J3, J4: PRESETS.J4 };
+  const gearboxes: Record<string, GearboxInputs> = { J1: PRESETS.J1, J2: PRESETS.J2, J3: PRESETS.J3, J4: PRESETS.J4 };
 
   it('uses arm-model torques by default and reports one row per joint plus the servo', () => {
     const arm = defaultArmInputs();
@@ -38,9 +40,10 @@ describe('all-joints summary', () => {
       expect(r.discMass_g).toBeCloseTo(r.result.mass.total_g, 12);
       expect(r.geometry.D).toBe(gearboxes[r.joint].D);
     });
-    expect(s.servo.joint).toBe('J5');
-    expect(s.servo.Treq).toBeCloseTo(a.joints[4].Treq, 12);
-    expect(s.servo.Treq).toBeCloseTo(s.servo.Tstatic + s.servo.Tdyn, 12);
+    expect(s.servos.map((x) => x.joint)).toEqual(['J5']);
+    expect(s.servos[0].index).toBe(4);
+    expect(s.servos[0].Treq).toBeCloseTo(a.joints[4].Treq, 12);
+    expect(s.servos[0].Treq).toBeCloseTo(s.servos[0].Tstatic + s.servos[0].Tdyn, 12);
     expect(s.counts.pass + s.counts.marginal + s.counts.fail + s.counts.invalid).toBe(4);
   });
 
@@ -61,5 +64,38 @@ describe('all-joints summary', () => {
     expect(s.arm.valid).toBe(false);
     expect(s.rows.every((r) => !r.loadsFromArm)).toBe(true);
     expect(s.rows[1].Treq).toBe(5.85);
+  });
+});
+
+describe('all-joints summary for a configurable arm', () => {
+  it('follows the joint list: servo joints become servo rows, new cycloidal joints are rows', () => {
+    const arm = defaultArmInputs();
+    arm.joints[2].drive = 'servo'; // elbow becomes a servo
+    const added = makeJoint(arm.joints, 'pitch');
+    arm.joints.push(added);
+    const gb = { J1: PRESETS.J1, J2: PRESETS.J2, J4: PRESETS.J4, [added.id]: presetInputs('J3') };
+    const s = summarizeAllJoints(arm, gb);
+    expect(s.rows.map((r) => r.joint)).toEqual(['J1', 'J2', 'J4', added.id]);
+    expect(s.rows.map((r) => r.index)).toEqual([0, 1, 3, 5]);
+    expect(s.servos.map((r) => r.joint)).toEqual(['J3', 'J5']);
+    expect(s.counts.pass + s.counts.marginal + s.counts.fail + s.counts.invalid).toBe(4);
+    const a = computeArm(arm);
+    expect(s.rows[3].Treq).toBeCloseTo(a.joints[5].Treq, 12);
+    expect(s.servos[0].Tdes).toBeCloseTo(a.joints[2].Tdes, 12);
+  });
+  it('a cycloidal joint with no stored gearbox falls back to its closest preset instead of throwing', () => {
+    const s = summarizeAllJoints(defaultArmInputs(), {});
+    expect(s.rows).toHaveLength(4);
+    expect(s.rows.every((r) => r.result.valid || r.result.errors.length > 0)).toBe(true);
+  });
+  it('closestPresetId picks the preset with the nearest working torque (by ratio)', () => {
+    expect(closestPresetId(5.9)).toBe('J2');
+    expect(closestPresetId(2.2)).toBe('J3');
+    expect(closestPresetId(0.31)).toBe('J4');
+    expect(closestPresetId(1.2)).toBe('J1');
+    expect(closestPresetId(0)).toBe('J3');
+    expect(closestPresetId(NaN)).toBe('J3');
+    expect(closestPresetId(null)).toBe('J3');
+    expect(closestPresetId(500)).toBe('J2');
   });
 });

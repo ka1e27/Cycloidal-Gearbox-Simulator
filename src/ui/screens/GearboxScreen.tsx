@@ -1,10 +1,11 @@
 import { useDeferredValue, useMemo } from 'react';
-import { createGearboxModel, JOINT_PRESET_SPECS } from '../../calc';
+import { createGearboxModel } from '../../calc';
 import { ExportDxfPanel } from '../components/ExportDxfPanel';
 import { JointChips } from '../components/JointChips';
 import { PageHead, StatusChip, StepNav, STATUS_WORD, verdictKind } from '../components/primitives';
 import { stepSubtitle } from '../components/StepHint';
 import { useEffectiveInputs, useStore } from '../store';
+import { slotLabel, slotShort } from '../session';
 import { util } from '../format';
 import { plainName } from '../plain';
 import { GearboxInputsPanel } from './GearboxInputsPanel';
@@ -19,7 +20,7 @@ export function GearboxScreen() {
   const model = useMemo(() => createGearboxModel(deferred), [deferred]);
   const r = model.result;
   const pending = deferred !== eff;
-  const label = slot === 'custom' ? 'Custom' : JOINT_PRESET_SPECS[slot].label;
+  const label = slotLabel(state.arm, slot);
 
   return (
     <div className="screen">
@@ -43,7 +44,7 @@ export function GearboxScreen() {
             </>
           )}
           <SolverPanel slot={slot} eff={eff} K1={r.derived.K1} />
-          <ExportDxfPanel inputs={deferred} label={slot === 'custom' ? 'custom' : slot} model={model} />
+          <ExportDxfPanel inputs={deferred} label={slotShort(state.arm, slot)} model={model} />
         </div>
       </div>
       <StepNav
