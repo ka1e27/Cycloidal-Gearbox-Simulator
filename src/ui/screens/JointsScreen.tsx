@@ -4,8 +4,8 @@ import { Button, Card, Cu, Notice, PageHead, ResponsiveTable, STATUS_WORD, Statu
 import { stepSubtitle } from '../components/StepHint';
 import { DASH, fixed, num, util } from '../format';
 import { useStore } from '../store';
+import { JOINT_KIND } from '../jointNames';
 
-const KIND = ['base yaw', 'shoulder pitch', 'elbow pitch', 'forearm roll'];
 
 export function JointsScreen() {
   const { state, select, setStep, runAdvisor, u } = useStore();
@@ -70,7 +70,7 @@ export function JointsScreen() {
                     <button type="button" className="linkish strong" onClick={() => open(row, 'gearbox')} title="Open this joint on the Gearbox page">
                       {row.joint}
                     </button>
-                    <span className="joint-kind">{KIND[i]}</span>
+                    <span className="joint-kind">{JOINT_KIND[i]}</span>
                   </th>
                   <td className="num" data-label="T_req / T_des">
                     {T(row.Treq)} / {T(row.Tdes)}<Cu>{nm}</Cu>
@@ -115,7 +115,7 @@ export function JointsScreen() {
             <tr className="is-servo">
               <th scope="row" data-label="Joint">
                 <span className="joint-name">J5</span>
-                <span className="joint-kind">wrist pitch servo</span>
+                <span className="joint-kind">{JOINT_KIND[4]}</span>
               </th>
               <td className="num" data-label="T_req / T_des">
                 {sum.arm.valid ? <>{T(sum.servo.Treq)} / {T(sum.servo.Tdes)}<Cu>{nm}</Cu></> : DASH}

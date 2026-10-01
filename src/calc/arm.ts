@@ -9,7 +9,7 @@ export type Five = [number, number, number, number, number];
 export const ARM_JOINT_NAMES = ['J1', 'J2', 'J3', 'J4', 'J5'] as const;
 export type ArmJointName = (typeof ARM_JOINT_NAMES)[number];
 /** Bar order: riser (J1-J2), bar A (J2-J3), bar B (J3-J4), bar C (J4-J5), bar D (J5-tool tip) */
-export const ARM_BAR_NAMES = ['Riser (J1-J2)', 'Bar A (J2-J3)', 'Bar B (J3-J4)', 'Bar C (J4-J5)', 'Bar D / tool (J5-tip)'] as const;
+export const ARM_BAR_NAMES = ['Base column (J1-J2)', 'Bar A (J2-J3)', 'Bar B (J3-J4)', 'Bar C (J4-J5)', 'Bar D / tool (J5-tip)'] as const;
 
 export interface ArmOverride {
   /** Manual T_req, N*m. null = use the model. */

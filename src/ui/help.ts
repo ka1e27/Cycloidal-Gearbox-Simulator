@@ -50,6 +50,8 @@ export const HELP: Record<string, HelpEntry> = {
   jointMass: { what: 'Mass of the joint: motor, gearbox and housing, lumped at the joint centre.', typical: '100 to 800 g for this arm (placeholders until CAD masses exist).' },
   barMass: { what: 'Mass of the link between two joints. It is treated as a uniform rod with its centre of mass at the midpoint.', typical: '40 to 120 g.' },
   barLength: { what: 'Centre-to-centre length of the link, along the arm.', typical: '80 to 230 mm.' },
+  baseColumnLength: { what: 'Height of the base column, from the top of the J1 turntable up to the J2 shoulder axis. The column rotates with J1 (it is part of the base, not a driven link), so it adds weight and height but no yaw inertia.', typical: '100 mm placeholder. 0 puts the J2 axis right on the turntable.' },
+  baseColumnMass: { what: 'Mass of the base column, J1 to J2. It is a vertical rod on the J1 axis, so it adds axial load on the J1 bearing but no gravity torque or yaw inertia.', typical: '40 to 120 g.' },
   payload: { what: 'Mass carried at the tool tip.', typical: '250 g placeholder.' },
   linkOffset: { what: 'How far the link’s load plane sits from this joint’s output bearing, measured along the joint axis. The radial load times this offset is the tilting moment on the bearing. Used for the two pitch joints (J2, J3) only.', typical: '15 mm placeholder; about half the bearing width plus the link thickness.' },
   alpha: { what: 'Maximum angular acceleration of the joint. It sets the dynamic torque term α · I.', typical: '3 rad/s².' },

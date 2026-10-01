@@ -420,6 +420,21 @@ describe('audit: every number is tagged with the right quantity', () => {
     expect(html).toMatch(/value="1\.5"/);
   });
 
+  it('arm diagram: J1 is a yaw turntable, J2 starts bar A, J4 is a roll collar, and the names agree everywhere', () => {
+    const s = defaultSession();
+    s.step = 1;
+    const html = render(s, ArmScreen);
+    const t = text(html);
+    for (const name of ['J1 base yaw', 'J2 shoulder', 'J3 elbow', 'J4 roll', 'J5 wrist', 'column']) expect(t, name).toContain(name);
+    expect(t).not.toMatch(/riser/i);
+    expect(html).toContain('Base column, J1 to J2');
+    expect(html).toContain('Base column mass');
+    expect(html).toContain('class="dr-roll"'); // roll symbol, not a pitch circle
+    expect(html).toContain('dr-axis'); // vertical J1 axis
+    expect(html.match(/class="dr-joint"/g)?.length).toBe(4); // pitch circles: J2, J3, J5 and the legend swatch, never J1 or J4
+    for (const kind of ['base yaw', 'shoulder pitch', 'elbow pitch', 'forearm roll', 'wrist pitch (servo)']) expect(t, kind).toContain(kind);
+  });
+
   it('charts: axis units and limit labels follow the stress and force units', () => {
     for (const [units, stress, force, lim] of [[METRIC, 'MPa', 'N', 'strength limit 461'], [IMPERIAL, 'ksi', 'lbf', 'strength limit 67'], [ALL, 'psi', 'lbf', `strength limit ${Math.round(1.67 * 276 / (6.894757293168361 / 1000)).toLocaleString('en-US')}`]] as const) {
       const html = render(specCaseSession(units), GearboxScreen);

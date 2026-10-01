@@ -7,9 +7,10 @@ import { HELP } from '../help';
 import { DASH } from '../format';
 import { ArmDiagram } from '../viz/ArmDiagram';
 import { useStore } from '../store';
+import { JOINT_KIND } from '../jointNames';
 
-const BAR_NAMES = ['Riser, J1 to J2', 'Bar A, J2 to J3', 'Bar B, J3 to J4', 'Bar C, J4 to J5', 'Bar D (tool), J5 to tip'];
-const BAR_SHORT = ['Riser', 'Bar A', 'Bar B', 'Bar C', 'Bar D'];
+const BAR_NAMES = ['Base column, J1 to J2', 'Bar A, J2 to J3', 'Bar B, J3 to J4', 'Bar C, J4 to J5', 'Bar D (tool), J5 to tip'];
+const BAR_SHORT = ['Base column', 'Bar A', 'Bar B', 'Bar C', 'Bar D'];
 const D = defaultArmInputs();
 
 function setAt<T>(arr: T[], i: number, v: T): T[] {
@@ -49,7 +50,7 @@ export function ArmScreen() {
             <Section title="Link lengths" summary="centre to centre">
               {BAR_NAMES.map((n, i) => (
                 <NumberField key={n} label={n} quantity="length" value={a.barLength_mm[i]} onChange={tup('barLength_mm', i)}
-                  defaultValue={D.barLength_mm[i]} error={err(`Bar length ${i + 1}`)} help={HELP.barLength} step={5} />
+                  defaultValue={D.barLength_mm[i]} error={err(`Bar length ${i + 1}`)} help={i === 0 ? HELP.baseColumnLength : HELP.barLength} step={5} />
               ))}
             </Section>
 
@@ -63,7 +64,7 @@ export function ArmScreen() {
             <Section title="Link masses and payload">
               {BAR_SHORT.map((n, i) => (
                 <NumberField key={n} label={`${n} mass`} quantity="mass" value={a.barMass_g[i]} onChange={tup('barMass_g', i)}
-                  defaultValue={D.barMass_g[i]} error={err(`Bar mass ${i + 1}`)} help={HELP.barMass} step={5} />
+                  defaultValue={D.barMass_g[i]} error={err(`Bar mass ${i + 1}`)} help={i === 0 ? HELP.baseColumnMass : HELP.barMass} step={5} />
               ))}
               <NumberField label="Payload at tool tip" quantity="mass" value={a.payload_g}
                 onChange={(v) => updateArm((x) => ({ ...x, payload_g: v ?? 0 }))} defaultValue={D.payload_g}
@@ -148,7 +149,7 @@ function TorqueTable({ arm, errors }: { arm: ArmResult; errors: string[] }) {
                 <th scope="row" data-label="Joint">
                   <span className="joint-name">{j.joint}</span>
                   <span className="joint-kind">
-                    {servo ? 'servo (direct drive)' : ['base yaw', 'shoulder pitch', 'elbow pitch', 'forearm roll'][i]}
+                    {JOINT_KIND[i]}
                   </span>
                 </th>
                 <td className="num" data-label="Gravity torque about axis">{ok ? T(j.TstaticModel) : DASH}{ok && <Cu>{nm}</Cu>}</td>

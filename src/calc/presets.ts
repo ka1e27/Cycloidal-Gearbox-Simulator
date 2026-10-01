@@ -58,8 +58,8 @@ export interface JointPresetSpec {
 }
 
 export const JOINT_PRESET_SPECS: Record<JointId, JointPresetSpec> = {
-  J2: { label: 'J2 shoulder', D: 85, e: 1.6, Treq: 5.85, Tdes: 8.8, discs: 2, note: '' },
-  J3: { label: 'J3 elbow', D: 70, e: 1.07, Treq: 2.25, Tdes: 3.4, discs: 1, note: '' },
+  J2: { label: 'J2 shoulder pitch', D: 85, e: 1.6, Treq: 5.85, Tdes: 8.8, discs: 2, note: '' },
+  J3: { label: 'J3 elbow pitch', D: 70, e: 1.07, Treq: 2.25, Tdes: 3.4, discs: 1, note: '' },
   J1: { label: 'J1 base yaw', D: 60, e: 0.92, Treq: 1.3, Tdes: 2.0, discs: 1, note: 'T_req is an estimate' },
   J4: { label: 'J4 forearm roll', D: 60, e: 0.92, Treq: 0.3, Tdes: 1.0, discs: 1, note: 'T_req is an estimate' },
 };
