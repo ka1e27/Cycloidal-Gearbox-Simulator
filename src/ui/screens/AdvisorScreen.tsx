@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { createGearboxModel, type AdvisorDesign, type AdvisorLockKey, type RelaxHint } from '../../calc';
+import { checkMotor, createGearboxModel, type AdvisorDesign, type AdvisorLockKey, type MotorCheck, type RelaxHint } from '../../calc';
 import { ExportDxfPanel } from '../components/ExportDxfPanel';
 import { JointChips } from '../components/JointChips';
 import { NumberField } from '../components/NumberField';
@@ -11,21 +11,25 @@ import { stepSubtitle } from '../components/StepHint';
 import { HELP } from '../help';
 import { fixed, num, thickness, util } from '../format';
 import { defaultLockState, toEngineLocks, type AdvisorLockState } from '../advisorLocks';
+import { ratioPlanFor } from '../motorUi';
 import { gearboxOf, presetFor, slotLabel } from '../session';
 import { advisorKey, defaultAdvisorOptions, useEffectiveInputs, useStore } from '../store';
 import { DiscSvg } from '../viz/DiscFigure';
 import { AdvisorLocksPanel } from './AdvisorLocksPanel';
 
+// Releasing the ratio also leaves "from motor" mode (ratioMotor false), so the re-run really tries every Zp.
 const unlockKey = (key: RelaxHint['key']) => (l: AdvisorLockState): AdvisorLockState =>
-  key === 'maxHousingOD' ? { ...l, limitOn: false } : { ...l, on: { ...l.on, [key]: false } };
+  key === 'maxHousingOD' ? { ...l, limitOn: false } : key === 'Zp' ? { ...l, ratioMotor: false, on: { ...l.on, Zp: false } } : { ...l, on: { ...l.on, [key]: false } };
 
 export function AdvisorScreen() {
-  const { state, select, dispatch, updateGearbox, runAdvisor, cancelAdvisor, advisorRun, setStep, notify, fromArm, u } = useStore();
+  const { state, select, dispatch, updateGearbox, updateLocks, runAdvisor, cancelAdvisor, advisorRun, setStep, notify, fromArm, u } = useStore();
   const slot = state.selected;
   const eff = useEffectiveInputs(slot);
   const opts = state.advisor;
   const lockState = state.advisorLocks[slot] ?? defaultLockState();
-  const engine = useMemo(() => toEngineLocks(lockState, eff), [lockState, eff]);
+  const joint = state.arm.joints.find((j) => j.id === slot);
+  const plan = useMemo(() => ratioPlanFor(joint, eff, lockState), [joint, eff, lockState]);
+  const engine = useMemo(() => toEngineLocks(lockState, eff, plan.mode === 'motor' ? plan.zps : null), [lockState, eff, plan]);
   const ref = presetFor(slot, state.presetBase);
   const set = (patch: Partial<typeof opts>) => dispatch({ type: 'advisorOpts', patch });
   const label = slotLabel(state.arm, slot);
@@ -38,6 +42,9 @@ export function AdvisorScreen() {
   const dLo = !lockState.on.D && opts.Dmin >= opts.Dmax;
   const T = (x: number) => u.fu('torque', x, { fixed: true });
   const chosen = res && res.valid && !stale && advisorRun.slot === slot ? (res.best ?? res.closest) : null;
+  const zpSearched = chosen && res ? res.zpSearched : null;
+  const motorCheckOf = (d: AdvisorDesign): MotorCheck | null =>
+    joint?.motor && plan.usable ? checkMotor({ Treq: d.inputs.Treq, Tdes: d.inputs.Tdes }, joint.motor, 'cycloidal', d.Zp) : null;
 
   const apply = (d: AdvisorDesign, which: string) => {
     updateGearbox(slot, (g) => ({ ...d.inputs, Treq: g.Treq, Tdes: g.Tdes }));
@@ -104,8 +111,14 @@ export function AdvisorScreen() {
         </div>
 
         <div className="col col-results">
+          {plan.mode === 'motor' && !plan.feasible && (
+            <Notice kind="warning" title="The motor cannot drive any ratio the advisor searches"
+              actions={<Button size="sm" variant="secondary" onClick={() => updateLocks(slot, (l) => ({ ...l, ratioMotor: false, on: { ...l.on, Zp: false } }))}>Set the ratio to Free</Button>}>
+              The advisor searches the nearest Zp (Zp {plan.zps[0]}) so you still get a design, but this motor will fall short at it. Pick a stronger or faster motor on Arm & Loads, or leave the motor out of the ratio.
+            </Notice>
+          )}
           <AdvisorLocksPanel slot={slot} eff={eff} chosen={chosen} running={running} hasResult={!!res} canRun={!dLo}
-            onRun={() => runAdvisor(slot)} onCancel={cancelAdvisor} />
+            onRun={() => runAdvisor(slot)} onCancel={cancelAdvisor} plan={plan} zpSearched={zpSearched} />
           {running && <RunningCard />}
           {!running && !res && (
             <Card>
@@ -131,13 +144,13 @@ export function AdvisorScreen() {
                 </Notice>
               )}
               {res.valid && !res.best && (
-                <Infeasible res={res} opts={opts} label={label} onApply={apply}
+                <Infeasible res={res} opts={opts} label={label} onApply={apply} motorCheckOf={motorCheckOf}
                   onRelax={(k) => runAdvisor(slot, unlockKey(k))} />
               )}
               {res.valid && res.best && (
                 <>
                   <Hero d={res.best} target={res.target} elapsed={res.elapsedMs} evaluated={res.evaluated} joint={label}
-                    locked={res.locked}
+                    locked={res.locked} zpSearched={res.zpSearched} motorCheck={motorCheckOf(res.best)}
                     onApply={() => apply(res.best as AdvisorDesign, 'recommended')} />
                   <ExportDxfPanel inputs={res.best.inputs} label={`${label} advisor design`} />
                   <Alternatives res={res.alternatives} onApply={apply} />
@@ -186,15 +199,16 @@ function Tag({ k, locked }: { k: AdvisorLockKey; locked: readonly AdvisorLockKey
 }
 
 /** The infeasible case: the closest design, what governs it, and the locks to relax (each with a one-click re-run). */
-function Infeasible({ res, opts, label, onApply, onRelax }: {
+function Infeasible({ res, opts, label, onApply, onRelax, motorCheckOf }: {
   res: NonNullable<ReturnType<typeof useStore>['advisorRun']['result']>;
   opts: { Dmin: number; Dmax: number };
   label: string;
   onApply: (d: AdvisorDesign, which: string) => void;
   onRelax: (k: RelaxHint['key']) => void;
+  motorCheckOf: (d: AdvisorDesign) => MotorCheck | null;
 }) {
   const { u } = useStore();
-  const hasLocks = res.locked.some((k) => k !== 'Zp') || res.maxHousingOD != null;
+  const hasLocks = res.locked.some((k) => k !== 'Zp') || res.maxHousingOD != null || res.zpSearched != null;
   // the card already says what the warnings below would repeat
   const extraWarnings = res.warnings.filter((w) => !/^No design (up to|meets)|^The closest design reaches/.test(w));
   return (
@@ -209,7 +223,7 @@ function Infeasible({ res, opts, label, onApply, onRelax }: {
 
       {res.closest && (
         <Hero d={res.closest} target={res.target} elapsed={res.elapsedMs} evaluated={res.evaluated} joint={label}
-          locked={res.locked} closest onApply={() => onApply(res.closest as AdvisorDesign, 'closest')} />
+          locked={res.locked} zpSearched={res.zpSearched} motorCheck={motorCheckOf(res.closest)} closest onApply={() => onApply(res.closest as AdvisorDesign, 'closest')} />
       )}
 
       {res.relaxHints.length > 0 && (
@@ -223,7 +237,7 @@ function Infeasible({ res, opts, label, onApply, onRelax }: {
                   <small className="hint-meta">All other locks stay as they are.</small>
                 </span>
                 <Button size="sm" variant="secondary" onClick={() => onRelax(h.key)}>
-                  {h.key === 'maxHousingOD' ? 'Remove the limit and re-run' : `Unlock ${h.name} and re-run`}
+                  {h.key === 'maxHousingOD' ? 'Remove the limit and re-run' : h.key === 'Zp' && res.zpSearched ? 'Ignore the motor ratio and re-run' : `Unlock ${h.name} and re-run`}
                 </Button>
               </li>
             ))}
@@ -251,8 +265,12 @@ function Infeasible({ res, opts, label, onApply, onRelax }: {
   );
 }
 
-export function Hero({ d, target, elapsed, evaluated, joint, onApply, locked, closest }: {
+export function Hero({ d, target, elapsed, evaluated, joint, onApply, locked, closest, zpSearched, motorCheck }: {
   d: AdvisorDesign; target: number; elapsed: number; evaluated: number; joint: string; onApply: () => void;
+  /** Zp values searched when the ratio came from the motor (shown on the ratio row), else null */
+  zpSearched?: number[] | null;
+  /** The motor against this design's ratio (Addition 8), or null/omitted */
+  motorCheck?: MotorCheck | null;
   /** Variables that were locked for this run: rows get a Locked / Optimized tag. Omit for no tags. */
   locked?: readonly AdvisorLockKey[];
   /** This is the closest design (it does not meet the target) */
@@ -301,7 +319,13 @@ export function Hero({ d, target, elapsed, evaluated, joint, onApply, locked, cl
             { label: 'Pin circle diameter, D', value: L(d.D, 1), note: locked ? T('D') : undefined },
             { label: 'Housing outside diameter', value: L(d.housingOD, 1), note: `wall ${L(d.inputs.wall, 1)}` },
             { label: 'Eccentricity, e', value: L(d.e, 3), note: <>{`K1 ${fixed(d.K1, 3)}`}{T('e')}</> },
-            { label: 'Gear ratio', value: `${num(d.ratio, 0)}:1`, note: <>{`Zp ${num(d.Zp, 0)}`}{T('Zp')}</> },
+            { label: 'Gear ratio', value: `${num(d.ratio, 0)}:1`, note: <>{`Zp ${num(d.Zp, 0)}`}{zpSearched ? <span className="lk-tag is-opt">From motor</span> : T('Zp')}</> },
+            ...(motorCheck && motorCheck.outputPeak_Nm != null && motorCheck.status !== 'invalid' ? [{
+              label: 'Motor at this ratio',
+              value: u.fu('torque', motorCheck.outputPeak_Nm, { fixed: true }),
+              note: motorCheck.status === 'ok' ? `peak, enough for T_des ${u.fu('torque', d.inputs.Tdes, { fixed: true })}` : u.text(motorCheck.problems[0] ?? 'falls short'),
+              flag: motorCheck.status === 'ok' ? undefined : ('fail' as const),
+            }] : []),
             { label: 'Outer pins', value: outerDesc, note: locked ? T('outerPin') : undefined },
             { label: 'Inner pins', value: innerDesc, note: <>{`Rw ${L(d.Rw, 1)}`}{T('innerPin')}</> },
             { label: 'Inner pin count, Zw', value: String(d.Zw), note: locked ? T('Zw') : undefined },
@@ -320,6 +344,11 @@ export function Hero({ d, target, elapsed, evaluated, joint, onApply, locked, cl
         </p>
       )}
 
+      {motorCheck?.overload?.exceeds && (
+        <Notice kind="warning" title="Motor can overload this design">
+          {u.text(motorCheck.overload.message)}
+        </Notice>
+      )}
       <div className="hero-foot">
         <Button variant="primary" iconAfter="arrow" onClick={onApply}>{closest ? 'Apply closest to Gearbox' : 'Apply to Gearbox'}</Button>
         <p className="hero-note">
@@ -351,6 +380,7 @@ export function Alternatives({ res, onApply }: {
           <tr>
             <th scope="col">Option</th>
             <th scope="col" className="num">Housing OD<small>{ul}</small></th>
+            <th scope="col" className="num">Ratio</th>
             <th scope="col" className="num">D<small>{ul}</small></th>
             <th scope="col" className="num">e<small>{ul}</small></th>
             <th scope="col" className="num">Pins out / in<small>{ul} OD</small></th>
@@ -372,6 +402,7 @@ export function Alternatives({ res, onApply }: {
               {d ? (
                 <>
                   <td className="num" data-label="Housing OD">{L(d.housingOD, 0)}<Cu>{ul}</Cu></td>
+                  <td className="num" data-label="Ratio">{num(d.ratio, 0)}:1</td>
                   <td className="num" data-label="D">{L(d.D, 0)}<Cu>{ul}</Cu></td>
                   <td className="num" data-label="e">{L(d.e, 3)}<Cu>{ul}</Cu></td>
                   <td className="num" data-label="Pins out / in">{L(d.outerPinOD, 1)} / {L(d.innerPinOD, 1)}<Cu>{ul}</Cu></td>
@@ -385,7 +416,7 @@ export function Alternatives({ res, onApply }: {
                   </td>
                 </>
               ) : (
-                <td colSpan={10} className="none-found" data-label="">None found in the search window</td>
+                <td colSpan={11} className="none-found" data-label="">None found in the search window</td>
               )}
             </tr>
           ))}

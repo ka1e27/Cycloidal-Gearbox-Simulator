@@ -96,6 +96,13 @@ export interface AdvisorOptions {
   target?: number;
   /** Let Zp vary over {12,...,26} instead of keeping the current ratio. Default false. Ignored when `locks.Zp` is set. */
   ratioVary?: boolean;
+  /**
+   * Restrict the searched Zp to exactly these integers ("ratio from motor", CLAUDE.md Addition 8; the UI builds the list
+   * with motorZpSet). Takes the place of `ratioVary` (and its 12..26 even grid) but is itself not a lock: Zp counts as
+   * optimized. Ignored when `locks.Zp` is set. Values must be integers from 8 to 200; others are dropped. An empty list
+   * is ignored.
+   */
+  zpSet?: number[];
   Dmin?: number;
   Dmax?: number;
   /** Also search this many mm of housing OD beyond the best for "lightest" and "most margin". Default 15. */
@@ -216,6 +223,8 @@ export interface AdvisorResult {
   locked: AdvisorLockKey[];
   /** The housing OD limit used, mm, or null */
   maxHousingOD: number | null;
+  /** The Zp values that were searched when the ratio was restricted with `zpSet`, else null */
+  zpSearched: number[] | null;
   /** When `best` is null: the design with the lowest max utilization within the locks (null if none is even geometrically valid) */
   closest: AdvisorDesign | null;
   /** When `best` is null: which single lock to release for a passing design (empty if no single release helps) */
@@ -381,8 +390,9 @@ function buildSpace(inputs: GearboxInputs, o: ResolvedOptions): Space {
   const mark = (k: AdvisorLockKey, on: boolean) => { if (on) locked.push(k); };
 
   let Zps: number[];
-  const zpLocked = lk.Zp !== undefined || !o.ratioVary;
+  const zpLocked = lk.Zp !== undefined || (!o.ratioVary && !o.zpSet);
   if (lk.Zp !== undefined) Zps = [lk.Zp];
+  else if (o.zpSet) Zps = [...o.zpSet];
   else Zps = o.ratioVary ? [...ZP_OPTIONS] : [inputs.Zp];
 
   let outer: OuterOpt[];
@@ -509,7 +519,7 @@ export function invalidAdvisor(errors: string[], target: number): AdvisorResult 
   return {
     valid: false, cancelled: false, errors, warnings: [], target, best: null,
     alternatives: { oneDisc: null, twoDisc: null, lightest: null, mostMargin: null },
-    locked: [], maxHousingOD: null, closest: null, relaxHints: [],
+    locked: [], maxHousingOD: null, zpSearched: null, closest: null, relaxHints: [],
     evaluated: 0, elapsedMs: 0,
   };
 }
@@ -522,6 +532,7 @@ interface SearchOutcome {
 interface ResolvedOptions {
   target: number;
   ratioVary: boolean;
+  zpSet: number[] | null;
   Dmin: number; Dmax: number;
   altWindowMm: number; discAltWindowMm: number;
   npfCoarse: number; nthCoarse: number; npfFull: number; nthFull: number;
@@ -905,10 +916,11 @@ function releasedOptions(o: ResolvedOptions, key: AdvisorLockKey | 'maxHousingOD
   if (key === 'maxHousingOD') delete locks.maxHousingOD;
   else if (key === 'Zp') { delete locks.Zp; ratioVary = true; }
   else delete locks[key];
+  const zpSet = key === 'Zp' ? null : o.zpSet;
   // alternatives are not needed for a hint: stop as soon as the best housing OD is settled
   // ...and the screening can be coarser (half resolution, about 4x faster): every hint is verified at full resolution
   return {
-    ...o, locks, ratioVary, altWindowMm: 0, discAltWindowMm: 0,
+    ...o, locks, ratioVary, zpSet, altWindowMm: 0, discAltWindowMm: 0,
     npfCoarse: Math.max(200, Math.round(o.npfCoarse / 2)), nthCoarse: Math.max(24, Math.round(o.nthCoarse / 2)),
   };
 }
@@ -926,7 +938,7 @@ function* hintsPhase(
   // the ratio re-run is the most expensive (8 values of Zp), so it goes last and gets what is left of the budget
   const keys: (AdvisorLockKey | 'maxHousingOD')[] = sp.locked.filter((k) => k !== 'Zp');
   if (sp.maxOD < Infinity) keys.push('maxHousingOD');
-  if (sp.locked.includes('Zp')) keys.push('Zp');
+  if (sp.locked.includes('Zp') || (o.zpSet && o.locks.Zp === undefined)) keys.push('Zp');
   const hints: RelaxHint[] = [];
   const skipped: (AdvisorLockKey | 'maxHousingOD')[] = [];
   let evaluated = 0;
@@ -975,10 +987,18 @@ function* hintsPhase(
 // Main generator
 // ---------------------------------------------------------------------------
 
+/** Sorted, unique integers from 8 to 200, or null when nothing usable was given. */
+function cleanZpSet(v: unknown): number[] | null {
+  if (!Array.isArray(v)) return null;
+  const out = [...new Set(v.filter((z): z is number => finite(z) && Number.isInteger(z) && z >= 8 && z <= 200))].sort((a, b) => a - b);
+  return out.length ? out : null;
+}
+
 function resolveOptions(opts: AdvisorOptions): ResolvedOptions {
   return {
     target: clampTarget(opts.target),
     ratioVary: opts.ratioVary ?? false,
+    zpSet: cleanZpSet(opts.zpSet),
     Dmin: opts.Dmin ?? ADVISOR_D_MIN,
     Dmax: opts.Dmax ?? ADVISOR_D_MAX,
     altWindowMm: opts.altWindowMm ?? 15,
@@ -1024,9 +1044,11 @@ function* adviseGen(inputs: GearboxInputs, opts: AdvisorOptions): Generator<Advi
     valid: true, cancelled: false, errors: [], warnings, target, best: null,
     alternatives: { oneDisc: null, twoDisc: null, lightest: null, mostMargin: null },
     locked: sp.locked, maxHousingOD: Number.isFinite(sp.maxOD) ? sp.maxOD : null,
+    zpSearched: o.zpSet && o.locks.Zp === undefined ? [...o.zpSet] : null,
     closest: null, relaxHints: [], evaluated: 0, elapsedMs: 0,
   };
-  const anyLock = sp.locked.some((k) => k !== 'Zp') || o.locks.Zp !== undefined || Number.isFinite(sp.maxOD);
+  const motorRatio = o.zpSet != null && o.locks.Zp === undefined;
+  const anyLock = sp.locked.some((k) => k !== 'Zp') || o.locks.Zp !== undefined || Number.isFinite(sp.maxOD) || motorRatio;
 
   let tgt: TargetOutcome = { evaluated: 0, warnings: [] };
   let closestV: Verified | null = null;
@@ -1104,7 +1126,11 @@ function* adviseGen(inputs: GearboxInputs, opts: AdvisorOptions): Generator<Advi
     } else if (!sp.allLocked) {
       warnings.push('No geometrically valid design exists within these locks.');
     }
-    if (o.hints && sp.locked.length + (Number.isFinite(sp.maxOD) ? 1 : 0) > 0) {
+    if (motorRatio) {
+      const z = o.zpSet as number[];
+      warnings.push(`The ratio was limited to Zp ${z.length > 1 ? `${z[0]} to ${z[z.length - 1]}` : z[0]} by the motor.`);
+    }
+    if (o.hints && sp.locked.length + (Number.isFinite(sp.maxOD) ? 1 : 0) + (motorRatio ? 1 : 0) > 0) {
       const h = yield* hintsPhase(inputs, sp, o, progress);
       evaluated += h.evaluated;
       res.relaxHints = h.hints;

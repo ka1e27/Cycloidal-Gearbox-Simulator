@@ -1,20 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  DRIVE_LABEL, JOINT_PRESET_SPECS, MAX_JOINTS, MIN_JOINTS, MOTION_LABEL, defaultArmInputs, jointLabel, validateArmInputs,
+  DRIVE_LABEL, JOINT_PRESET_SPECS, MAX_JOINTS, MIN_JOINTS, MOTION_LABEL, analyzeJointMotor, defaultArmInputs, jointLabel, validateArmInputs,
   type ArmInputs, type ArmJoint, type ArmJointLoad, type ArmResult, type DriveType, type MotionType,
 } from '../../calc';
-import { Advanced, Button, Card, Cu, Notice, PageHead, ResponsiveTable, Segmented, StepNav } from '../components/primitives';
+import { Advanced, Button, Card, Cu, Notice, PageHead, ResponsiveTable, Segmented, StatusChip, StepNav } from '../components/primitives';
 import { JointTag } from '../components/JointTag';
 import { InfoTip } from '../components/InfoTip';
 import { NumberField } from '../components/NumberField';
+import { MotorFields } from '../components/MotorFields';
 import { stepSubtitle } from '../components/StepHint';
 import { HELP } from '../help';
-import { DASH } from '../format';
+import { DASH, fixed } from '../format';
+import { recommendedText } from '../motorUi';
 import { addJoint, moveJoint, patchJoint, removeJoint, setMotion } from '../armEdit';
 import { ArmDiagram } from '../viz/ArmDiagram';
 import { MotionIcon } from '../viz/armSymbols';
 import { useStore } from '../store';
-import { presetIdFor, slotLabel } from '../session';
+import { gearboxOf, presetIdFor, slotLabel } from '../session';
 
 const D = defaultArmInputs();
 
@@ -227,6 +229,7 @@ function JointCard({ arm, joint: j, index: i, load, armOk, err, focusMe, onFocus
           <NumberField label={last ? 'Tool mass' : i === 0 && j.motion === 'yaw' ? 'Turntable / bracket mass' : 'Link mass'} quantity="mass" value={j.linkMass_g}
             onChange={(v) => patch({ linkMass_g: v ?? 0 })} defaultValue={dMotion?.linkMass_g} error={err(`Bar mass ${i + 1} `)}
             help={last ? HELP.toolMass : i === 0 && j.motion === 'yaw' ? HELP.baseColumnMass : HELP.barMass} step={5} />
+          <MotorFields joint={j} load={load} armOk={armOk} />
           <Advanced label="Advanced: acceleration, bearing offset, manual torques" defaultOpen={j.override.Treq != null || j.override.Tdes != null}>
             <NumberField label="Acceleration" symbol="α" unit="rad/s²" value={j.alpha} onChange={(v) => patch({ alpha: v ?? 0 })}
               defaultValue={dflt?.alpha} error={err(`Angular acceleration ${i + 1} `)} help={HELP.alpha} step={0.5} />
@@ -251,8 +254,14 @@ function JointCard({ arm, joint: j, index: i, load, armOk, err, focusMe, onFocus
 // ---------------------------------------------------------------------------
 
 function TorqueTable({ armInputs, arm, errors }: { armInputs: ArmInputs; arm: ArmResult; errors: string[] }) {
-  const { u } = useStore();
+  const { u, state } = useStore();
   const ok = arm.valid;
+  // motor columns appear once any joint has motor data (the torques used are the arm model's, as listed in this table)
+  const anyMotor = armInputs.joints.some((j) => !!j.motor);
+  const motorInfo = arm.joints.map((l, i) => {
+    const j = armInputs.joints[i];
+    return ok && j?.motor ? analyzeJointMotor(j, { Treq: l.Treq, Tdes: l.Tdes }, gearboxOf(state, j.id).Zp) : null;
+  });
   const T = (x: number) => u.f('torque', x, { fixed: true });
   const nm = u.sym('torque');
   const firstPitch = armInputs.joints.findIndex((j) => j.motion === 'pitch');
@@ -264,7 +273,7 @@ function TorqueTable({ armInputs, arm, errors }: { armInputs: ArmInputs; arm: Ar
           {u.text(errors[0] ?? '')}. Fix the highlighted field to see the torques.
         </Notice>
       )}
-      <ResponsiveTable threshold={640}>
+      <ResponsiveTable threshold={anyMotor ? 900 : 640}>
         <thead>
           <tr>
             <th scope="col">Joint</th>
@@ -272,6 +281,12 @@ function TorqueTable({ armInputs, arm, errors }: { armInputs: ArmInputs; arm: Ar
             <th scope="col" className="num">Dynamic<small>{nm}</small></th>
             <th scope="col" className="num">T_req<small>{nm}</small></th>
             <th scope="col" className="num">T_des<small>{nm}</small></th>
+            {anyMotor && (
+              <>
+                <th scope="col" className="num">Recommended ratio<small>from the motor <InfoTip help={HELP.recRatio} label="Recommended ratio" /></small></th>
+                <th scope="col" className="num">Motor margin<small>peak · continuous <InfoTip help={HELP.motorMargin} label="Motor margin" /></small></th>
+              </>
+            )}
             <th scope="col" className="num">Bearing radial<small>{u.sym('force')}</small></th>
             <th scope="col" className="num">Bearing axial<small>{u.sym('force')}</small></th>
             <th scope="col" className="num">Bearing tilting moment<small>{nm}</small></th>
@@ -296,6 +311,7 @@ function TorqueTable({ armInputs, arm, errors }: { armInputs: ArmInputs; arm: Ar
                   {ok ? T(j.Tdes) : DASH}{ok && <Cu>{nm}</Cu>}
                   {ok && j.tdesOverridden && <span className="tag">manual</span>}
                 </td>
+                {anyMotor && <MotorCells info={motorInfo[i]} servo={servo} hasMotor={!!joint?.motor} />}
                 <td className="num" data-label="Bearing radial">
                   {ok && !servo && (j.motion !== 'yaw' || j.tiltedYaw) ? <>{u.f('force', j.bearingRadial_N, { fixed: true })}<Cu>{u.sym('force')}</Cu></> : DASH}
                 </td>
@@ -310,12 +326,59 @@ function TorqueTable({ armInputs, arm, errors }: { armInputs: ArmInputs; arm: Ar
           })}
         </tbody>
       </ResponsiveTable>
+      {!anyMotor && (
+        <p className="card-foot muted small">Add a motor to a joint (open its card, Motor section) to see the gear ratio it needs and the torque margin here.</p>
+      )}
       <p className="card-foot muted small">
         {ok
           ? `Total arm mass ${u.fu('mass', arm.totalMass_g, { dp: 1, trim: true })}${firstPitch >= 0 ? `, reach ${u.fu('length', arm.reach_mm, { dp: 1, trim: true })} from ${slotLabel(armInputs, armInputs.joints[firstPitch].id).split(' ')[0]} (the first pitch joint)` : ', no pitch joint, so no horizontal reach'}.`
           : ''}
       </p>
     </Card>
+  );
+}
+
+/** The two motor cells of a torque-table row: recommended ratio and margin. */
+function MotorCells({ info, servo, hasMotor }: { info: ReturnType<typeof analyzeJointMotor>; servo: boolean; hasMotor: boolean }) {
+  const { u } = useStore();
+  if (!hasMotor || !info) {
+    return (
+      <>
+        <td className="num" data-label="Recommended ratio">{DASH}<small className="cell-sub">{hasMotor ? 'fix the arm first' : 'no motor'}</small></td>
+        <td className="num" data-label="Motor margin">{DASH}</td>
+      </>
+    );
+  }
+  if (servo) {
+    const c = info.check;
+    const margin = c.outputPeak_Nm != null && c.peakUtil ? 1 / c.peakUtil : null;
+    return (
+      <>
+        <td className="num" data-label="Recommended ratio">direct drive<small className="cell-sub">no gearbox</small></td>
+        <td className={`num${c.status === 'short' ? ' flag-fail' : ''}`} data-label="Motor margin">
+          {c.status === 'incomplete' || c.status === 'invalid' ? DASH : <>{margin != null ? `${fixed(margin, 2)}×` : DASH}<small className="cell-sub">{c.status === 'ok' ? 'servo OK' : 'servo too small'}</small></>}
+        </td>
+      </>
+    );
+  }
+  const rec = info.recommendation;
+  const rt = recommendedText(rec);
+  const bad = !rec || rec.status === 'infeasible' || rec.status === 'invalid';
+  return (
+    <>
+      <td className={`num${bad ? ' flag-fail' : ''}`} data-label="Recommended ratio">
+        <span className="strong">{rt.text}</span>
+        {rt.reason && <small className="cell-sub">{u.text(rt.reason)}</small>}
+      </td>
+      <td className="num" data-label="Motor margin">
+        {rec && rec.marginPeak != null ? (
+          <>
+            {fixed(rec.marginPeak, 2)}×{rec.marginCont != null && <> · {fixed(rec.marginCont, 2)}×</>}
+            <small className="cell-sub">{rec.marginCont != null ? 'peak · continuous' : 'peak'}</small>
+          </>
+        ) : DASH}
+      </td>
+    </>
   );
 }
 
@@ -337,6 +400,7 @@ function ServoCards({ armInputs, arm }: { armInputs: ArmInputs; arm: ArmResult }
                 <div className="dtable-row"><dt>Static + dynamic</dt><dd><span>{T(j.TstaticModel)} + {T(j.TdynModel)}</span></dd></div>
               </dl>
               <p className="muted small">Pick a servo rated for at least T_req continuous whose stall torque covers T_des.</p>
+              <ServoCheck joint={armInputs.joints[i]} Treq={j.Treq} Tdes={j.Tdes} />
             </>
           ) : (
             <p className="muted">{DASH} waiting for valid arm inputs</p>
@@ -344,5 +408,23 @@ function ServoCards({ armInputs, arm }: { armInputs: ArmInputs; arm: ArmResult }
         </Card>
       ))}
     </>
+  );
+}
+
+/** Servo card: the entered servo ratings against T_req / T_des (pass / fail), or a hint to enter them. */
+function ServoCheck({ joint, Treq, Tdes }: { joint: ArmJoint | undefined; Treq: number; Tdes: number }) {
+  const { u } = useStore();
+  const info = joint ? analyzeJointMotor(joint, { Treq, Tdes }, null) : null;
+  if (!info) return <p className="muted small">Enter the servo’s torque ratings on its joint card (Servo section) to check them here.</p>;
+  const c = info.check;
+  if (c.status === 'incomplete') return <p className="muted small">Enter the servo’s peak torque on its joint card to check it.</p>;
+  if (c.status === 'invalid') return <p className="small flag-fail">{u.text(c.errors[0] ?? '')}</p>;
+  return (
+    <div className="servo-check" role="status">
+      <StatusChip kind={c.status === 'ok' ? 'ok' : 'fail'}>{c.status === 'ok' ? 'SERVO OK' : 'SERVO TOO SMALL'}</StatusChip>
+      <ul className="plain-list small">
+        {(c.status === 'ok' ? c.info : [...c.problems, ...c.info]).map((t) => <li key={t}>{u.text(t)}</li>)}
+      </ul>
+    </div>
   );
 }

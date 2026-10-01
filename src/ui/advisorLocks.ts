@@ -33,8 +33,16 @@ export interface AdvisorLockValues {
   maxHousingOD: number;
 }
 
+/** How the ratio row is driven: a locked Zp, free (the advisor tries Zp 12..26), or restricted to what the motor can do. */
+export type RatioMode = 'locked' | 'free' | 'motor';
+
 export interface AdvisorLockState {
   on: Record<LockVarKey, boolean>;
+  /**
+   * "Ratio from motor" (CLAUDE.md Addition 8). null = automatic: used whenever the joint has usable motor data.
+   * true = chosen; false = the user picked Locked or Free, so the motor is ignored. Without motor data it has no effect.
+   */
+  ratioMotor: boolean | null;
   /** The housing OD constraint is active */
   limitOn: boolean;
   values: AdvisorLockValues;
@@ -47,6 +55,7 @@ export function defaultLockState(): AdvisorLockState {
   for (const k of LOCK_VAR_KEYS) on[k] = k === 'Zp';
   return {
     on,
+    ratioMotor: null,
     limitOn: false,
     values: {
       Zp: null, D: null, e: null, outerPin: null, innerPin: null, Zw: null, L: null, discs: null, bearing: null,
@@ -105,11 +114,23 @@ export function resolveLockValues(s: AdvisorLockState, g: GearboxInputs): Resolv
   };
 }
 
-/** Engine options for a lock state. The ratio is free exactly when its lock is off (then the advisor tries Zp 12..26). */
-export function toEngineLocks(s: AdvisorLockState, g: GearboxInputs): { locks: AdvisorLocks; ratioVary: boolean } {
+/** The ratio mode of a joint: "from motor" when it has usable motor data (unless the user chose otherwise). */
+export function ratioModeOf(s: AdvisorLockState, motorUsable: boolean): RatioMode {
+  if (motorUsable && s.ratioMotor !== false) return 'motor';
+  return s.on.Zp ? 'locked' : 'free';
+}
+
+/**
+ * Engine options for a lock state. The ratio is free exactly when its lock is off (then the advisor tries Zp 12..26).
+ * `motorZps` (ratio mode "from motor", see motorUi.ratioPlanFor) replaces the ratio lock: the advisor searches only those Zp.
+ */
+export function toEngineLocks(
+  s: AdvisorLockState, g: GearboxInputs, motorZps?: readonly number[] | null,
+): { locks: AdvisorLocks; ratioVary: boolean; zpSet?: number[] } {
   const r = resolveLockValues(s, g);
   const locks: AdvisorLocks = {};
-  if (s.on.Zp) locks.Zp = r.Zp;
+  const fromMotor = !!motorZps && motorZps.length > 0;
+  if (s.on.Zp && !fromMotor) locks.Zp = r.Zp;
   if (s.on.D) locks.D = r.D;
   if (s.on.e) locks.e = r.e;
   if (s.on.outerPin) locks.outerPin = r.outerPin;
@@ -119,6 +140,7 @@ export function toEngineLocks(s: AdvisorLockState, g: GearboxInputs): { locks: A
   if (s.on.discs) locks.discs = r.discs;
   if (s.on.bearing) locks.bearing = r.bearing;
   if (s.limitOn) locks.maxHousingOD = r.maxHousingOD;
+  if (fromMotor) return { locks, ratioVary: false, zpSet: [...(motorZps as readonly number[])] };
   return { locks, ratioVary: !s.on.Zp };
 }
 
@@ -129,6 +151,7 @@ export function lockAllToInputs(s: AdvisorLockState, g: GearboxInputs): AdvisorL
   return {
     ...s,
     on,
+    ratioMotor: false,
     values: {
       ...s.values,
       Zp: g.Zp, D: g.D, e: g.e, outerPin: outerPinFromInputs(g), innerPin: innerPinFromInputs(g), Zw: g.Zw, L: g.L,
@@ -141,11 +164,12 @@ export function lockAllToInputs(s: AdvisorLockState, g: GearboxInputs): AdvisorL
 export function unlockAll(s: AdvisorLockState): AdvisorLockState {
   const on = {} as Record<LockVarKey, boolean>;
   for (const k of LOCK_VAR_KEYS) on[k] = false;
-  return { ...s, on };
+  return { ...s, on, ratioMotor: false };
 }
 
-export function lockedCount(s: AdvisorLockState): number {
-  return LOCK_VAR_KEYS.filter((k) => s.on[k]).length;
+/** Number of locked variables. With a `mode`, the ratio counts only when that mode is 'locked'. */
+export function lockedCount(s: AdvisorLockState, mode?: RatioMode): number {
+  return LOCK_VAR_KEYS.filter((k) => (k === 'Zp' && mode !== undefined ? mode === 'locked' : s.on[k])).length;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,8 +177,8 @@ export function lockedCount(s: AdvisorLockState): number {
 // ---------------------------------------------------------------------------
 
 /** Message for one locked row, or null. Uses the engine's own rules so the screen and the run always agree. */
-export function lockRowError(key: LockVarKey | 'maxHousingOD', s: AdvisorLockState, g: GearboxInputs): string | null {
-  const active = key === 'maxHousingOD' ? s.limitOn : s.on[key];
+export function lockRowError(key: LockVarKey | 'maxHousingOD', s: AdvisorLockState, g: GearboxInputs, mode?: RatioMode): string | null {
+  const active = key === 'maxHousingOD' ? s.limitOn : key === 'Zp' && mode !== undefined ? mode === 'locked' : s.on[key];
   if (!active) return null;
   const r = resolveLockValues(s, g);
   const one: AdvisorLocks = {};
@@ -173,7 +197,7 @@ export function lockRowError(key: LockVarKey | 'maxHousingOD', s: AdvisorLockSta
   const errs = validateAdvisorLocks(g, one);
   if (errs.length) return errs[0].replace(/^Locked /, '').replace(/^./, (c) => c.toUpperCase());
   if (key === 'e' && s.on.D) {
-    const K1 = (r.e * (s.on.Zp ? r.Zp : g.Zp)) / (r.D / 2);
+    const K1 = (r.e * (s.on.Zp && mode !== 'motor' ? r.Zp : g.Zp)) / (r.D / 2);
     if (K1 >= 1) return `K1 = e·Zp / Rp = ${K1.toFixed(2)} must be below 1 with D and e both locked`;
   }
   return null;
@@ -191,10 +215,10 @@ export function lockRowWarning(key: LockVarKey, s: AdvisorLockState, g: GearboxI
 }
 
 /** Every locked-value error, to block the Run button. */
-export function lockErrors(s: AdvisorLockState, g: GearboxInputs): string[] {
+export function lockErrors(s: AdvisorLockState, g: GearboxInputs, mode?: RatioMode): string[] {
   const out: string[] = [];
   for (const k of [...LOCK_VAR_KEYS, 'maxHousingOD' as const]) {
-    const m = lockRowError(k, s, g);
+    const m = lockRowError(k, s, g, mode);
     if (m) out.push(m);
   }
   return out;
@@ -241,8 +265,9 @@ function normBearing(x: unknown): BearingLock | null {
 /** Build a safe lock state from anything. Missing or garbled parts fall back to `base` (the defaults). */
 export function normalizeLockState(raw: unknown, base: AdvisorLockState = defaultLockState()): AdvisorLockState {
   if (!isObj(raw)) return base;
-  const out: AdvisorLockState = { on: { ...base.on }, limitOn: base.limitOn, values: { ...base.values } };
+  const out: AdvisorLockState = { on: { ...base.on }, ratioMotor: base.ratioMotor ?? null, limitOn: base.limitOn, values: { ...base.values } };
   try {
+    if (typeof raw.ratioMotor === 'boolean' || raw.ratioMotor === null) out.ratioMotor = raw.ratioMotor;
     if (isObj(raw.on)) for (const k of LOCK_VAR_KEYS) if (typeof raw.on[k] === 'boolean') out.on[k] = raw.on[k] as boolean;
     if (typeof raw.limitOn === 'boolean') out.limitOn = raw.limitOn;
     if (isObj(raw.values)) {

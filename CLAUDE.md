@@ -165,6 +165,19 @@ Diagram: the default view is a "ready pose": the shoulder sits on the yaw base, 
 first pitch joint points up (elbow above shoulder), and later links point out horizontally. A
 toggle shows the worst-case straight-out pose used for the torques.
 
+## Addition 8 — Motor torque and recommended gear ratio
+Each joint can carry motor data:
+- inputs: max (peak) torque; optional continuous torque, max speed and required joint speed;
+  gearbox efficiency η (default 0.85)
+- ratio_min = max(T_des / (η·T_peak), T_req / (η·T_cont))
+- ratio_max = motor speed / required joint speed (when given)
+- cycloidal ratios are Zp − 1 (integer); the recommended Zp is the smallest valid one ≥ ratio_min + 1
+  that respects ratio_max and the advisor's Zp range
+- if T_peak·ratio·η exceeds the gearbox design torque, warn that the motor can overload the gearbox
+  (set a current limit), but don't fail the gearbox check
+- servo joints: check the servo's own torque against T_req/T_des
+The advisor can restrict the ratio to the motor-feasible range ("ratio from motor").
+
 ## UI / UX — "very nice and very user friendly"
 - Clean engineering-tool look: light and dark themes (follow the OS, plus a toggle), one accent
   color, generous spacing, clear typographic hierarchy, cards, no clutter. Responsive down to

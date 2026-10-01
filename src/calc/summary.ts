@@ -3,6 +3,7 @@
 
 import { computeArm, type ArmInputs, type ArmJointLoad, type ArmResult, type DriveType, type MotionType } from './arm';
 import { checkGearbox } from './gearbox';
+import { analyzeJointMotor, type JointMotorInfo } from './motor';
 import { closestPresetId, presetInputs } from './presets';
 import type { GearboxInputs, GearboxResult, ResolutionOptions, Verdict } from './types';
 
@@ -36,6 +37,8 @@ export interface JointSummaryRow {
   discMass_g: number;
   /** Short geometry read-out */
   geometry: { Zp: number; ratio: number; D: number; e: number; K1: number; L: number; discs: number };
+  /** Motor recommendation and check (CLAUDE.md Addition 8); null when the joint has no motor data */
+  motor: JointMotorInfo | null;
 }
 
 export interface ServoRow {
@@ -51,6 +54,8 @@ export interface ServoRow {
   Tstatic: number;
   Tdyn: number;
   outboardWeight_N: number;
+  /** Servo torque check against the entered servo ratings; null when the joint has no motor data */
+  motor: JointMotorInfo | null;
 }
 
 export interface AllJointsSummary {
@@ -91,6 +96,7 @@ export function summarizeAllJoints(
         joint: load.joint, index: idx, name: load.name, motion: load.motion, drive: load.drive,
         Treq: load.Treq, Tdes: load.Tdes, Tstatic: load.TstaticModel, Tdyn: load.TdynModel,
         outboardWeight_N: load.outboardWeight_N,
+        motor: analyzeJointMotor(armInputs.joints[idx], arm.valid ? { Treq: load.Treq, Tdes: load.Tdes } : { Treq: NaN, Tdes: NaN }, null),
       });
       return;
     }
@@ -118,6 +124,7 @@ export function summarizeAllJoints(
         Zp: inputs.Zp, ratio: inputs.Zp - 1, D: inputs.D, e: inputs.e,
         K1: result.derived.K1, L: inputs.L, discs: inputs.discs,
       },
+      motor: analyzeJointMotor(armInputs.joints[idx], { Treq: inputs.Treq, Tdes: inputs.Tdes }, inputs.Zp),
     });
   });
   return { arm, rows, servos, counts };

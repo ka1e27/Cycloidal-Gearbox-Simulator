@@ -2,10 +2,41 @@ import { useDeferredValue, useMemo } from 'react';
 import { summarizeAllJoints, type JointSummaryRow, type ServoRow } from '../../calc';
 import { Button, Card, Cu, Notice, PageHead, ResponsiveTable, STATUS_WORD, StatusChip, StepNav, UtilBar, verdictKind } from '../components/primitives';
 import { stepSubtitle } from '../components/StepHint';
+import { InfoTip } from '../components/InfoTip';
+import { HELP } from '../help';
+import { motorChip } from '../motorUi';
 import { DASH, fixed, num, thickness, util } from '../format';
 import { useStore } from '../store';
 import { JointTag } from '../components/JointTag';
 
+
+/** Current ratio and what the motor recommends. */
+function RatioCell({ zp, info }: { zp: number; info: JointSummaryRow['motor'] }) {
+  const { u } = useStore();
+  const rec = info?.recommendation ?? null;
+  const cur = Number.isFinite(zp) ? `${num(zp - 1, 0)}:1` : DASH;
+  let sub: string | null = null;
+  let cls = '';
+  if (rec) {
+    if (rec.Zp != null) {
+      const same = rec.Zp === zp;
+      sub = same ? 'matches the motor' : `motor wants ${rec.Zp - 1}:1 (Zp ${rec.Zp})`;
+      cls = same ? 'is-same' : '';
+    } else if (rec.status === 'incomplete') sub = 'no peak torque yet';
+    else { sub = rec.headline; cls = 'is-bad'; }
+  }
+  return (
+    <td data-label="Ratio">
+      <span className="ratio-cmp">{cur}{sub && <small className={cls}>{u.text(sub)}</small>}</span>
+    </td>
+  );
+}
+
+function MotorChipCell({ info }: { info: JointSummaryRow['motor'] }) {
+  if (!info) return <td data-label="Motor" className="muted">{DASH}</td>;
+  const c = motorChip(info);
+  return <td data-label="Motor"><span title={c.title}><StatusChip kind={c.kind}>{c.word}</StatusChip></span></td>;
+}
 
 export function JointsScreen() {
   const { state, select, setStep, runAdvisor, u } = useStore();
@@ -21,6 +52,8 @@ export function JointsScreen() {
   }, [sum]);
   const nGear = sum.rows.length;
   const nServo = sum.servos.length;
+  // ratio and motor columns appear once any joint has motor data
+  const anyMotor = lines.some((l) => !!l.row.motor);
 
   const open = (row: JointSummaryRow, what: 'gearbox' | 'design') => {
     select(row.joint);
@@ -57,13 +90,15 @@ export function JointsScreen() {
             Every joint of this arm is a servo, so there is no gearbox to check. Change a joint{'’'}s drive to Cycloidal on the Arm & Loads page.
           </Notice>
         )}
-        <ResponsiveTable threshold={980} className="joints-table">
+        <ResponsiveTable threshold={anyMotor ? 1180 : 980} className="joints-table">
           <thead>
             <tr>
               <th scope="col">Joint</th>
               <th scope="col" className="num">T_req / T_des<small>{nm}</small></th>
               <th scope="col" className="num">Output bearing<small>load {u.sym('force')} · tilting moment {nm}</small></th>
               <th scope="col">Geometry</th>
+              {anyMotor && <th scope="col">Ratio<small>current vs motor <InfoTip help={HELP.recRatio} label="Recommended ratio" /></small></th>}
+              {anyMotor && <th scope="col">Motor</th>}
               <th scope="col">Verdict</th>
               <th scope="col">Governing mode</th>
               <th scope="col" className="util-col">Max utilization</th>
@@ -86,7 +121,8 @@ export function JointsScreen() {
                       {sum.arm.valid ? <>{T(sv.Treq)} / {T(sv.Tdes)}<Cu>{nm}</Cu></> : DASH}
                     </td>
                     <td className="num" data-label="Output bearing">{DASH}</td>
-                    <td colSpan={5} className="servo-note" data-label="Note">
+                    <td colSpan={anyMotor ? 7 : 5} className="servo-note" data-label="Note">
+                      {sv.motor && (() => { const c = motorChip(sv.motor); return <span title={c.title} className="servo-chip"><StatusChip kind={c.kind}>{c.word}</StatusChip>{' '}</span>; })()}
                       Direct-drive servo, no gearbox check. Pick a servo rated for {sum.arm.valid ? u.fu('torque', sv.Treq, { fixed: true }) : DASH} continuous
                       and {sum.arm.valid ? u.fu('torque', sv.Tdes, { fixed: true }) : DASH} peak
                       {sum.arm.valid ? ` (static ${T(sv.Tstatic)} + dynamic ${T(sv.Tdyn)}).` : '.'}
@@ -127,6 +163,8 @@ export function JointsScreen() {
                       <small>K1 {Number.isFinite(g.K1) ? fixed(g.K1, 3) : DASH} · L {thickness(u, g.L)} · {g.discs} disc{g.discs > 1 ? 's' : ''}</small>
                     </span>
                   </td>
+                  {anyMotor && <RatioCell zp={g.Zp} info={row.motor} />}
+                  {anyMotor && <MotorChipCell info={row.motor} />}
                   <td data-label="Verdict"><StatusChip kind={kind}>{word}</StatusChip></td>
                   <td data-label="Governing">
                     {row.result.valid ? row.governing : <span className="muted">{u.text(row.result.errors[0] ?? 'invalid inputs')}</span>}

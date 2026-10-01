@@ -66,6 +66,19 @@ export const HELP: Record<string, HelpEntry> = {
   ovTreq: { what: 'Type a torque here to replace the modelled T_req for this joint. Leave empty to use the arm model.', typical: 'Empty.' },
   ovTdes: { what: 'Type a torque here to replace the computed T_des for this joint. Leave empty to use max(SF × T_req, floor).', typical: 'Empty.' },
 
+  // Motor and recommended ratio (Addition 8)
+  motorPreset: { what: 'Fills the motor fields with typical values for a common stepper. Pick Custom to type your own, or No motor to clear the data.', typical: 'Typical values only: check the datasheet of the motor you will buy.' },
+  motorPeak: { what: 'Largest torque the motor can put out at its shaft (stepper: holding torque; servo: peak or stall torque). Needed for a recommendation. The ratio must be at least T_des ÷ (η × this).', typical: 'NEMA 17: about 0.26 to 0.6 N·m. NEMA 23: about 1 to 3 N·m.' },
+  motorCont: { what: 'Torque the motor can hold continuously without overheating. Optional. It adds a second limit: the ratio must be at least T_req ÷ (η × this).', typical: 'Often 50 to 70% of the peak torque.' },
+  motorSpeed: { what: 'Top speed of the motor shaft. With the required joint speed it caps the ratio: ratio ≤ rpm × 6 ÷ deg/s (1 rpm = 6 deg/s).', typical: 'Steppers lose torque quickly above about 500 to 1000 rpm.' },
+  motorReqSpeed: { what: 'How fast the joint must turn at the output, in degrees per second. Together with the motor’s max speed it sets the largest usable ratio.', typical: '30 to 180 deg/s for a hobby arm.' },
+  motorEta: { what: 'Fraction of the motor torque that reaches the output through the cycloidal gearbox. Output torque = η × motor torque × ratio. Not used for a direct-drive servo.', typical: '0.85 (single stage cycloidal, 0.75 to 0.9).' },
+  servoPeak: { what: 'Peak (stall) torque the servo can deliver. It is compared with T_des. Direct drive: there is no ratio and no efficiency loss.', typical: 'Pick a servo whose peak is at least T_des.' },
+  servoCont: { what: 'Rated (continuous) torque of the servo. It is compared with T_req.', typical: 'At least T_req.' },
+  recRatio: { what: 'Smallest whole-number cycloidal ratio (Zp − 1) the motor can drive: at least T_des ÷ (η × T_peak), at least T_req ÷ (η × T_cont) when a continuous torque is given, and at most the speed cap. Zp is that ratio plus one.', typical: '8 to 26 pins are common; above about 40:1 a single stage is a stretch.' },
+  motorMargin: { what: 'Torque the motor can deliver through the recommended ratio, divided by the torque the joint needs (η × T_peak × ratio ÷ T_des). Above 1 the motor is strong enough.', typical: 'Slightly above 1.0 is normal because the ratio is rounded up.' },
+  motorOverload: { what: 'A stalled or fully driven motor can put η × T_peak × ratio on the gearbox, which may be more than the design torque it was checked for. A driver current limit (torque follows current) keeps it at or below T_des.', typical: 'Set the current limit to the value shown, or accept the risk for a short stall.' },
+
   // Advisor
   target: { what: 'Every check must stay at or under this utilization. 0.85 is the green limit; 1.0 is the physical limit.', typical: '0.85. Range 0.70 to 1.00.' },
   advWall: { what: 'Housing wall thickness beyond the outer pins, for the housing outside diameter.', typical: '4 mm.' },

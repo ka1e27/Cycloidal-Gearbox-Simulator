@@ -331,3 +331,56 @@ Export/localStorage store `arm` as the joint list and key everything per joint b
 (fixed five-joint arm, ids `J1..J5`, gearboxes/locks/toggles keyed `J1..J4`) without loss; unknown keys are dropped; `reconcileSession(session)` makes the per-joint
 parts agree with the arm (new cycloidal joint: gearbox from `closestPresetId` of its arm-model T_req, toggle on, default locks; removed joint: all its state deleted;
 `selected` falls back to the first gearbox joint, or `custom`). `armPose` (`'ready' | 'worst'`) is display-only drawing state and is not exported.
+
+## 11. Motor torque and recommended ratio (`motor.ts`, CLAUDE.md Addition 8)
+
+Pure functions, never throw. Torques N*m, motor speed rpm, joint speed deg/s (1 rpm = 6 deg/s). `ArmJoint.motor?: MotorSpec` is optional per-joint data and does **not**
+enter `computeArm` (the arm result is identical with or without it).
+
+```ts
+interface MotorSpec {
+  name?: string;
+  Tpeak_Nm: number | null;           // max (peak) torque; null = not entered, no recommendation without it
+  Tcont_Nm?: number | null;          // continuous torque, optional
+  maxSpeed_rpm?: number | null;      // motor max speed, optional
+  requiredSpeed_degps?: number | null; // speed the joint must reach, optional
+  efficiency: number;                // gearbox efficiency eta, 0.1 to 1, default 0.85 (DEFAULT_MOTOR_EFFICIENCY); not used by a servo
+}
+```
+
+Formulas (eta = efficiency, ratio = Zp - 1):
+
+* `ratio_min = max( T_des / (eta * T_peak),  T_req / (eta * T_cont) when T_cont is given )`
+* `ratio_max = max_speed_rpm * 6 / required_speed_deg_s` when both are given, else none
+* recommended `Zp` = smallest integer with `Zp - 1 >= ratio_min` and `Zp - 1 <= ratio_max`, inside `zpRange` (default `RECOMMEND_ZP_RANGE` 8..60); a tiny load is lifted to Zp 8
+* capacity at that ratio: `eta * T_peak * ratio` (peak), `eta * T_cont * ratio` (continuous); margin = capacity / T_des (peak) or / T_req (continuous)
+* joint speed at full motor speed `max_speed_rpm * 6 / ratio`; motor speed needed `required_deg_s * ratio / 6`
+
+```ts
+recommendRatio(load: { Treq, Tdes }, motor, opts?: { zpRange?, advisorRange? }): MotorRecommendation
+// status: 'ok' | 'warning' (Zp outside the advisor's 12..26, or ratio > 40:1 = SINGLE_STAGE_SENSIBLE_RATIO) | 'infeasible' | 'incomplete' | 'invalid'
+// ratioMinPeak, ratioMinCont, ratioMin, minSetBy ('peak'|'continuous'), ratioMax, Zp, ratio, infeasibleBy ('speed'|'range'|null),
+// inAdvisorRange, singleStageSensible, outputPeak_Nm, outputCont_Nm, marginPeak, marginCont, outputSpeed_degps/_rpm, motorSpeedNeeded_rpm,
+// headline ("24:1 (Zp 25)" or the reason), reasons[] (plain language), errors[], warnings[]
+checkMotor(load, motor, drive: 'cycloidal' | 'servo', Zp?): MotorCheck
+// cycloidal: through ratio Zp - 1 at eta. servo: direct (ratio 1, eta 1), servo peak vs T_des and continuous vs T_req.
+// status 'ok' | 'short' | 'incomplete' | 'invalid'; outputPeak_Nm, outputCont_Nm, peakUtil (T_des / capacity), contUtil, peakOk, contOk,
+// outputSpeed_degps, speedOk, problems[], info[]
+// overload (cycloidal only): { exceeds (eta*Tpeak*ratio > Tdes), stallOutput_Nm, factor, motorLimit_Nm = Tdes/(eta*ratio), limitFraction, message }.
+// The overload warning never changes `status` and never changes a gearbox verdict.
+motorZpSet(rec, advisorRange?): { zps, feasible, nearest, note }   // integer Zp of 12..26 the motor can drive; none -> the nearest Zp, feasible false
+analyzeJointMotor(joint, load, Zp): JointMotorInfo | null          // { spec, recommendation (cycloidal only), check }; null without motor data
+validateMotor(m) / normalizeMotor(raw) / hasMotorTorque(m) / ratioLabel(Zp) // "24:1 (Zp 25)"
+```
+
+`MOTOR_LIMITS`: torques > 0 and at most 1e4 N*m, speed at most 1e5 rpm and 1e6 deg/s, efficiency 0.1 to 1; continuous torque must not exceed peak. Messages are friendly
+("Motor peak torque must be > 0 N·m"). Engine texts use `N·m`, so the UI's `u.text()` converts them to the chosen torque unit.
+
+`summarizeAllJoints` rows and servo rows carry `motor: JointMotorInfo | null` (the check uses the gearbox's actual Zp and the torques that gearbox is checked with).
+
+Design Advisor: `AdvisorOptions.zpSet?: number[]` restricts the searched Zp to those integers (8..200, sorted and de-duplicated; empty is ignored; `locks.Zp` wins). It is not a lock:
+`locked` does not contain `'Zp'`, `AdvisorResult.zpSearched` echoes the set (else null), and the "Zp" relax hint (re-run with the ratio free) is offered when nothing passes. Typical time with
+15 values (Zp 12..26) is 1.5 s; a hopeless infeasible case about 6 s.
+
+UI state: `AdvisorLockState.ratioMotor: boolean | null` (null = automatic: "From motor" when the joint has usable motor data, else the old Locked / Free). `src/ui/motorUi.ts`
+(`ratioPlanFor`, `patchMotor`, presets, chip texts) and `src/ui/advisorLocks.ts` (`ratioModeOf`, `toEngineLocks(state, g, motorZps)`) hold the pure helpers.

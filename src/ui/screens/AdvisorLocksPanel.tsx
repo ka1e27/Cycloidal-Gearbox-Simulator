@@ -20,14 +20,17 @@ import {
   lockRowError,
   lockRowWarning,
   lockedCount,
+  ratioModeOf,
   resolveLockValues,
   unlockAll,
   type AdvisorLockState,
   type AdvisorLockValues,
   type LockVarKey,
+  type RatioMode,
   type ResolvedLockValues,
 } from '../advisorLocks';
 import { InfoTip } from '../components/InfoTip';
+import type { RatioPlan } from '../motorUi';
 import { parseNumberText } from '../components/NumberField';
 import { Button, Icon, Segmented } from '../components/primitives';
 import { fixed, num, thickness } from '../format';
@@ -37,7 +40,7 @@ import { inchFraction, inputText, niceStep, type Quantity } from '../units';
 import '../../styles/advisor-locks.css';
 
 const HELPS: Record<LockVarKey | 'maxHousingOD', HelpEntry> = {
-  Zp: { what: 'Number of outer pins. The gear ratio is Zp − 1 : 1. Lock it to keep the ratio your joint needs; free it and the advisor tries Zp = 12, 14, …, 26 (slower).', typical: '18 gives 17:1.' },
+  Zp: { what: 'Number of outer pins. The gear ratio is Zp − 1 : 1. Lock it to keep the ratio your joint needs; free it and the advisor tries Zp = 12, 14, …, 26 (slower); From motor tries only the Zp your motor can drive (torque and speed), then picks the smallest housing.', typical: '18 gives 17:1.' },
   D: { what: 'Diameter of the circle through the outer pin centres. It mostly sets the size of the gearbox. Any value is accepted when locked, not only whole millimetres.', typical: 'Free: 30 to 150 mm in 1 mm steps.' },
   e: { what: 'Eccentricity. If you lock e and leave D free, the advisor searches D with this e, so K1 = e·Zp / Rp simply follows D.', typical: 'Free: K1 from 0.40 to 0.85.' },
   outerPin: { what: 'Outer pin (bushing) size. Pick a catalog size or enter your own outside diameter (and bolt shank for a bolt + bushing).', typical: 'Free: 3, 4, 5, 6, 8 and 10 mm.' },
@@ -137,7 +140,26 @@ function Mini({ label, children }: { label: string; children: ReactNode }) {
 // The table
 // ---------------------------------------------------------------------------
 
-export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, onCancel, hasResult }: {
+/** Locked / Free / From motor for the ratio row. Shown instead of the plain lock button once the joint has a usable motor. */
+function RatioModeToggle({ mode, onMode }: { mode: RatioMode; onMode: (m: RatioMode) => void }) {
+  const opts: { v: RatioMode; label: string; title: string }[] = [
+    { v: 'locked', label: 'Locked', title: 'Keep the Zp value you enter' },
+    { v: 'free', label: 'Free', title: 'The advisor tries Zp 12, 14, …, 26' },
+    { v: 'motor', label: 'From motor', title: 'Search only the Zp the motor can drive' },
+  ];
+  return (
+    <div className="seg seg-sm rm-seg" role="radiogroup" aria-label="Gear ratio mode">
+      {opts.map((o) => (
+        <button key={o.v} type="button" role="radio" aria-checked={mode === o.v} title={o.title}
+          className={`seg-btn${mode === o.v ? ' is-on' : ''}`} onClick={() => onMode(o.v)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, onCancel, hasResult, plan: planIn, zpSearched = null }: {
   slot: Slot;
   /** Gearbox inputs the advisor will use (the "current values") */
   eff: GearboxInputs;
@@ -148,15 +170,26 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
   hasResult: boolean;
   onRun: () => void;
   onCancel: () => void;
+  /** Ratio mode and the motor-feasible Zp set (Addition 8). Omitted: no motor, the mode follows the Zp lock. */
+  plan?: RatioPlan;
+  /** The Zp set the shown result searched in "from motor" mode, or null */
+  zpSearched?: number[] | null;
 }) {
   const { state, updateLocks, u } = useStore();
   const ls = state.advisorLocks[slot] ?? defaultLockState();
+  const plan: RatioPlan = planIn ?? { mode: ratioModeOf(ls, false), rec: null, usable: false, zps: [], feasible: false, nearest: null, note: '' };
   const r = resolveLockValues(ls, eff);
   const bolt = eff.outerPin.construction === 'boltBushing';
   const standoff = eff.innerPin.construction === 'standoff';
   const stock = eff.discMaterial.kind === 'polymer' ? DISC_STOCK_POLYMER : DISC_STOCK_METAL;
   const L = (mm: number, dp = 2) => u.fu('length', mm, { dp });
 
+  const mode = plan.mode;
+  const setMode = (m: RatioMode) => updateLocks(slot, (s) => {
+    if (m === 'motor') return { ...s, ratioMotor: true };
+    const values = m === 'locked' ? { ...s.values, Zp: resolveLockValues(s, eff).Zp } : s.values;
+    return { ...s, ratioMotor: false, on: { ...s.on, Zp: m === 'locked' }, values };
+  });
   const patchValues = (p: Partial<AdvisorLockValues>) => updateLocks(slot, (s) => ({ ...s, values: { ...s.values, ...p } }));
   const toggle = (k: LockVarKey) => updateLocks(slot, (s) => {
     const turningOn = !s.on[k];
@@ -167,7 +200,7 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
   });
   const toggleLimit = () => updateLocks(slot, (s) => ({ ...s, limitOn: !s.limitOn }));
 
-  const err = (k: LockVarKey | 'maxHousingOD') => lockRowError(k, ls, eff);
+  const err = (k: LockVarKey | 'maxHousingOD') => lockRowError(k, ls, eff, mode);
   const warn = (k: LockVarKey) => lockRowWarning(k, ls, eff);
 
   // ---- descriptions of the catalog entries ----
@@ -355,7 +388,7 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
     },
   ];
 
-  const nLocked = lockedCount(ls);
+  const nLocked = lockedCount(ls, mode);
   const anyError = LOCK_VAR_KEYS.some((k) => err(k)) || !!err('maxHousingOD');
 
   return (
@@ -371,12 +404,13 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
 
       <div className="lv-table" role="list">
         {rows.map(({ k, name, sym, control }) => {
-          const locked = ls.on[k];
+          const isRatio = k === 'Zp';
+          const locked = isRatio ? mode === 'locked' : ls.on[k];
           const e = err(k);
           const w = locked && !e ? warn(k) : null;
           const ch = chosenText[k];
           return (
-            <div key={k} role="listitem" className={`lv-row${locked ? ' is-locked' : ''}${e ? ' has-error' : ''}`}>
+            <div key={k} role="listitem" className={`lv-row${locked ? ' is-locked' : ''}${e ? ' has-error' : ''}${isRatio ? ' has-ratio-mode' : ''}`}>
               <div className="lv-name">
                 <span className="lv-name-text">{name}</span>
                 {sym && <span className="row-sym" aria-hidden="true">{sym}</span>}
@@ -385,11 +419,27 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
               <div className="lv-value">
                 {locked ? control : (
                   <div className="lv-free" data-testid={`free-${k}`}>
-                    {ch ? <><span className="lv-free-val">{ch}</span><span className="lv-free-tag">advisor’s choice</span></> : <span className="lv-auto">auto</span>}
+                    {ch ? <><span className="lv-free-val">{ch}</span><span className="lv-free-tag">{isRatio && mode === 'motor' ? 'from motor' : 'advisor’s choice'}</span></> : <span className="lv-auto">auto</span>}
+                    {isRatio && mode === 'motor' && plan.feasible && plan.zps.length > 0 && !ch && (
+                      <span className="rm-set">Zp {plan.zps.length > 1 ? `${plan.zps[0]} to ${plan.zps[plan.zps.length - 1]}` : plan.zps[0]}</span>
+                    )}
                   </div>
                 )}
               </div>
-              <div className="lv-toggle"><LockToggle locked={locked} name={name} onToggle={() => toggle(k)} /></div>
+              <div className="lv-toggle">
+                {isRatio && plan.usable
+                  ? <RatioModeToggle mode={mode} onMode={setMode} />
+                  : <LockToggle locked={locked} name={name} onToggle={() => toggle(k)} />}
+              </div>
+              {isRatio && mode === 'motor' && (
+                <div className={`rm-note lv-msg${plan.feasible ? '' : ' is-bad'}`} data-testid="ratio-motor-note">
+                  {plan.rec && plan.rec.reasons[0] && <>{u.text(plan.rec.reasons[0])}{' '}</>}
+                  {u.text(plan.note)}
+                  {plan.feasible
+                    ? (c && zpSearched ? ` The smallest housing among them uses ${num(c.ratio, 0)}:1 (Zp ${num(c.Zp, 0)}).` : ' The advisor picks the smallest housing among them.')
+                    : ` The advisor searches Zp ${plan.zps[0]} instead.`}
+                </div>
+              )}
               {(e || w) && (
                 <div id={`lv-msg-${k}`} className={`row-msg lv-msg${e ? ' is-error' : ' is-warning'}`} role={e ? 'alert' : undefined}>{u.text(e ?? w ?? '')}</div>
               )}

@@ -9,6 +9,7 @@ import { slotLabel, slotShort } from '../session';
 import { util } from '../format';
 import { plainName } from '../plain';
 import { GearboxInputsPanel } from './GearboxInputsPanel';
+import { MotorCard } from './MotorCard';
 import { CheckCards, DiscAndCharts, InvalidCard, KeyData, PolymerCard, VerdictBanner } from './GearboxResults';
 import { SolverPanel } from './SolverPanel';
 
@@ -33,6 +34,7 @@ export function GearboxScreen() {
         </div>
         <div className={`col col-results${pending ? ' is-pending' : ''}`} id="gearbox-results">
           <VerdictBanner r={r} />
+          <MotorCard slot={slot} eff={eff} />
           {!r.valid ? (
             <InvalidCard r={r} />
           ) : (

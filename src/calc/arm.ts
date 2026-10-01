@@ -7,6 +7,8 @@
 //   * everything up to the first pitch joint is a vertical column on the base axis (horizontal lever 0);
 //   * from the first pitch joint on, every link points straight out horizontally.
 
+import { normalizeMotor, type MotorSpec } from './motor';
+
 export const G = 9.81; // m/s^2
 
 export type MotionType = 'yaw' | 'pitch' | 'roll';
@@ -51,6 +53,11 @@ export interface ArmJoint {
   linkMass_g: number;
   /** Manual overrides of T_req / T_des for this joint */
   override: ArmOverride;
+  /**
+   * Optional motor (or servo) data for the ratio recommendation (CLAUDE.md Addition 8, src/calc/motor.ts). It does not
+   * enter the load model: the arm result is the same with or without it. Absent = no motor data.
+   */
+  motor?: MotorSpec;
 }
 
 export interface ArmInputs {
@@ -534,6 +541,7 @@ export function normalizeArmInputs(partial: unknown): ArmInputs {
       used.add(id);
       const o = (r.override && typeof r.override === 'object' ? r.override : {}) as Record<string, unknown>;
       const dflt = NEW_JOINT[motion];
+      const motor = normalizeMotor(r.motor);
       return {
         id,
         name: typeof r.name === 'string' ? r.name.slice(0, 40) : (i < d.joints.length ? base.name : motion),
@@ -544,6 +552,7 @@ export function normalizeArmInputs(partial: unknown): ArmInputs {
         length_mm: num(r.length_mm, i < d.joints.length ? base.length_mm : dflt.length_mm),
         linkMass_g: num(r.linkMass_g, i < d.joints.length ? base.linkMass_g : dflt.linkMass_g),
         override: { Treq: nullable(o.Treq), Tdes: nullable(o.Tdes) },
+        ...(motor ? { motor } : {}),
       };
     });
   }

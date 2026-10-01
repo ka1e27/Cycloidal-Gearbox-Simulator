@@ -41,6 +41,7 @@ import {
   type ThemePref,
 } from './session';
 import { defaultLockState, toEngineLocks, type AdvisorLockState } from './advisorLocks';
+import { ratioPlanFor } from './motorUi';
 import { makeU, type U, type UnitPrefs } from './units';
 
 // ---------------------------------------------------------------------------
@@ -235,12 +236,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const o = s.advisor;
     const lockState = change ? change(s.advisorLocks[slot] ?? defaultLockState()) : (s.advisorLocks[slot] ?? defaultLockState());
     if (change) dispatch({ type: 'locks', slot, fn: () => lockState });
-    const { locks, ratioVary } = toEngineLocks(lockState, inputs);
-    const key = advisorKey(inputs, o, { locks, ratioVary });
+    // ratio mode "from motor": only the motor-feasible Zp are searched (Addition 8)
+    const plan = ratioPlanFor(s.arm.joints.find((j) => j.id === slot), inputs, lockState);
+    const engine = toEngineLocks(lockState, inputs, plan.mode === 'motor' ? plan.zps : null);
+    const { locks, ratioVary, zpSet } = engine;
+    const key = advisorKey(inputs, o, engine);
     setAdvisorRun((r) => ({ ...r, status: 'running', slot, progress: null, usedTarget: o.target }));
     const job = getCalcClient().advise(
       inputs,
-      { target: o.target, ratioVary, locks, Dmin: o.Dmin, Dmax: o.Dmax, minPinClearance: o.minPinClearance, altWindowMm: o.altWindowMm },
+      { target: o.target, ratioVary, zpSet, locks, Dmin: o.Dmin, Dmax: o.Dmax, minPinClearance: o.minPinClearance, altWindowMm: o.altWindowMm },
       (p) => setAdvisorRun((r) => (jobRef.current === job ? { ...r, progress: p } : r)),
     );
     jobRef.current = job;
