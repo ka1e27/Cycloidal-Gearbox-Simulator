@@ -1,7 +1,6 @@
 import { useDeferredValue, useMemo } from 'react';
 import { summarizeAllJoints, type JointSummaryRow, type ServoRow } from '../../calc';
-import { Button, Card, Cu, Notice, PageHead, ResponsiveTable, STATUS_WORD, StatusChip, StepNav, UtilBar, verdictKind } from '../components/primitives';
-import { stepSubtitle } from '../components/StepHint';
+import { Button, Card, Cu, Notice, ResponsiveTable, STATUS_WORD, StatusChip, UtilBar, verdictKind } from '../components/primitives';
 import { InfoTip } from '../components/InfoTip';
 import { HELP } from '../help';
 import { motorChip } from '../motorUi';
@@ -38,8 +37,9 @@ function MotorChipCell({ info }: { info: JointSummaryRow['motor'] }) {
   return <td data-label="Motor"><span title={c.title}><StatusChip kind={c.kind}>{c.word}</StatusChip></span></td>;
 }
 
-export function JointsScreen() {
-  const { state, select, setStep, runAdvisor, u } = useStore();
+/** The All Joints table (CLAUDE.md Addition 4), shown as the Summary stage. Clicking a row selects that joint. */
+export function JointsSummary() {
+  const { state, selectItem, openSection, patchWb, runAdvisor, u } = useStore();
   const dep = useDeferredValue({ arm: state.arm, gb: state.gearboxes, use: state.useArmLoads });
   const sum = useMemo(() => summarizeAllJoints(dep.arm, dep.gb, { useArmLoads: dep.use }), [dep]);
   // gearbox rows and servo rows together, in arm order
@@ -55,39 +55,48 @@ export function JointsScreen() {
   // ratio and motor columns appear once any joint has motor data
   const anyMotor = lines.some((l) => !!l.row.motor);
 
-  const open = (row: JointSummaryRow, what: 'gearbox' | 'design') => {
-    select(row.joint);
+  const open = (joint: string, what: 'gearbox' | 'design') => {
     if (what === 'design') {
-      setStep(3);
-      runAdvisor(row.joint);
-    } else setStep(2);
+      openSection('advisor', joint);
+      runAdvisor(joint);
+    } else {
+      selectItem(joint);
+      patchWb({ mobile: 'details' });
+    }
   };
+  /** Row click: select the joint unless the click was on a button inside the row */
+  const rowClick = (joint: string) => (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, a, input')) return;
+    selectItem(joint);
+  };
+  const selCls = (joint: string) => (state.wb.sel === joint ? ' is-selected' : '');
 
   const c = sum.counts;
   const T = (x: number) => u.f('torque', x, { fixed: true });
   const nm = u.sym('torque');
   return (
-    <div className="screen">
-      <PageHead title="All Joints" sub={stepSubtitle(4)}>
+    <div className="summary-view">
+      <div className="summary-head">
+        <h2 className="summary-title">All joints</h2>
         <div className="count-chips" aria-label="Verdict counts">
           <StatusChip kind="ok">{c.pass} PASS</StatusChip>
           <StatusChip kind="marginal">{c.marginal} MARGINAL</StatusChip>
           <StatusChip kind="fail">{c.fail + c.invalid} FAIL</StatusChip>
         </div>
-      </PageHead>
+      </div>
 
       {!sum.arm.valid && (
         <Notice kind="warning" title="The arm model has an input error">
           {u.text(sum.arm.errors[0] ?? '')}. The typed torques of each joint are used until it is fixed.
-          <div className="notice-actions"><Button size="sm" variant="secondary" onClick={() => setStep(1)}>Open Arm & Loads</Button></div>
+          <div className="notice-actions"><Button size="sm" variant="secondary" onClick={() => selectItem('arm')}>Open the Arm settings</Button></div>
         </Notice>
       )}
 
       <Card title={`Joints: ${nGear} gearbox${nGear === 1 ? '' : 'es'}${nServo ? `, ${nServo} servo${nServo === 1 ? '' : 's'}` : ''}`}>
-        <p className="card-sub">Live check of the geometry stored for each cycloidal joint, with loads from the arm model unless a joint has that switch off. Servo joints show only the torque the servo must deliver. Joint names open the Gearbox page.</p>
+        <p className="card-sub">Live check of the geometry stored for each cycloidal joint, with loads from the arm model unless a joint has that switch off. Servo joints show only the torque the servo must deliver. Click a row to open that joint in the inspector.</p>
         {nGear === 0 && (
           <Notice kind="info" title="No cycloidal joints">
-            Every joint of this arm is a servo, so there is no gearbox to check. Change a joint{'’'}s drive to Cycloidal on the Arm & Loads page.
+            Every joint of this arm is a servo, so there is no gearbox to check. Select a joint and set its drive to Cycloidal.
           </Notice>
         )}
         <ResponsiveTable threshold={anyMotor ? 1180 : 980} className="joints-table">
@@ -113,9 +122,11 @@ export function JointsScreen() {
               if (line.kind === 'servo') {
                 const sv = line.row;
                 return (
-                  <tr className="is-servo" key={sv.joint}>
+                  <tr className={`is-servo is-clickable${selCls(sv.joint)}`} key={sv.joint} onClick={rowClick(sv.joint)}>
                     <th scope="row" data-label="Joint">
-                      <JointTag joint={jn} index={line.i} />
+                      <JointTag joint={jn} index={line.i}>
+                        <button type="button" className="linkish strong" onClick={() => open(sv.joint, 'gearbox')} title="Open this joint in the inspector">J{line.i + 1}</button>
+                      </JointTag>
                     </th>
                     <td className="num" data-label="T_req / T_des">
                       {sum.arm.valid ? <>{T(sv.Treq)} / {T(sv.Tdes)}<Cu>{nm}</Cu></> : DASH}
@@ -136,10 +147,10 @@ export function JointsScreen() {
               const g = row.geometry;
               const word = row.verdict === 'invalid' ? 'INVALID' : STATUS_WORD[kind];
               return (
-                <tr key={row.joint}>
+                <tr key={row.joint} className={`is-clickable${selCls(row.joint)}`} onClick={rowClick(row.joint)}>
                   <th scope="row" data-label="Joint">
                     <JointTag joint={jn} index={line.i} showDrive={false}>
-                      <button type="button" className="linkish strong" onClick={() => open(row, 'gearbox')} title="Open this joint on the Gearbox page">
+                      <button type="button" className="linkish strong" onClick={() => open(row.joint, 'gearbox')} title="Open this joint in the inspector">
                         J{line.i + 1}
                       </button>
                     </JointTag>
@@ -181,7 +192,7 @@ export function JointsScreen() {
                     {row.result.valid ? <>{u.f('mass', row.discMass_g, { dp: 0, fixed: true })}<Cu>{u.sym('mass')}</Cu></> : DASH}
                   </td>
                   <td className="act" data-label="">
-                    <Button size="sm" variant="primary" onClick={() => open(row, 'design')}>Design</Button>
+                    <Button size="sm" variant="primary" onClick={() => open(row.joint, 'design')} title="Open the Design Advisor for this joint and run it">Design</Button>
                   </td>
                 </tr>
               );
@@ -189,7 +200,6 @@ export function JointsScreen() {
           </tbody>
         </ResponsiveTable>
       </Card>
-      <StepNav back={{ label: 'Back: Design Advisor', onClick: () => setStep(3) }} />
     </div>
   );
 }

@@ -1,10 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { POLYMER_WARNING_LINES, type Check, type GearboxModel, type GearboxResult } from '../../calc';
-import { Button, Card, DataTable, Notice, ResponsiveTable, STATUS_WORD, StatusChip, UtilBar, verdictKind, type StatusKind } from '../components/primitives';
+import { POLYMER_WARNING_LINES, type Check, type GearboxResult } from '../../calc';
+import { Card, DataTable, Notice, ResponsiveTable, STATUS_WORD, StatusChip, UtilBar, verdictKind, type StatusKind } from '../components/primitives';
 import { checkLimit, checkValue, fixed, hours, num, util, DASH } from '../format';
 import { PLAIN, verdictHeadline } from '../plain';
-import { DiscSvg, ForceLegend } from '../viz/DiscFigure';
-import { PinForceChart, SweepChart } from '../viz/Charts';
 import { useStore } from '../store';
 
 // ---------------------------------------------------------------------------
@@ -100,12 +97,13 @@ function checkNote(c: Check, u: ReturnType<typeof useStore>['u']): string | null
   return null;
 }
 
-export function CheckCards({ r }: { r: GearboxResult }) {
+/** `compact`: the narrow inspector column keeps it a table (smaller type, no bar) instead of stacking cards. */
+export function CheckCards({ r, compact }: { r: GearboxResult; compact?: boolean }) {
   const { u } = useStore();
   return (
     <Card title="Checks">
       <p className="card-sub">Utilization is value ÷ limit (or limit ÷ value for minimums). Pass up to 0.85, marginal up to 1.00, fail above. Bars end at 1.2; ticks mark 0.85 and 1.00.</p>
-      <ResponsiveTable threshold={600} className="checks-table">
+      <ResponsiveTable threshold={compact ? 330 : 600} className={`checks-table${compact ? ' is-compact' : ''}`}>
         <thead>
           <tr>
             <th scope="col">Check</th>
@@ -150,93 +148,3 @@ export function CheckCards({ r }: { r: GearboxResult }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Disc drawing + charts (share one input angle)
-// ---------------------------------------------------------------------------
-
-export function DiscAndCharts({ model }: { model: GearboxModel }) {
-  const { resolvedTheme, u } = useStore();
-  const r = model.result;
-  const [deg, setDeg] = useState(0);
-  const [playing, setPlaying] = useState(false);
-
-  useEffect(() => {
-    if (!playing) return;
-    let raf = 0;
-    let last = performance.now();
-    const tick = (t: number) => {
-      const dt = Math.min(0.1, (t - last) / 1000);
-      last = t;
-      setDeg((d) => (d + dt * 60) % 360);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [playing]);
-
-  const theta = (deg * Math.PI) / 180;
-  const drawing = useMemo(() => model.drawingAt(theta, 600), [model, theta]);
-  const pins = useMemo(() => model.pinsAt(theta), [model, theta]);
-  const peak = Math.max(r.loads.FRingPeak, drawing?.maxForce ?? 0);
-  const Rp = r.derived.Rp;
-  const rr = model.inputs.rr;
-
-  return (
-    <>
-      <Card title="Disc at input angle θ" subtitle="Ring frame. The disc turns by −θ/Zc and sits off-centre by the eccentricity e.">
-        <div className="disc-layout">
-          <div className="disc-fig">
-            <DiscSvg drawing={drawing} peak={peak} theme={resolvedTheme} Rp={Rp} rr={rr} />
-          </div>
-          <div className="disc-side">
-            <div className="slider-row">
-              <Button
-                variant="secondary"
-                size="md"
-                icon={playing ? 'pause' : 'play'}
-                onClick={() => setPlaying((p) => !p)}
-                aria-pressed={playing}
-                aria-label={playing ? 'Pause animation' : 'Play animation'}
-              >
-                {playing ? 'Pause' : 'Play'}
-              </Button>
-              <div className="theta-read" aria-hidden="true">θ = {num(deg, 0)}°</div>
-            </div>
-            <label className="slider">
-              <span className="visually-hidden">Input angle theta in degrees</span>
-              <input
-                type="range"
-                min={0}
-                max={360}
-                step={1}
-                value={Math.round(deg)}
-                onChange={(e) => { setPlaying(false); setDeg(Number(e.target.value) % 360); }}
-                aria-valuetext={`${num(deg, 0)} degrees`}
-              />
-            </label>
-            <ForceLegend peak={peak} theme={resolvedTheme} />
-            <DataTable
-              columns={1}
-              rows={[
-                { label: 'Loaded outer pins', value: `${pins ? pins.filter((p) => p.loaded).length : DASH} of ${pins?.length ?? DASH}` },
-                { label: 'Largest pin force now', value: drawing ? u.fu('force', drawing.maxForce, { dp: 0 }) : DASH },
-                { label: 'Eccentricity e', value: u.fu('length', model.inputs.e, { dp: 3 }) },
-              ]}
-            />
-          </div>
-        </div>
-      </Card>
-
-      <Card title="Force on each outer pin" subtitle={`At θ = ${num(deg, 0)}°, design torque. Pins are numbered around the ring.`}>
-        <PinForceChart pins={pins} peak={peak} theme={resolvedTheme} thetaDeg={deg} />
-      </Card>
-
-      <Card
-        title="Peak ring contact pressure over one revolution"
-        subtitle="Highest contact pressure over all pins against the input angle. Click or drag the chart to move θ."
-      >
-        <SweepChart sweep={r.sweep} thetaDeg={deg} onTheta={(d) => { setPlaying(false); setDeg(d); }} />
-      </Card>
-    </>
-  );
-}

@@ -19,6 +19,7 @@ import {
   type ArmResult,
   type CalcJob,
   type GearboxInputs,
+  type SolverResult,
 } from '../calc';
 import {
   armToggle,
@@ -37,9 +38,10 @@ import {
   type AdvisorUiOptions,
   type Session,
   type Slot,
-  type Step,
   type ThemePref,
+  CUSTOM,
 } from './session';
+import type { SectionId, StageTab, WorkbenchState } from './workbench/wbState';
 import { defaultLockState, toEngineLocks, type AdvisorLockState } from './advisorLocks';
 import { ratioPlanFor } from './motorUi';
 import { makeU, type U, type UnitPrefs } from './units';
@@ -49,7 +51,10 @@ import { makeU, type U, type UnitPrefs } from './units';
 // ---------------------------------------------------------------------------
 
 type Action =
-  | { type: 'step'; step: Step }
+  | { type: 'wb'; patch: Partial<WorkbenchState> }
+  /** Select the Arm item, Custom or a joint; a gearbox slot (cycloidal joint or Custom) also becomes the selected slot */
+  | { type: 'wbSelect'; sel: string }
+  | { type: 'wbOpen'; id: SectionId; open: boolean }
   | { type: 'theme'; theme: ThemePref }
   | { type: 'pose'; pose: Session['armPose'] }
   | { type: 'poseView'; value: Session['poseView'] }
@@ -66,7 +71,21 @@ type Action =
 
 function reducer(s: Session, a: Action): Session {
   switch (a.type) {
-    case 'step': return s.step === a.step ? s : { ...s, step: a.step };
+    case 'wb': {
+      const keys = Object.keys(a.patch) as (keyof WorkbenchState)[];
+      if (keys.every((k) => s.wb[k] === a.patch[k])) return s;
+      return { ...s, wb: { ...s.wb, ...a.patch } };
+    }
+    case 'wbSelect': {
+      const isJoint = s.arm.joints.some((j) => j.id === a.sel);
+      if (a.sel !== 'arm' && a.sel !== CUSTOM && !isJoint) return s;
+      const cyc = a.sel === CUSTOM || s.arm.joints.some((j) => j.id === a.sel && j.drive === 'cycloidal');
+      const selected = cyc ? a.sel : s.selected;
+      if (s.wb.sel === a.sel && s.selected === selected) return s;
+      return { ...s, selected, wb: { ...s.wb, sel: a.sel } };
+    }
+    case 'wbOpen':
+      return !!s.wb.open[a.id] === a.open ? s : { ...s, wb: { ...s.wb, open: { ...s.wb.open, [a.id]: a.open } } };
     case 'theme': return { ...s, theme: a.theme };
     case 'pose': return s.armPose === a.pose ? s : { ...s, armPose: a.pose };
     case 'poseView': return s.poseView === a.value ? s : { ...s, poseView: a.value };
@@ -82,7 +101,7 @@ function reducer(s: Session, a: Action): Session {
     case 'replace': return a.session;
     case 'reset': {
       const d = defaultSession();
-      return { ...d, theme: s.theme, units: s.units, hintsSeen: s.hintsSeen, step: s.step, armPose: s.armPose, poseView: s.poseView };
+      return reconcileSession({ ...d, theme: s.theme, units: s.units, hintsSeen: s.hintsSeen, wb: s.wb, armPose: s.armPose, poseView: s.poseView });
     }
     default: return s;
   }
@@ -128,8 +147,21 @@ interface StoreValue {
   /** Inputs actually checked for a slot (arm torques applied when the toggle is on). */
   effective: (slot: Slot) => GearboxInputs;
   fromArm: (slot: Slot) => boolean;
-  setStep: (s: Step) => void;
+  /** Select a gearbox slot (a cycloidal joint or Custom) in the workbench. */
   select: (slot: Slot) => void;
+  /** Select the Arm item ('arm'), Custom or any joint in the workbench. */
+  selectItem: (sel: string) => void;
+  setStage: (tab: StageTab) => void;
+  patchWb: (patch: Partial<WorkbenchState>) => void;
+  /** Open or close one inspector section (remembered per section). */
+  setSectionOpen: (id: SectionId, open: boolean) => void;
+  /** Open a section and bring it into view (switches to the Details tab on narrow screens). `sel` selects first. */
+  openSection: (id: SectionId, sel?: string) => void;
+  /** Last minimum-size solver result per slot (kept while the app is open, not saved) with the inputs key it was run for */
+  solverMemo: Record<Slot, { res: SolverResult; key: string }>;
+  rememberSolver: (slot: Slot, res: SolverResult, key: string) => void;
+  /** The last openSection request, for the inspector to scroll to (n increments on every request) */
+  jump: { id: SectionId; n: number } | null;
   updateArm: (fn: (a: ArmInputs) => ArmInputs) => void;
   updateGearbox: (slot: Slot, fn: (g: GearboxInputs) => GearboxInputs) => void;
   /** Change the advisor lock state of a joint */
@@ -213,11 +245,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' ? 9000 : 4500);
   }, []);
 
-  const setStep = useCallback((step: Step) => {
-    dispatch({ type: 'step', step });
-    try { window.scrollTo({ top: 0 }); } catch { /* ignore */ }
+  const [jump, setJump] = useState<{ id: SectionId; n: number } | null>(null);
+  const [solverMemo, setSolverMemo] = useState<Record<Slot, { res: SolverResult; key: string }>>({});
+  const rememberSolver = useCallback((slot: Slot, res: SolverResult, key: string) => setSolverMemo((m) => ({ ...m, [slot]: { res, key } })), []);
+  const select = useCallback((slot: Slot) => dispatch({ type: 'wbSelect', sel: slot }), []);
+  const selectItem = useCallback((sel: string) => dispatch({ type: 'wbSelect', sel }), []);
+  const setStage = useCallback((stage: StageTab) => dispatch({ type: 'wb', patch: { stage } }), []);
+  const patchWb = useCallback((patch: Partial<WorkbenchState>) => dispatch({ type: 'wb', patch }), []);
+  const setSectionOpen = useCallback((id: SectionId, open: boolean) => dispatch({ type: 'wbOpen', id, open }), []);
+  const openSection = useCallback((id: SectionId, sel?: string) => {
+    if (sel) dispatch({ type: 'wbSelect', sel });
+    dispatch({ type: 'wbOpen', id, open: true });
+    dispatch({ type: 'wb', patch: { mobile: 'details' } });
+    setJump((j) => ({ id, n: (j?.n ?? 0) + 1 }));
   }, []);
-  const select = useCallback((slot: Slot) => dispatch({ type: 'select', slot }), []);
   const updateArm = useCallback((fn: (a: ArmInputs) => ArmInputs) => dispatch({ type: 'arm', fn }), []);
   const updateGearbox = useCallback(
     (slot: Slot, fn: (g: GearboxInputs) => GearboxInputs) => dispatch({ type: 'gearbox', slot, fn }), []);
@@ -288,6 +329,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     dispatch({ type: 'replace', session: out.session });
     setAdvisorRun(idleRun);
+    setSolverMemo({});
     if (out.issues.length) {
       notify('info', `Imported, but some values need attention. ${out.issues.slice(0, 2).join(' ')}`);
     } else notify('success', 'Session imported.');
@@ -298,15 +340,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     jobRef.current = null;
     dispatch({ type: 'reset' });
     setAdvisorRun(idleRun);
+    setSolverMemo({});
     clearSavedSession();
     notify('success', 'Everything is back to the default values.');
   }, [notify]);
 
   const value = useMemo<StoreValue>(() => ({
-    state, dispatch, u, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, updateLocks, storageOk,
+    state, dispatch, u, arm, effective, fromArm, select, selectItem, setStage, patchWb, setSectionOpen, openSection, jump, solverMemo, rememberSolver,
+    updateArm, updateGearbox, updateLocks, storageOk,
     resolvedTheme, advisorRun, runAdvisor, cancelAdvisor, toasts, notify, dismissToast, exportJson,
     importJson, resetAll,
-  }), [state, u, arm, effective, fromArm, setStep, select, updateArm, updateGearbox, updateLocks, storageOk, resolvedTheme,
+  }), [state, u, arm, effective, fromArm, select, selectItem, setStage, patchWb, setSectionOpen, openSection, jump, solverMemo, rememberSolver,
+    updateArm, updateGearbox, updateLocks, storageOk, resolvedTheme,
     advisorRun, runAdvisor, cancelAdvisor, toasts, notify, dismissToast, exportJson, importJson, resetAll]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

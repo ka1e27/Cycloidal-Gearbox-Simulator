@@ -22,8 +22,8 @@ import { defaultLockState, normalizeLockState, type AdvisorLockState } from './a
 import { METRIC, normalizeUnits, type UnitPrefs } from './units';
 import type { PoseMode } from './viz/armLayout';
 import { ZOOM_MAX, ZOOM_MIN } from './viz/view3d';
+import { defaultWorkbench, normalizeWorkbench, workbenchFromStep, type WorkbenchState } from './workbench/wbState';
 
-export type Step = 1 | 2 | 3 | 4;
 /** A gearbox slot: the id of a cycloidal joint of the arm (ArmJoint.id), or 'custom'. */
 export type Slot = string;
 export const CUSTOM: Slot = 'custom';
@@ -77,7 +77,11 @@ export function normalizePoseView(raw: unknown): PoseViewState {
 
 export interface Session {
   version: 2;
-  step: Step;
+  /**
+   * Workbench layout: selection, stage tab, open inspector sections, panel sizes. Display only, never exported.
+   * Replaces the old `step` (1..4) field, which old sessions still carry and is migrated on load.
+   */
+  wb: WorkbenchState;
   theme: ThemePref;
   /** Which pose the arm drawing shows. Display only: the torques always use the worst case. Not exported. */
   armPose: PoseMode;
@@ -159,7 +163,7 @@ export function defaultSession(): Session {
   for (const j of gearboxJoints(arm)) useArmLoads[j.id] = true;
   return {
     version: 2,
-    step: 1,
+    wb: defaultWorkbench(),
     theme: 'system',
     armPose: 'ready',
     poseView: defaultPoseView(),
@@ -223,7 +227,10 @@ export function reconcileSession(s: Session): Session {
   const slots = slotsOfArm(s.arm);
   let selected = s.selected;
   if (!slots.includes(selected)) { selected = slots[0]; changed = true; }
-  return changed ? { ...s, gearboxes, advisorLocks, useArmLoads, presetBase, selected } : s;
+  // the workbench selection: the Arm item, Custom, or any joint (servo joints too)
+  let wb = s.wb;
+  if (wb.sel !== 'arm' && wb.sel !== CUSTOM && !ids.has(wb.sel)) { wb = { ...wb, sel: 'arm' }; changed = true; }
+  return changed ? { ...s, gearboxes, advisorLocks, useArmLoads, presetBase, selected, wb } : s;
 }
 
 /** Build a full, safe Session from anything (localStorage, imported JSON). Never throws. */
@@ -234,7 +241,6 @@ export function normalizeSession(raw: unknown, base: Session = defaultSession())
     presetBase: { ...base.presetBase },
   };
   try {
-    if (raw.step === 1 || raw.step === 2 || raw.step === 3 || raw.step === 4) out.step = raw.step;
     if (raw.theme === 'system' || raw.theme === 'light' || raw.theme === 'dark') out.theme = raw.theme;
     if (raw.armPose === 'ready' || raw.armPose === 'worst') out.armPose = raw.armPose;
     if ('poseView' in raw) out.poseView = normalizePoseView(raw.poseView);
@@ -306,6 +312,9 @@ export function normalizeSession(raw: unknown, base: Session = defaultSession())
       for (const [k, v] of Object.entries(raw.hintsSeen)) if (v === true) h[k] = true;
       out.hintsSeen = h;
     }
+    // Workbench layout. A session from before it has a `step` (1..4) and a selected gearbox slot instead.
+    if (isObj(raw.wb)) out.wb = normalizeWorkbench(raw.wb, base.wb);
+    else if ('step' in raw) out.wb = workbenchFromStep(raw.step, out.selected);
   } catch {
     return base;
   }
@@ -384,10 +393,12 @@ export function importSession(text: string, current: Session): ImportOutcome {
   if (typeof raw.version === 'number' && raw.version > EXPORT_VERSION) {
     return { ok: false, error: `That file was saved by a newer version of the app (format ${raw.version}).` };
   }
-  // Keep the importing user's own UI state (step, theme, hints); take the engineering data from the file.
-  const { step, theme, hintsSeen, units, armPose, poseView } = current;
+  // Keep the importing user's own UI state (layout, theme, hints); take the engineering data from the file.
+  const { wb, theme, hintsSeen, units, armPose, poseView } = current;
   const base = defaultSession();
-  const merged = normalizeSession({ ...raw, step, theme, hintsSeen, units, armPose, poseView }, { ...base, step, theme, hintsSeen, units, armPose, poseView });
+  const { step: _oldStep, ...rest } = raw;
+  void _oldStep;
+  const merged = normalizeSession({ ...rest, wb, theme, hintsSeen, units, armPose, poseView }, { ...base, wb, theme, hintsSeen, units, armPose, poseView });
   const issues: string[] = [];
   const armErr = validateArmInputs(merged.arm).errors;
   if (armErr.length) issues.push(`Arm: ${armErr[0]}`);

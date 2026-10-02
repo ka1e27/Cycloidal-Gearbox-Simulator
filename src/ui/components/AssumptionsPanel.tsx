@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { BEARING_NOTE, SUPPLIER_DATA_NOTE } from '../../calc';
 import { Icon } from './Icon';
 import { OPEN_ASSUMPTIONS_EVENT } from './Header';
@@ -43,45 +43,49 @@ const GROUPS: { title: string; items: string[] }[] = [
   },
 ];
 
+/** Assumptions and limitations, as a modal dialog opened from the header (or the session menu). */
 export function AssumptionsPanel() {
   const u = useU();
-  const [open, setOpen] = useState(false);
   const id = useId();
-  const root = useRef<HTMLElement>(null);
+  const dlg = useRef<HTMLDialogElement>(null);
+  const opener = useRef<Element | null>(null);
 
   useEffect(() => {
     const on = () => {
-      setOpen(true);
-      window.setTimeout(() => root.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30);
+      const d = dlg.current;
+      if (!d || d.open) return;
+      opener.current = document.activeElement;
+      try { d.showModal(); } catch { d.setAttribute('open', ''); }
     };
     window.addEventListener(OPEN_ASSUMPTIONS_EVENT, on);
     return () => window.removeEventListener(OPEN_ASSUMPTIONS_EVENT, on);
   }, []);
 
+  const close = () => dlg.current?.close();
+
   return (
-    <section className="card assumptions" ref={root} id="assumptions" aria-label="Assumptions and limitations">
-      <h2 className="assumptions-h">
-        <button type="button" className="assumptions-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
-          <span>Assumptions and limitations</span>
-          <Icon name="chevron" size={14} className="assumptions-chevron" />
-        </button>
-      </h2>
-      <div className={`assumptions-body${open ? ' is-open' : ''}`} id={id} inert={!open}>
-        <div className="assumptions-inner">
-          <div className="assumptions-grid">
-            {GROUPS.map((g) => (
-              <div key={g.title}>
-                <h3 className="assumptions-group">{g.title}</h3>
-                <ul>
-                  {g.items.map((t) => (
-                    <li key={t}>{u.text(t)}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </div>
+    <dialog ref={dlg} className="dialog assumptions-dlg" id="assumptions" aria-labelledby={`${id}-t`}
+      onClose={() => { (opener.current as HTMLElement | null)?.focus?.(); }}
+      onClick={(e) => { if (e.target === dlg.current) close(); }}>
+      <div className="assumptions-dlg-head">
+        <h2 id={`${id}-t`} className="dialog-title">Assumptions and limitations</h2>
+        <button type="button" className="icon-btn" aria-label="Close assumptions" onClick={close}><Icon name="x" size={16} /></button>
       </div>
-    </section>
+      <div className="assumptions-grid">
+        {GROUPS.map((g) => (
+          <div key={g.title}>
+            <h3 className="assumptions-group">{g.title}</h3>
+            <ul>
+              {g.items.map((t) => (
+                <li key={t}>{u.text(t)}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <p className="app-foot">
+        Static calculator: everything runs in your browser and nothing is sent anywhere. Results are engineering estimates, not a substitute for testing.
+      </p>
+    </dialog>
   );
 }

@@ -35,23 +35,8 @@ export function Button({
 }
 
 // ---------------------------------------------------------------------------
-// Page head, blocks
+// Blocks
 // ---------------------------------------------------------------------------
-
-export function PageHead({ title, sub, suffix, children }: { title: string; sub: ReactNode; suffix?: string; children?: ReactNode }) {
-  return (
-    <div className="pagehead">
-      <div className="pagehead-text">
-        <h1 className="pagehead-title">
-          {title}
-          {suffix && <span className="pagehead-suffix">{suffix}</span>}
-        </h1>
-        <p className="pagehead-sub">{sub}</p>
-      </div>
-      {children && <div className="pagehead-tools">{children}</div>}
-    </div>
-  );
-}
 
 /** A ruled block: mono caption, hairline, content. */
 export function Card({
@@ -80,18 +65,6 @@ export function Card({
       {subtitle && <p className="card-sub">{subtitle}</p>}
       {children}
     </section>
-  );
-}
-
-/** Next / Back navigation at the bottom of a step. */
-export function StepNav({ back, next }: { back?: { label: string; onClick: () => void }; next?: { label: string; onClick: () => void } }) {
-  return (
-    <nav className="stepnav" aria-label="Step navigation">
-      {back ? (
-        <Button variant="secondary" icon="back" onClick={back.onClick}>{back.label}</Button>
-      ) : <span />}
-      {next && <Button variant="primary" iconAfter="arrow" onClick={next.onClick}>{next.label}</Button>}
-    </nav>
   );
 }
 

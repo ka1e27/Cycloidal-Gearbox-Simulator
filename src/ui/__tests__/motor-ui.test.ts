@@ -14,10 +14,10 @@ import {
 import { StoreProvider } from '../store';
 import { IMPERIAL, METRIC, type UnitPrefs } from '../units';
 import { AdvisorLocksPanel } from '../screens/AdvisorLocksPanel';
-import { AdvisorScreen } from '../screens/AdvisorScreen';
-import { ArmScreen } from '../screens/ArmScreen';
-import { GearboxScreen } from '../screens/GearboxScreen';
-import { JointsScreen } from '../screens/JointsScreen';
+import { AdvisorScreen } from './workbenchScreens';
+import { ArmScreen } from './workbenchScreens';
+import { GearboxScreen } from './workbenchScreens';
+import { JointsScreen } from './workbenchScreens';
 
 const g = globalThis as unknown as { window?: unknown };
 afterEach(() => { delete g.window; });
@@ -315,7 +315,8 @@ describe('screens', () => {
     expect(t).not.toContain('N·m peak');
     const none = text(render(defaultSession(), GearboxScreen));
     expect(none).toContain('Motor & ratio');
-    expect(none).toContain('Enter motor');
+    // the motor fields sit right above in the same section, so the card itself only appears once a motor exists
+    expect(none).toContain('Optional: enter the motor’s max torque to get a recommended gear ratio for this joint.');
     expect(none).not.toContain('Use recommended ratio');
   });
 

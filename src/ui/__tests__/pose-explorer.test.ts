@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { defaultSession, exportSession, importSession, normalizePoseView, normalizeSession, STORAGE_KEY, type Session } from '../session';
 import { IMPERIAL, METRIC } from '../units';
 import { StoreProvider } from '../store';
-import { ArmScreen } from '../screens/ArmScreen';
-import { PoseExplorer } from '../viz/PoseExplorer';
+import { Stage } from '../workbench/Stage';
+import { PoseExplorer } from './workbenchScreens';
 import { placePoseLabels, LABEL_CHAR_W } from '../viz/poseLabels';
 import { NO_ZOOM, VIEW_PRESETS, ZOOM_MAX, ZOOM_MIN, applyZoomPan, basis, clampCamera, dot, fitFrame, knobDir, planeAngle, project, viewNameOf, zoomAbout, type V3 } from '../viz/view3d';
 import { hit } from '../viz/armLayout';
@@ -75,11 +75,14 @@ describe('3D projection helper', () => {
   });
 });
 
-describe('the card on Arm & Loads', () => {
-  it('Arm & Loads loads the explorer lazily: a light placeholder in the static render', () => {
-    const t = text(render(defaultSession(), ArmScreen));
-    expect(t).toContain('Pose explorer');
-    expect(t).toContain('Loading the 3D view');
+describe('the 3D arm in the workbench stage', () => {
+  it('the stage loads the 3D view lazily: tabs and a light placeholder in the static render', () => {
+    const html = render(defaultSession(), () => createElement(Stage));
+    const t = text(html);
+    for (const tab of ['3D arm', 'Schematic', 'Disc', 'Summary']) expect(t).toContain(tab);
+    expect(html).toMatch(/role="tab" id="stage-tab-3d" aria-selected="true"/);
+    expect(t).toContain('Loading the view');
+    expect(t).toContain('Pick a joint on the left or in the 3D view');
   });
   const chains: Record<string, ('yaw' | 'pitch' | 'roll')[]> = {
     '1 joint': ['pitch'],
@@ -93,14 +96,14 @@ describe('the card on Arm & Loads', () => {
       it(`${name} / ${units.torque}: a joint symbol and a slider per joint, the readout table, finite coordinates`, () => {
         const base = defaultSession();
         const joints = motions.map((motion, i) => ({ ...base.arm.joints[Math.min(i, 4)], id: `J${i + 1}`, motion, drive: 'cycloidal' as const }));
-        const s = normalizeSession({ ...base, arm: { ...base.arm, joints }, units, poseView: { angles: { J2: 33 }, az: -38, el: 26, weights: true, zoom: 1.5, px: 10, py: 0 } });
+        const s = normalizeSession({ ...base, arm: { ...base.arm, joints }, units, wb: { ...base.wb, drawer: true }, poseView: { angles: { J2: 33 }, az: -38, el: 26, weights: true, zoom: 1.5, px: 10, py: 0 } });
         const html = render(s);
         const card = html;
         expect(card).not.toMatch(/NaN|Infinity|undefined/);
         expect(card.match(/class="pz-jgrp"/g)).toHaveLength(motions.length);
         expect(card.match(/type="range"/g)).toHaveLength(motions.length);
         const t = text(card);
-        expect(t).toContain('Pose explorer');
+        expect(t).toContain('Pose loads');
         expect(t).toContain('Torque at this pose');
         expect(t).toContain('Worst-case static');
         expect(t).toMatch(/Tip reach/);
@@ -119,6 +122,7 @@ describe('the card on Arm & Loads', () => {
     const s = defaultSession();
     s.arm = { ...s.arm, joints: s.arm.joints.map((j) => (j.id === 'J2' ? { ...j, limits: { min: -30, max: 60 } } : j)) };
     s.poseView = { angles: { J2: 90 }, az: 0, el: 0, weights: true, zoom: 1, px: 0, py: 0 };
+    s.wb = { ...s.wb, drawer: true };
     const html = render(normalizeSession(JSON.parse(JSON.stringify(s))));
     expect(html).toMatch(/type="range" min="-30" max="60" step="1"[^>]*value="60"/);
     expect(text(html)).toContain('Limits -30° … 60°');

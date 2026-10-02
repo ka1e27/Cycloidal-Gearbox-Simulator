@@ -103,11 +103,11 @@ describe('session persistence', () => {
       },
     };
     const s = defaultSession();
-    s.step = 3;
+    s.wb = { ...s.wb, sel: 'J3', stage: 'disc', open: { advisor: true }, inspW: 500 };
     s.theme = 'dark';
     expect(saveSession(s)).toBe(true);
     const back = loadSession();
-    expect(back.step).toBe(3);
+    expect(back.wb).toMatchObject({ sel: 'J3', stage: 'disc', open: { advisor: true }, inspW: 500 });
     expect(back.theme).toBe('dark');
     store.set(STORAGE_KEY, '{not json');
     expect(loadSession()).toEqual(defaultSession());

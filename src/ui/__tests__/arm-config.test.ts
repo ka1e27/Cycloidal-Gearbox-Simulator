@@ -14,10 +14,16 @@ import {
   slotLabel, slotsOf, STORAGE_KEY, type Session,
 } from '../session';
 import { StoreProvider } from '../store';
-import { AdvisorScreen } from '../screens/AdvisorScreen';
-import { ArmScreen } from '../screens/ArmScreen';
-import { GearboxScreen } from '../screens/GearboxScreen';
-import { JointsScreen } from '../screens/JointsScreen';
+import { AdvisorScreen } from './workbenchScreens';
+import { ArmScreen } from './workbenchScreens';
+import { GearboxScreen } from './workbenchScreens';
+import { JointsScreen } from './workbenchScreens';
+import { Rail } from '../workbench/Rail';
+import { Inspector } from '../workbench/Inspector';
+import { EAGER_BODIES } from '../workbench/eager';
+import { createElement as h } from 'react';
+
+const InspectorOnly = () => h(Inspector, { bodies: EAGER_BODIES, forceOpen: true });
 
 const g = globalThis as unknown as { window?: unknown };
 afterEach(() => { delete g.window; });
@@ -262,7 +268,7 @@ function render(session: Session, Screen: ComponentType): string {
   return renderToStaticMarkup(createElement(StoreProvider, null, createElement(Screen)));
 }
 const text = (html: string) => html.replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/\s+/g, ' ');
-const chipLabels = (html: string) => [...html.matchAll(/role="radio"[^>]*aria-label="([^"]*)"/g)].map((m) => m[1]);
+const railLabels = (html: string) => [...html.matchAll(/class="rail-main"[^>]*aria-label="([^"]*)"/g)].map((m) => m[1]);
 
 describe('screens follow the dynamic joint list', () => {
   /** 6 joints: yaw, pitch(servo), pitch, roll, pitch, roll(servo) with a renamed joint */
@@ -283,16 +289,25 @@ describe('screens follow the dynamic joint list', () => {
     return s;
   }
 
-  it('Gearbox and Advisor chips list exactly the cycloidal joints plus Custom, with the renamed labels', () => {
+  it('the rail lists every joint in order with its drive and the renamed labels, then Custom; gearbox slots are the cycloidal ones', () => {
     const s = sixDof();
     expect(slotsOf(s)).toEqual(['J1', 'J3', 'J4', 'J5', 'custom']);
-    for (const Screen of [GearboxScreen, AdvisorScreen]) {
-      const labels = chipLabels(render(s, Screen));
-      expect(labels).toEqual(['J1 base yaw', 'J3 Elbow', 'J4 forearm roll', 'J5 wrist pitch', 'Your own geometry and torques']);
-    }
+    const rail = render(s, Rail);
+    const rows = railLabels(rail).filter((l) => /^J\d/.test(l));
+    expect(rows.map((l) => l.split(',')[0])).toEqual(['J1 base yaw', 'J2 Shoulder', 'J3 Elbow', 'J4 forearm roll', 'J5 wrist pitch', 'J6 Spin']);
+    expect(rows.map((l) => l.split(', ')[2])).toEqual(['Cycloidal', 'Servo', 'Cycloidal', 'Cycloidal', 'Cycloidal', 'Servo']);
+    expect(railLabels(rail)).toContain('Custom gearbox');
+    // the inspector of the selected gearbox slot: its name, and the gearbox sections
     const html = render(s, GearboxScreen);
-    expect(text(html)).toContain('J3 Elbow'); // page title suffix follows the selection
-    expect(text(html)).toContain('Gearbox');
+    expect(html).toMatch(/<span class="insp-jpos mono">J3<\/span><input[^>]*value="Elbow"/);
+    expect(text(html)).toContain('Gearbox design');
+    // a servo joint shows only Joint & link, Motor & ratio and Loads
+    const servo = { ...s, wb: { ...s.wb, sel: 'J2' } };
+    const st = text(render(servo, InspectorOnly));
+    expect(st).toContain('Joint & link');
+    expect(st).toContain('Loads');
+    expect(st).not.toContain('Gearbox design');
+    expect(st).not.toContain('Design Advisor');
   });
 
   it('All Joints lists gearbox rows and "servo" rows in arm order', () => {
@@ -311,7 +326,7 @@ describe('screens follow the dynamic joint list', () => {
     const html = render(s, ArmScreen);
     const t = text(html);
     expect(t).toContain('DOF 6');
-    expect(html.match(/class="jcard( is-open)?"/g)).toHaveLength(6);
+    expect(html.match(/class="insp-name"/g)).toHaveLength(6); // one joint inspector (name, motion, drive, fields) per joint
     expect(t).toContain('J2 Shoulder servo requirement');
     expect(t).toContain('J6 Spin servo requirement');
     expect(t).not.toContain('J5 wrist pitch servo requirement');
@@ -327,7 +342,8 @@ describe('screens follow the dynamic joint list', () => {
     s.selected = 'J6';
     const t = text(render(s, GearboxScreen));
     expect(t).toContain('Started from a preset');
-    expect(t).toContain('J6 pitch');
+    expect(t).toContain('J6');
+    expect(render(s, GearboxScreen)).toMatch(/<input[^>]*placeholder="pitch" aria-label="Name of J6"/); // unnamed: shown as its motion
   });
 
   it('a one-joint arm renders every screen', () => {

@@ -1,256 +1,186 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+// Arm & Loads content for the workbench (CLAUDE.md Additions 1, 7 and 10): the Arm item's settings and torque table,
+// the "Joint & link" fields of one joint, adding joints, and a servo joint's requirement. These used to make up the
+// 01 Arm & Loads page; they now live in the inspector.
+import { useId, useMemo, useState } from 'react';
 import {
-  DRIVE_LABEL, JOINT_PRESET_SPECS, MAX_JOINTS, MIN_JOINTS, MOTION_LABEL, analyzeJointMotor, defaultArmInputs, jointLabel, validateArmInputs,
-  type ArmInputs, type ArmJoint, type ArmJointLoad, type ArmResult, type DriveType, type MotionType,
+  DRIVE_LABEL, JOINT_PRESET_SPECS, MAX_JOINTS, MOTION_LABEL, analyzeJointMotor, defaultArmInputs, jointLabel, validateArmInputs,
+  type ArmInputs, type ArmJoint, type ArmResult, type DriveType, type MotionType,
 } from '../../calc';
-import { Advanced, Button, Card, Cu, Notice, PageHead, ResponsiveTable, Segmented, StatusChip, StepNav } from '../components/primitives';
+import { Advanced, Button, Card, Cu, DataTable, Notice, ResponsiveTable, Segmented, StatusChip } from '../components/primitives';
 import { JointTag } from '../components/JointTag';
 import { InfoTip } from '../components/InfoTip';
 import { NumberField } from '../components/NumberField';
-import { MotorFields } from '../components/MotorFields';
-import { stepSubtitle } from '../components/StepHint';
 import { HELP } from '../help';
 import { DASH, fixed } from '../format';
 import { recommendedText } from '../motorUi';
-import { addJoint, moveJoint, patchJoint, removeJoint, setMotion } from '../armEdit';
-import { ArmDiagram } from '../viz/ArmDiagram';
+import { addJoint, patchJoint } from '../armEdit';
 import { MotionIcon } from '../viz/armSymbols';
+import { JointSlider } from '../viz/JointSlider';
 import { useStore } from '../store';
 import { gearboxOf, presetIdFor, slotLabel } from '../session';
+import { usePoseLiveOptional } from '../workbench/poseLive';
 
 const D = defaultArmInputs();
-// The pose explorer is below the fold: its chunk loads on demand.
-const PoseExplorer = lazy(() => import('../viz/PoseExplorer').then((m) => ({ default: m.PoseExplorer })));
 
-const MOTION_OPTIONS = (['yaw', 'pitch', 'roll'] as MotionType[]).map((m) => ({
+export const MOTION_OPTIONS = (['yaw', 'pitch', 'roll'] as MotionType[]).map((m) => ({
   value: m,
   label: <span className="seg-icon"><MotionIcon motion={m} size={20} /><span>{MOTION_LABEL[m]}</span></span>,
   title: { yaw: 'Turns about a vertical axis (the base)', pitch: 'Bends about an axis perpendicular to the link', roll: 'Turns about the link axis' }[m],
 }));
-const DRIVE_OPTIONS = (['cycloidal', 'servo'] as DriveType[]).map((d) => ({
-  value: d, label: DRIVE_LABEL[d], title: d === 'cycloidal' ? 'Gets a gearbox check, an advisor run and an All Joints row' : 'Direct-drive servo: only the required torque is reported',
+export const DRIVE_OPTIONS = (['cycloidal', 'servo'] as DriveType[]).map((d) => ({
+  value: d, label: DRIVE_LABEL[d], title: d === 'cycloidal' ? 'Gets a gearbox check, an advisor run and a Summary row' : 'Direct-drive servo: only the required torque is reported',
 }));
 
-export function ArmScreen() {
-  const { state, arm, updateArm, setStep, u, notify } = useStore();
-  const a = state.arm;
+/** Errors of the arm inputs, looked up by message prefix. */
+function useArmErrors(a: ArmInputs) {
   const errors = useMemo(() => validateArmInputs(a), [a]);
   const err = (prefix: string) => errors.errors.find((e) => e.startsWith(prefix)) ?? null;
-  const dirty = JSON.stringify(a) !== JSON.stringify(D);
+  return { errors, err };
+}
+
+// ---------------------------------------------------------------------------
+// Adding a joint (rail and Arm item)
+// ---------------------------------------------------------------------------
+
+/** Motion type chooser plus "+ Add joint" (adds at the tip). `onAdded` receives the new joint's id. */
+export function AddJoint({ onAdded, compact }: { onAdded?: (id: string) => void; compact?: boolean }) {
+  const { state, updateArm, notify } = useStore();
+  const a = state.arm;
   const n = a.joints.length;
   const [newType, setNewType] = useState<MotionType>('pitch');
-  const [focusId, setFocusId] = useState<string | null>(null);
-
   const onAdd = () => {
     const next = addJoint(a, newType);
     if (next === a) return;
     const added = next.joints[next.joints.length - 1];
     updateArm(() => next);
-    setFocusId(added.id);
+    onAdded?.(added.id);
     // the store gives it a gearbox started from the closest preset; say so
-    window.setTimeout(() => notify('info', `Added ${jointLabel(added, next.joints.length - 1)}. Its gearbox starts from the preset whose torque is closest (see the Gearbox page), and you can change everything.`), 0);
+    window.setTimeout(() => notify('info', `Added ${jointLabel(added, next.joints.length - 1)}. Its gearbox starts from the preset whose torque is closest (see Gearbox design), and you can change everything.`), 0);
   };
-
   return (
-    <div className="screen">
-      <PageHead title="Arm & Loads" sub={stepSubtitle(1)} />
-      <div className="split split-arm">
-        <div className="col col-inputs">
-          <Notice kind="warning" title="Placeholder values">
-            The default masses and lengths are placeholders until CAD masses exist. Replace them with your own.
-          </Notice>
-          <div className="panel">
-            <div className="panel-head">
-              <h2 className="panel-title">Joints <span className="dof-badge" aria-label={`${n} degrees of freedom`}>DOF {n}</span> <InfoTip help={HELP.jointCount} label="Degrees of freedom" /></h2>
-              <Button size="sm" variant="ghost" disabled={!dirty} onClick={() => updateArm(() => defaultArmInputs())}>
-                Reset arm
-              </Button>
-            </div>
-            <p className="section-note">Ordered from the base to the tip. Each joint carries the link that runs from it to the next joint; the last joint carries the tool.</p>
-
-            <ol className="joint-list" aria-label="Joints, base to tip">
-              {a.joints.map((j, i) => (
-                <JointCard
-                  key={j.id}
-                  arm={a}
-                  joint={j}
-                  index={i}
-                  load={arm.joints[i]}
-                  armOk={arm.valid}
-                  err={err}
-                  focusMe={focusId === j.id}
-                  onFocused={() => setFocusId(null)}
-                  canRemove={n > MIN_JOINTS}
-                />
-              ))}
-            </ol>
-
-            <div className="joint-add">
-              <Segmented<MotionType> value={newType} onChange={setNewType} label="Type of the joint to add" size="sm" options={MOTION_OPTIONS} />
-              <Button variant="secondary" size="sm" disabled={n >= MAX_JOINTS} onClick={onAdd}
-                title={n >= MAX_JOINTS ? `An arm has at most ${MAX_JOINTS} joints` : 'Add a joint at the tip of the arm'}>
-                + Add joint
-              </Button>
-            </div>
-            {n >= MAX_JOINTS && <p className="section-note">The arm is at the maximum of {MAX_JOINTS} joints.</p>}
-
-            <h3 className="subgroup-h">Payload and safety factors</h3>
-            <NumberField label="Payload at tool tip" quantity="mass" value={a.payload_g}
-              onChange={(v) => updateArm((x) => ({ ...x, payload_g: v ?? 0 }))} defaultValue={D.payload_g}
-              error={err('Payload')} help={HELP.payload} step={10} />
-            <NumberField label="Service factor" symbol="SF" value={a.SF} onChange={(v) => updateArm((x) => ({ ...x, SF: v ?? 0 }))}
-              defaultValue={D.SF} error={err('Service factor')} warning={errors.warnings[0] ?? null} help={HELP.SF} step={0.1} />
-            <NumberField label="Minimum design torque" symbol="T_des floor" quantity="torque" value={a.TdesFloor}
-              onChange={(v) => updateArm((x) => ({ ...x, TdesFloor: v ?? 0 }))} defaultValue={D.TdesFloor}
-              error={err('T_des floor')} help={HELP.TdesFloor} step={0.1} />
-            {errors.errors.length > 0 && !errors.errors.every((e) => /^(Joint mass|Bar mass|Bar length|Angular|Link offset|Manual|Payload|Service|T_des)/.test(e)) && (
-              <Notice kind="error" title="The arm cannot be computed">{u.text(errors.errors[0])}</Notice>
-            )}
-          </div>
-        </div>
-
-        <div className="col col-results">
-          <Card title="Arm side view" className="arm-diagram-card">
-            <ArmDiagram arm={a} />
-          </Card>
-          <TorqueTable armInputs={a} arm={arm} errors={errors.errors} />
-          {arm.valid && arm.notes.length > 0 && (
-            <Notice kind="info" title="How these joints are modelled">
-              <ul className="note-list">
-                {arm.notes.map((t) => <li key={t}>{t}</li>)}
-              </ul>
-            </Notice>
-          )}
-          <ServoCards armInputs={a} arm={arm} />
-        </div>
-      </div>
-      <Suspense fallback={<div className="card pose-card pose-loading" role="status"><h3 className="card-title">Pose explorer</h3><p className="muted small">Loading the 3D view…</p></div>}>
-        <PoseExplorer />
-      </Suspense>
-      <StepNav next={{ label: 'Next: Gearbox', onClick: () => setStep(2) }} />
+    <div className={`joint-add${compact ? ' is-compact' : ''}`}>
+      <Segmented<MotionType> value={newType} onChange={setNewType} label="Type of the joint to add" size="sm"
+        options={compact ? MOTION_OPTIONS.map((o) => ({ ...o, label: <span className="seg-icon" title={MOTION_LABEL[o.value]}><MotionIcon motion={o.value} size={18} /><span className="visually-hidden">{MOTION_LABEL[o.value]}</span></span> })) : MOTION_OPTIONS} />
+      <Button variant="secondary" size="sm" disabled={n >= MAX_JOINTS} onClick={onAdd}
+        title={n >= MAX_JOINTS ? `An arm has at most ${MAX_JOINTS} joints` : 'Add a joint at the tip of the arm'}>
+        + Add joint
+      </Button>
+      {n >= MAX_JOINTS && <p className="section-note">The arm is at the maximum of {MAX_JOINTS} joints.</p>}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// One joint
+// Arm item: settings and totals
 // ---------------------------------------------------------------------------
 
-function JointCard({ arm, joint: j, index: i, load, armOk, err, focusMe, onFocused, canRemove }: {
-  arm: ArmInputs; joint: ArmJoint; index: number; load: ArmJointLoad | undefined; armOk: boolean;
-  err: (prefix: string) => string | null; focusMe: boolean; onFocused: () => void; canRemove: boolean;
-}) {
-  const { updateArm, state, u } = useStore();
-  const n = arm.joints.length;
-  const last = i === n - 1;
-  const [open, setOpen] = useState(n <= 5 || focusMe);
-  const [confirming, setConfirming] = useState(false);
-  const cardRef = useRef<HTMLLIElement>(null);
-  const nameRef = useRef<HTMLInputElement>(null);
+export function ArmSettings() {
+  const { state, arm, updateArm, u } = useStore();
+  const a = state.arm;
+  const { errors, err } = useArmErrors(a);
+  const dirty = JSON.stringify(a) !== JSON.stringify(D);
+  const n = a.joints.length;
+  const firstPitch = a.joints.findIndex((j) => j.motion === 'pitch');
+  return (
+    <div className="arm-settings">
+      <Notice kind="warning" title="Placeholder values">
+        The default masses and lengths are placeholders until CAD masses exist. Replace them with your own.
+      </Notice>
+      <NumberField label="Payload at tool tip" quantity="mass" value={a.payload_g}
+        onChange={(v) => updateArm((x) => ({ ...x, payload_g: v ?? 0 }))} defaultValue={D.payload_g}
+        error={err('Payload')} help={HELP.payload} step={10} />
+      <NumberField label="Service factor" symbol="SF" value={a.SF} onChange={(v) => updateArm((x) => ({ ...x, SF: v ?? 0 }))}
+        defaultValue={D.SF} error={err('Service factor')} warning={errors.warnings[0] ?? null} help={HELP.SF} step={0.1} />
+      <NumberField label="Minimum design torque" symbol="T_des floor" quantity="torque" value={a.TdesFloor}
+        onChange={(v) => updateArm((x) => ({ ...x, TdesFloor: v ?? 0 }))} defaultValue={D.TdesFloor}
+        error={err('T_des floor')} help={HELP.TdesFloor} step={0.1} />
+      {errors.errors.length > 0 && (
+        <Notice kind="error" title="The arm cannot be computed">{u.text(errors.errors[0])}. Select the joint it names to fix it.</Notice>
+      )}
+      <h4 className="subgroup-h">Totals <InfoTip help={HELP.jointCount} label="Degrees of freedom" /></h4>
+      <DataTable columns={1} rows={[
+        { label: 'Degrees of freedom', value: <span className="dof-badge" aria-label={`${n} degrees of freedom`}>DOF {n}</span> },
+        { label: 'Total arm mass', value: arm.valid ? u.fu('mass', arm.totalMass_g, { dp: 1, trim: true }) : DASH, note: 'joints, links, tool and payload' },
+        {
+          label: 'Reach', value: arm.valid && firstPitch >= 0 ? u.fu('length', arm.reach_mm, { dp: 1, trim: true }) : DASH,
+          note: firstPitch >= 0 ? `straight out from ${slotLabel(a, a.joints[firstPitch].id).split(' ')[0]} (the first pitch joint)` : 'no pitch joint, so no horizontal reach',
+        },
+      ]} />
+      <h4 className="subgroup-h">Joints</h4>
+      <AddJoint onAdded={undefined} />
+      <div className="arm-settings-foot">
+        <Button size="sm" variant="ghost" disabled={!dirty} onClick={() => updateArm(() => defaultArmInputs())}>Reset arm to defaults</Button>
+      </div>
+      {arm.valid && arm.notes.length > 0 && (
+        <Notice kind="info" title="How these joints are modelled">
+          <ul className="note-list">
+            {arm.notes.map((t) => <li key={t}>{t}</li>)}
+          </ul>
+        </Notice>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// One joint: "Joint & link" fields (the name, motion and drive sit in the inspector header)
+// ---------------------------------------------------------------------------
+
+export function JointLinkFields({ joint: j, index: i }: { joint: ArmJoint; index: number }) {
+  const { state, arm, updateArm, u } = useStore();
+  const a = state.arm;
+  const { err } = useArmErrors(a);
+  const last = i === a.joints.length - 1;
+  const load = arm.joints[i];
+  const armOk = arm.valid;
   // "modified" dots compare with the default of the same joint (by id); an added joint has none
   const dflt = D.joints.find((x) => x.id === j.id);
-  const dMotion = dflt ?? null;
-  const label = jointLabel(j, i);
   const patch = (p: Partial<ArmJoint>) => updateArm((x) => patchJoint(x, j.id, p));
-
-  useEffect(() => {
-    if (!focusMe) return;
-    setOpen(true);
-    cardRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    nameRef.current?.focus({ preventScroll: true });
-    onFocused();
-  }, [focusMe, onFocused]);
-
-  const summary = `${MOTION_LABEL[j.motion]} · ${DRIVE_LABEL[j.drive]} · ${u.fu('mass', j.mass_g, { dp: 0, trim: true })} · ${u.fu('length', j.length_mm, { dp: 0, trim: true })}`;
   const presetNote = j.drive === 'cycloidal' && !(['J1', 'J2', 'J3', 'J4'] as string[]).includes(j.id) && state.presetBase[j.id]
     ? `Gearbox started from the ${JOINT_PRESET_SPECS[presetIdFor(j.id, state.presetBase)].label} preset (closest torque).` : null;
-
   return (
-    <li className={`jcard${open ? ' is-open' : ''}`} ref={cardRef} aria-label={label}>
-      <div className="jcard-head">
-        <button type="button" className="jcard-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)} title={open ? 'Collapse this joint' : 'Expand this joint'}>
-          <span className="jcard-pos mono">J{i + 1}</span>
-          <MotionIcon motion={j.motion} size={20} title={`${MOTION_LABEL[j.motion]} joint`} />
-          <span className="jcard-name">{j.name.trim() || MOTION_LABEL[j.motion].toLowerCase()}</span>
-          {!open && <span className="jcard-sum">{summary}</span>}
-        </button>
-        <div className="jcard-actions" role="group" aria-label={`Actions for ${label}`}>
-          <button type="button" className="icon-btn" aria-label={`Move ${label} toward the base`} title="Move toward the base" disabled={i === 0}
-            onClick={() => updateArm((x) => moveJoint(x, j.id, -1))}>▲</button>
-          <button type="button" className="icon-btn" aria-label={`Move ${label} toward the tip`} title="Move toward the tip" disabled={last}
-            onClick={() => updateArm((x) => moveJoint(x, j.id, 1))}>▼</button>
-          <button type="button" className="icon-btn icon-btn-danger" aria-label={`Remove ${label}`} title="Remove this joint" disabled={!canRemove}
-            onClick={() => setConfirming(true)}>✕</button>
-        </div>
-      </div>
+    <div className="joint-fields">
+      {presetNote && <p className="section-note">{presetNote}</p>}
+      <NumberField label="Joint mass" quantity="mass" value={j.mass_g} onChange={(v) => patch({ mass_g: v ?? 0 })}
+        defaultValue={dflt?.mass_g} error={err(`Joint mass ${i + 1} `)} help={HELP.jointMass} step={10} />
+      <NumberField label={last ? 'Tool length, joint to tip' : i === 0 && j.motion === 'yaw' ? 'Height from turntable to the next joint axis' : 'Link length to the next joint'} quantity="length" value={j.length_mm}
+        onChange={(v) => patch({ length_mm: v ?? 0 })} defaultValue={dflt?.length_mm} error={err(`Bar length ${i + 1} `)}
+        help={last ? HELP.toolLength : i === 0 && j.motion === 'yaw' ? HELP.baseColumnLength : HELP.barLength} step={5} />
+      <NumberField label={last ? 'Tool mass' : i === 0 && j.motion === 'yaw' ? 'Turntable / bracket mass' : 'Link mass'} quantity="mass" value={j.linkMass_g}
+        onChange={(v) => patch({ linkMass_g: v ?? 0 })} defaultValue={dflt?.linkMass_g} error={err(`Bar mass ${i + 1} `)}
+        help={last ? HELP.toolMass : i === 0 && j.motion === 'yaw' ? HELP.baseColumnMass : HELP.barMass} step={5} />
+      <NumberField label="Acceleration" symbol="α" unit="rad/s²" value={j.alpha} onChange={(v) => patch({ alpha: v ?? 0 })}
+        defaultValue={dflt?.alpha} error={err(`Angular acceleration ${i + 1} `)} help={HELP.alpha} step={0.5} />
+      <NumberField label="Link offset from output bearing (along axis)" quantity="length" value={j.linkOffset_mm}
+        onChange={(v) => patch({ linkOffset_mm: v ?? 0 })} defaultValue={dflt?.linkOffset_mm} error={err(`Link offset J${i + 1} `)} help={HELP.linkOffset} step={1}
+        note={j.motion === 'roll' ? 'Not used by a roll joint (its tilt comes from the geometry).' : undefined} />
+      <PoseAngle joint={j} index={i} />
+      <Advanced label="Manual torques" defaultOpen={j.override.Treq != null || j.override.Tdes != null}>
+        <p className="section-note">Manual torques replace the model for this joint everywhere. Leave empty to use the model.</p>
+        <NumberField label="Manual T_req" quantity="torque" value={j.override.Treq} nullable
+          placeholder={armOk && load ? u.f('torque', load.TreqModel, { fixed: true }) : 'model'}
+          onChange={(v) => patch({ override: { ...j.override, Treq: v } })} defaultValue={null} error={err(`Manual T_req for J${i + 1}`)} help={HELP.ovTreq} step={0.1} />
+        <NumberField label="Manual T_des" quantity="torque" value={j.override.Tdes} nullable placeholder="auto"
+          onChange={(v) => patch({ override: { ...j.override, Tdes: v } })} defaultValue={null} error={err(`Manual T_des for J${i + 1}`)} help={HELP.ovTdes} step={0.1} />
+      </Advanced>
+    </div>
+  );
+}
 
-      {confirming && (
-        <div className="jcard-confirm" role="alertdialog" aria-label={`Remove ${label}?`}>
-          <p>
-            Remove <strong>{label}</strong>?
-            {j.drive === 'cycloidal' && ' Its gearbox inputs and Design Advisor settings are deleted too.'}
-            {' '}The link after it goes with it, so the previous joint then connects to the next one.
-          </p>
-          <div className="jcard-confirm-btns">
-            <Button size="sm" variant="danger" onClick={() => { setConfirming(false); updateArm((x) => removeJoint(x, j.id)); }}>Remove {label.split(' ')[0]}</Button>
-            <Button size="sm" variant="secondary" onClick={() => setConfirming(false)} autoFocus>Keep it</Button>
-          </div>
-        </div>
-      )}
-
-      {open && (
-        <div className="jcard-body">
-          <div className="row row-stacked">
-            <div className="row-label">
-              <label className="row-name" htmlFor={`jn-${j.id}`}>Name</label>
-              <InfoTip help={HELP.jointName} label="Joint name" />
-            </div>
-            <div className="row-control">
-              <input
-                id={`jn-${j.id}`} ref={nameRef} className="text-input" type="text" value={j.name} maxLength={40} autoComplete="off" spellCheck={false}
-                placeholder={MOTION_LABEL[j.motion].toLowerCase()} onChange={(e) => patch({ name: e.target.value })}
-              />
-              <span className="name-pre mono" aria-hidden="true">shown as {label}</span>
-            </div>
-          </div>
-          <div className="row row-stacked">
-            <div className="row-label"><span className="row-name">Motion</span><InfoTip help={HELP.jointMotion} label="Motion type" /></div>
-            <div className="row-control">
-              <Segmented<MotionType> value={j.motion} onChange={(m) => updateArm((x) => setMotion(x, j.id, m))} label={`Motion type of ${label}`} size="sm" fullWidth options={MOTION_OPTIONS} />
-            </div>
-          </div>
-          <div className="row row-stacked">
-            <div className="row-label"><span className="row-name">Drive</span><InfoTip help={HELP.jointDrive} label="Drive" /></div>
-            <div className="row-control">
-              <Segmented<DriveType> value={j.drive} onChange={(d) => patch({ drive: d })} label={`Drive of ${label}`} size="sm" fullWidth options={DRIVE_OPTIONS} />
-            </div>
-          </div>
-          {presetNote && <p className="section-note">{presetNote}</p>}
-          <NumberField label="Joint mass" quantity="mass" value={j.mass_g} onChange={(v) => patch({ mass_g: v ?? 0 })}
-            defaultValue={dMotion?.mass_g} error={err(`Joint mass ${i + 1} `)} help={HELP.jointMass} step={10} />
-          <NumberField label={last ? 'Tool length, joint to tip' : i === 0 && j.motion === 'yaw' ? 'Height from turntable to the next joint axis' : 'Link length to the next joint'} quantity="length" value={j.length_mm}
-            onChange={(v) => patch({ length_mm: v ?? 0 })} defaultValue={dMotion?.length_mm} error={err(`Bar length ${i + 1} `)}
-            help={last ? HELP.toolLength : i === 0 && j.motion === 'yaw' ? HELP.baseColumnLength : HELP.barLength} step={5} />
-          <NumberField label={last ? 'Tool mass' : i === 0 && j.motion === 'yaw' ? 'Turntable / bracket mass' : 'Link mass'} quantity="mass" value={j.linkMass_g}
-            onChange={(v) => patch({ linkMass_g: v ?? 0 })} defaultValue={dMotion?.linkMass_g} error={err(`Bar mass ${i + 1} `)}
-            help={last ? HELP.toolMass : i === 0 && j.motion === 'yaw' ? HELP.baseColumnMass : HELP.barMass} step={5} />
-          <MotorFields joint={j} load={load} armOk={armOk} />
-          <Advanced label="Advanced: acceleration, bearing offset, manual torques" defaultOpen={j.override.Treq != null || j.override.Tdes != null}>
-            <NumberField label="Acceleration" symbol="α" unit="rad/s²" value={j.alpha} onChange={(v) => patch({ alpha: v ?? 0 })}
-              defaultValue={dflt?.alpha} error={err(`Angular acceleration ${i + 1} `)} help={HELP.alpha} step={0.5} />
-            <NumberField label="Link offset from output bearing (along axis)" quantity="length" value={j.linkOffset_mm}
-              onChange={(v) => patch({ linkOffset_mm: v ?? 0 })} defaultValue={dflt?.linkOffset_mm} error={err(`Link offset J${i + 1} `)} help={HELP.linkOffset} step={1}
-              note={j.motion === 'roll' ? 'Not used by a roll joint (its tilt comes from the geometry).' : undefined} />
-            <p className="section-note">Manual torques replace the model for this joint everywhere. Leave empty to use the model.</p>
-            <NumberField label="Manual T_req" quantity="torque" value={j.override.Treq} nullable
-              placeholder={armOk && load ? u.f('torque', load.TreqModel, { fixed: true }) : 'model'}
-              onChange={(v) => patch({ override: { ...j.override, Treq: v } })} defaultValue={null} error={err(`Manual T_req for J${i + 1}`)} help={HELP.ovTreq} step={0.1} />
-            <NumberField label="Manual T_des" quantity="torque" value={j.override.Tdes} nullable placeholder="auto"
-              onChange={(v) => patch({ override: { ...j.override, Tdes: v } })} defaultValue={null} error={err(`Manual T_des for J${i + 1}`)} help={HELP.ovTdes} step={0.1} />
-          </Advanced>
-        </div>
-      )}
-    </li>
+/** The joint's angle in the 3D view and its limits (display only: the torques always use the worst case). */
+function PoseAngle({ joint: j, index: i }: { joint: ArmJoint; index: number }) {
+  const live = usePoseLiveOptional();
+  const { updateArm } = useStore();
+  const uid = useId().replace(/:/g, '');
+  if (!live) return null;
+  return (
+    <div className="pose-angle">
+      <h4 className="subgroup-h">Pose (3D view only)</h4>
+      <JointSlider joint={j} index={i} uid={uid} angle={live.angles[i] ?? 0} atStop={live.stop?.i === i ? live.stop.side : null} label="Pose angle"
+        onAngle={(d) => { live.setPlaying(false); live.setOne(i, d); }}
+        onLimits={(lim) => updateArm((x) => patchJoint(x, j.id, { limits: lim }))} />
+      <p className="section-note">Moves this joint in the 3D view. The torques and every check keep using the worst case (arm straight out).</p>
+    </div>
   );
 }
 
@@ -258,7 +188,7 @@ function JointCard({ arm, joint: j, index: i, load, armOk, err, focusMe, onFocus
 // Results
 // ---------------------------------------------------------------------------
 
-function TorqueTable({ armInputs, arm, errors }: { armInputs: ArmInputs; arm: ArmResult; errors: string[] }) {
+export function TorqueTable({ armInputs, arm, errors, onSelect }: { armInputs: ArmInputs; arm: ArmResult; errors: string[]; onSelect?: (id: string) => void }) {
   const { u, state } = useStore();
   const ok = arm.valid;
   // motor columns appear once any joint has motor data (the torques used are the arm model's, as listed in this table)
@@ -304,7 +234,9 @@ function TorqueTable({ armInputs, arm, errors }: { armInputs: ArmInputs; arm: Ar
             return (
               <tr key={j.joint} className={servo ? 'is-servo' : undefined}>
                 <th scope="row" data-label="Joint">
-                  <JointTag joint={joint ?? j} index={i} />
+                  <JointTag joint={joint ?? j} index={i}>
+                    {onSelect ? <button type="button" className="linkish strong" onClick={() => onSelect(j.joint)} title="Open this joint in the inspector">J{i + 1}</button> : undefined}
+                  </JointTag>
                 </th>
                 <td className="num" data-label="Gravity torque about axis">{ok ? T(j.TstaticModel) : DASH}{ok && <Cu>{nm}</Cu>}</td>
                 <td className="num" data-label="Dynamic">{ok ? T(j.TdynModel) : DASH}{ok && <Cu>{nm}</Cu>}</td>
@@ -332,7 +264,7 @@ function TorqueTable({ armInputs, arm, errors }: { armInputs: ArmInputs; arm: Ar
         </tbody>
       </ResponsiveTable>
       {!anyMotor && (
-        <p className="card-foot muted small">Add a motor to a joint (open its card, Motor section) to see the gear ratio it needs and the torque margin here.</p>
+        <p className="card-foot muted small">Add a motor to a joint (select it, Motor & ratio section) to see the gear ratio it needs and the torque margin here.</p>
       )}
       <p className="card-foot muted small">
         {ok
@@ -387,32 +319,51 @@ function MotorCells({ info, servo, hasMotor }: { info: ReturnType<typeof analyze
   );
 }
 
-function ServoCards({ armInputs, arm }: { armInputs: ArmInputs; arm: ArmResult }) {
-  const { u } = useStore();
+/** One joint's worst-case torques and output-bearing loads from the arm model (the Loads section). */
+export function JointArmLoads({ index: i }: { index: number }) {
+  const { arm, u } = useStore();
+  const l = arm.joints[i];
+  if (!arm.valid || !l) return <p className="muted small">{DASH} waiting for valid arm inputs</p>;
   const T = (x: number) => u.fu('torque', x, { fixed: true });
-  const servos = arm.joints.map((j, i) => ({ j, i })).filter((x) => x.j.drive === 'servo');
-  if (servos.length === 0) return null;
+  const F = (x: number) => u.fu('force', x, { fixed: true });
+  const servo = l.drive === 'servo';
+  const rows = [
+    { label: 'Gravity torque about the axis', value: T(l.TstaticModel), note: 'worst case, arm straight out' },
+    { label: 'Dynamic, α·I', value: T(l.TdynModel) },
+    { label: 'Model T_req', value: T(l.TreqModel), note: l.treqOverridden ? `manual ${T(l.Treq)} used` : undefined },
+  ];
+  if (!servo) {
+    if (l.motion !== 'yaw' || l.tiltedYaw) rows.push({ label: 'Output bearing, radial', value: F(l.bearingRadial_N), note: 'outboard weight' });
+    if (l.motion === 'yaw') rows.push({ label: 'Output bearing, axial thrust', value: F(l.bearingAxial_N), note: 'outboard weight' });
+    rows.push({ label: l.motion === 'yaw' ? 'Overturning moment' : 'Bearing tilting moment', value: T(l.bearingTiltMoment_Nm), note: 'information, not checked' });
+  }
+  return <DataTable columns={1} rows={rows} />;
+}
+
+/** A servo joint's requirement: T_req / T_des, static + dynamic, and its entered ratings checked against them. */
+export function ServoRequirement({ index: i }: { index: number }) {
+  const { state, arm, u } = useStore();
+  const T = (x: number) => u.fu('torque', x, { fixed: true });
+  const j = arm.joints[i];
+  const joint = state.arm.joints[i];
+  if (!j) return null;
   return (
-    <>
-      {servos.map(({ j, i }) => (
-        <Card key={j.joint} title={`${jointLabel(armInputs.joints[i] ?? j, i)} servo requirement`}>
-          <p className="card-sub">Direct drive: no gearbox check, just size the servo.</p>
-          {arm.valid ? (
-            <>
-              <dl className="dtable dtable-1">
-                <div className="dtable-row"><dt>Continuous torque, T_req</dt><dd><span>{T(j.Treq)}</span></dd></div>
-                <div className="dtable-row"><dt>Peak torque with service factor, T_des</dt><dd><span>{T(j.Tdes)}</span></dd></div>
-                <div className="dtable-row"><dt>Static + dynamic</dt><dd><span>{T(j.TstaticModel)} + {T(j.TdynModel)}</span></dd></div>
-              </dl>
-              <p className="muted small">Pick a servo rated for at least T_req continuous whose stall torque covers T_des.</p>
-              <ServoCheck joint={armInputs.joints[i]} Treq={j.Treq} Tdes={j.Tdes} />
-            </>
-          ) : (
-            <p className="muted">{DASH} waiting for valid arm inputs</p>
-          )}
-        </Card>
-      ))}
-    </>
+    <Card title={`${jointLabel(joint ?? j, i)} servo requirement`}>
+      <p className="card-sub">Direct drive: no gearbox check, just size the servo.</p>
+      {arm.valid ? (
+        <>
+          <dl className="dtable dtable-1">
+            <div className="dtable-row"><dt>Continuous torque, T_req</dt><dd><span>{T(j.Treq)}</span></dd></div>
+            <div className="dtable-row"><dt>Peak torque with service factor, T_des</dt><dd><span>{T(j.Tdes)}</span></dd></div>
+            <div className="dtable-row"><dt>Static + dynamic</dt><dd><span>{T(j.TstaticModel)} + {T(j.TdynModel)}</span></dd></div>
+          </dl>
+          <p className="muted small">Pick a servo rated for at least T_req continuous whose stall torque covers T_des.</p>
+          <ServoCheck joint={joint} Treq={j.Treq} Tdes={j.Tdes} />
+        </>
+      ) : (
+        <p className="muted">{DASH} waiting for valid arm inputs</p>
+      )}
+    </Card>
   );
 }
 
@@ -420,9 +371,9 @@ function ServoCards({ armInputs, arm }: { armInputs: ArmInputs; arm: ArmResult }
 function ServoCheck({ joint, Treq, Tdes }: { joint: ArmJoint | undefined; Treq: number; Tdes: number }) {
   const { u } = useStore();
   const info = joint ? analyzeJointMotor(joint, { Treq, Tdes }, null) : null;
-  if (!info) return <p className="muted small">Enter the servo’s torque ratings on its joint card (Servo section) to check them here.</p>;
+  if (!info) return <p className="muted small">Enter the servo’s torque ratings in the Motor & ratio section to check them here.</p>;
   const c = info.check;
-  if (c.status === 'incomplete') return <p className="muted small">Enter the servo’s peak torque on its joint card to check it.</p>;
+  if (c.status === 'incomplete') return <p className="muted small">Enter the servo’s peak torque in the Motor & ratio section to check it.</p>;
   if (c.status === 'invalid') return <p className="small flag-fail">{u.text(c.errors[0] ?? '')}</p>;
   return (
     <div className="servo-check" role="status">

@@ -127,8 +127,13 @@ function MaterialPicker({
 // Main panel
 // ---------------------------------------------------------------------------
 
-export function GearboxInputsPanel({ slot, eff, result }: { slot: Slot; eff: GearboxInputs; result: GearboxResult }) {
-  const { state, arm, updateGearbox, dispatch, setStep, fromArm, u } = useStore();
+/**
+ * The gearbox inputs of a slot. `part` splits it for the workbench inspector: 'loads' is the "Loads from arm model"
+ * switch with T_req / T_des (the joint's Loads section), 'design' is everything else (Gearbox design); Custom has no
+ * Loads section, so its typed torques stay in 'design'. 'all' (default) is the whole panel.
+ */
+export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: Slot; eff: GearboxInputs; result: GearboxResult; part?: 'all' | 'loads' | 'design' }) {
+  const { state, arm, updateGearbox, dispatch, openSection, fromArm, u } = useStore();
   const g = gearboxOf(state, slot);
   const ref = useMemo(() => presetFor(slot, state.presetBase), [slot, state.presetBase]);
   const startedFrom = slot !== CUSTOM && !(JOINT_IDS as readonly string[]).includes(slot) && state.presetBase[slot] ? presetIdFor(slot, state.presetBase) : null;
@@ -160,6 +165,51 @@ export function GearboxInputsPanel({ slot, eff, result }: { slot: Slot; eff: Gea
     : undefined;
 
   const torqueFixed = (x: number) => u.f('torque', x, { fixed: true });
+
+  const loadSwitch = slot !== 'custom' && toggle !== null ? (
+    <div className="switch-block">
+      <Switch
+        checked={toggle}
+        onChange={(val) => dispatch({ type: 'useArm', joint: slot, value: val })}
+        label="Loads from arm model"
+        description={
+          toggle
+            ? fromArmNow
+              ? 'T_req and T_des come from the arm model (masses, lengths and α of the joints).'
+              : 'The arm model has an input error, so the typed torques are used for now.'
+            : 'Off: type T_req and T_des yourself.'
+        }
+      />
+      {toggle && <button type="button" className="linkish" onClick={() => openSection('joint', slot)}>Edit the joint and link</button>}
+    </div>
+  ) : (
+    <p className="section-note">Custom uses the torques you type here.</p>
+  );
+  const torqueFields = (
+    <>
+      <NumberField label="Working torque" symbol="T_req" quantity="torque"
+        value={fromArmNow ? eff.Treq : g.Treq} disabled={fromArmNow}
+        onChange={(x) => set({ Treq: x ?? 0 })} defaultValue={fromArmNow ? undefined : ref.Treq}
+        error={fromArmNow ? null : E('T_req ')} help={HELP.Treq} step={0.1}
+        note={fromArmNow && arm_?.treqOverridden ? 'Manual override in Joint & link' : undefined} />
+      <NumberField label="Design torque" symbol="T_des" quantity="torque"
+        value={fromArmNow ? eff.Tdes : g.Tdes} disabled={fromArmNow}
+        onChange={(x) => set({ Tdes: x ?? 0 })} defaultValue={fromArmNow ? undefined : ref.Tdes}
+        error={fromArmNow ? null : E('T_des ')} warning={fromArmNow ? null : W('T_des ')} help={HELP.Tdes} step={0.1}
+        note={fromArmNow && arm_?.tdesOverridden ? 'Manual override in Joint & link' : undefined} />
+    </>
+  );
+
+  if (part === 'loads') {
+    return (
+      <div className="gb-loads">
+        {loadSwitch}
+        {torqueFields}
+      </div>
+    );
+  }
+  // in the inspector a joint's torques sit in its Loads section; Custom keeps them here
+  const withTorques = part === 'all' || slot === CUSTOM;
 
   return (
     <div className="panel">
@@ -339,36 +389,16 @@ export function GearboxInputsPanel({ slot, eff, result }: { slot: Slot; eff: Gea
         />
       </Section>
 
-      <Section title="Loads and bearing" summary={`T_req ${torqueFixed(eff.Treq)} · T_des ${torqueFixed(eff.Tdes)} ${u.sym('torque')}`}>
-        {slot !== 'custom' && toggle !== null ? (
-          <div className="switch-block">
-            <Switch
-              checked={toggle}
-              onChange={(val) => dispatch({ type: 'useArm', joint: slot, value: val })}
-              label="Loads from arm model"
-              description={
-                toggle
-                  ? fromArmNow
-                    ? 'T_req and T_des come from 01 Arm & Loads.'
-                    : 'The arm model has an input error, so the typed torques are used for now.'
-                  : 'Off: type T_req and T_des yourself.'
-              }
-            />
-            {toggle && <button type="button" className="linkish" onClick={() => setStep(1)}>Edit the arm</button>}
-          </div>
-        ) : (
-          <p className="section-note">Custom uses the torques you type here.</p>
+      <Section title={withTorques ? 'Loads and bearing' : 'Bearing and load factors'}
+        summary={withTorques ? `T_req ${torqueFixed(eff.Treq)} · T_des ${torqueFixed(eff.Tdes)} ${u.sym('torque')}` : g.bearing.name}>
+        {withTorques && loadSwitch}
+        {withTorques && torqueFields}
+        {!withTorques && (
+          <p className="section-note">
+            Checked for T_req {u.fu('torque', eff.Treq, { fixed: true })} and T_des {u.fu('torque', eff.Tdes, { fixed: true })}{' '}
+            <button type="button" className="linkish" onClick={() => openSection('loads', slot)}>(Loads section)</button>.
+          </p>
         )}
-        <NumberField label="Working torque" symbol="T_req" quantity="torque"
-          value={fromArmNow ? eff.Treq : g.Treq} disabled={fromArmNow}
-          onChange={(x) => set({ Treq: x ?? 0 })} defaultValue={fromArmNow ? undefined : ref.Treq}
-          error={fromArmNow ? null : E('T_req ')} help={HELP.Treq} step={0.1}
-          note={fromArmNow && arm_?.treqOverridden ? 'Manual override from the arm page' : undefined} />
-        <NumberField label="Design torque" symbol="T_des" quantity="torque"
-          value={fromArmNow ? eff.Tdes : g.Tdes} disabled={fromArmNow}
-          onChange={(x) => set({ Tdes: x ?? 0 })} defaultValue={fromArmNow ? undefined : ref.Tdes}
-          error={fromArmNow ? null : E('T_des ')} warning={fromArmNow ? null : W('T_des ')} help={HELP.Tdes} step={0.1}
-          note={fromArmNow && arm_?.tdesOverridden ? 'Manual override from the arm page' : undefined} />
         <SelectField
           label="Eccentric bearing"
           value={bearingMatch ? bearingMatch.name : 'custom'}
@@ -405,7 +435,7 @@ export function GearboxInputsPanel({ slot, eff, result }: { slot: Slot; eff: Gea
             onChange={(x) => set({ bearing: { ...g.bearing, C0: x ?? 0 } })}
             defaultValue={ref.bearing.C0} error={E('Bearing C0')} help={HELP.bearingC0} step={10} />
         </Advanced>
-        {arm_ && arm.valid && (
+        {part === 'all' && arm_ && arm.valid && (
           <p className="section-note">
             Output bearing of this joint, from the arm model: {arm_.motion === 'yaw'
               ? `axial thrust ${u.fu('force', arm_.bearingAxial_N, { fixed: true })}${arm_.tiltedYaw ? `, radial load ${u.fu('force', arm_.bearingRadial_N, { fixed: true })}` : ''}, overturning moment`

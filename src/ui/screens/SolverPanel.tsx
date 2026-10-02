@@ -5,13 +5,10 @@ import { fixed } from '../format';
 import { useStore } from '../store';
 import type { Slot } from '../session';
 import { useWidth } from '../viz/useWidth';
+import { solverKey } from '../workbench/solverKey';
 
-/** Everything the solver reads (it sweeps D and e itself, and ignores an Rw override). */
-function solverKey(i: GearboxInputs): string {
-  const { D: _d, e: _e, RwOverride: _r, wall: _w, ...rest } = i;
-  void _d; void _e; void _r; void _w;
-  return JSON.stringify(rest);
-}
+export { solverKey };
+
 
 export function Heat({ res, curD, curK1 }: { res: SolverResult; curD: number; curK1: number }) {
   const { u } = useStore();
@@ -77,12 +74,13 @@ export function Heat({ res, curD, curK1 }: { res: SolverResult; curD: number; cu
 }
 
 export function SolverPanel({ slot, eff, K1 }: { slot: Slot; eff: GearboxInputs; K1: number }) {
-  const { updateGearbox, notify, u } = useStore();
+  const { updateGearbox, notify, u, solverMemo, rememberSolver } = useStore();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [res, setRes] = useState<SolverResult | null>(null);
-  const [key, setKey] = useState('');
-  const [forSlot, setForSlot] = useState<Slot | null>(null);
+  // the last result of this slot lives in the store, so it survives collapsing the section or switching joints
+  const memo = solverMemo[slot] ?? null;
+  const res = memo?.res ?? null;
+  const key = memo?.key ?? '';
   const job = useRef<CalcJob<SolverResult> | null>(null);
 
   useEffect(() => () => { job.current?.cancel(); }, []);
@@ -99,9 +97,7 @@ export function SolverPanel({ slot, eff, K1 }: { slot: Slot; eff: GearboxInputs;
       job.current = null;
       setRunning(false);
       if (r.cancelled) return;
-      setRes(r);
-      setKey(k);
-      setForSlot(slot);
+      rememberSolver(slot, r, k);
     });
   };
   const cancel = () => {
@@ -110,7 +106,7 @@ export function SolverPanel({ slot, eff, K1 }: { slot: Slot; eff: GearboxInputs;
     setRunning(false);
   };
 
-  const stale = res != null && (key !== solverKey(eff) || forSlot !== slot);
+  const stale = res != null && key !== solverKey(eff);
   const canApply = res && !res.noSolution && res.minD != null && res.bestE != null && res.valid;
   const housing = useMemo(() => (res?.minD != null ? res.minD + 2 * eff.rr + 2 * eff.wall : null), [res, eff.rr, eff.wall]);
 

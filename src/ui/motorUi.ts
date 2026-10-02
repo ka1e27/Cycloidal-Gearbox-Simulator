@@ -184,9 +184,9 @@ export function rescaleEForZp(g: { D: number; e: number; Zp: number }, newZp: nu
 
 /** Compact status of a joint's motor for a chip. */
 export function motorChip(info: JointMotorInfo | null): { kind: 'ok' | 'marginal' | 'fail' | 'neutral'; word: string; title: string } {
-  if (!info) return { kind: 'neutral', word: 'NO MOTOR', title: 'No motor data entered for this joint (Arm & Loads).' };
+  if (!info) return { kind: 'neutral', word: 'NO MOTOR', title: 'No motor data entered for this joint (Motor & ratio section).' };
   const c = info.check;
-  if (c.status === 'incomplete') return { kind: 'neutral', word: 'INCOMPLETE', title: 'Enter the motor’s peak torque on Arm & Loads.' };
+  if (c.status === 'incomplete') return { kind: 'neutral', word: 'INCOMPLETE', title: 'Enter the motor’s peak torque in the Motor & ratio section.' };
   if (c.status === 'invalid') return { kind: 'fail', word: 'CHECK INPUT', title: c.errors[0] ?? 'The motor values need fixing.' };
   if (c.status === 'short') return { kind: 'fail', word: 'TOO WEAK', title: c.problems.join(' ') };
   if (c.overload?.exceeds) return { kind: 'marginal', word: 'LIMIT CURRENT', title: c.overload.message };

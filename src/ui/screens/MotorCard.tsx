@@ -1,4 +1,4 @@
-// "Motor & ratio" card of the Gearbox page (CLAUDE.md Addition 8): recommended ratio vs the current one, the torque the
+// "Motor & ratio" card of a cycloidal joint (CLAUDE.md Addition 8): recommended ratio vs the current one, the torque the
 // motor delivers through each, the overload warning, and a one-click "Use recommended ratio".
 import { analyzeJointMotor, type GearboxInputs } from '../../calc';
 import { InfoTip } from '../components/InfoTip';
@@ -10,18 +10,20 @@ import type { AdvisorLockState } from '../advisorLocks';
 import type { Slot } from '../session';
 import { useStore } from '../store';
 
-export function MotorCard({ slot, eff }: { slot: Slot; eff: GearboxInputs }) {
-  const { state, updateGearbox, setStep, notify, runAdvisor, u } = useStore();
+/** `inline`: shown under the motor fields in the inspector, so the "enter / edit motor" links are left out. */
+export function MotorCard({ slot, eff, inline }: { slot: Slot; eff: GearboxInputs; inline?: boolean }) {
+  const { state, updateGearbox, openSection, notify, runAdvisor, u } = useStore();
   const joint = state.arm.joints.find((j) => j.id === slot);
   if (!joint || joint.drive !== 'cycloidal') return null; // Custom has no joint, so no motor
 
   const spec = joint.motor;
   if (!spec) {
+    if (inline) return null;
     return (
       <Card title="Motor & ratio" className="motor-card">
         <div className="motor-empty">
-          <p className="card-sub">Enter this joint{'’'}s motor torque on Arm & Loads to get a recommended gear ratio and a check of the torque it delivers.</p>
-          <Button size="sm" variant="secondary" onClick={() => setStep(1)}>Enter motor</Button>
+          <p className="card-sub">Enter this joint{'’'}s motor torque in its Motor & ratio section to get a recommended gear ratio and a check of the torque it delivers.</p>
+          <Button size="sm" variant="secondary" onClick={() => openSection('motor', slot)}>Enter motor</Button>
         </div>
       </Card>
     );
@@ -62,7 +64,7 @@ export function MotorCard({ slot, eff }: { slot: Slot; eff: GearboxInputs }) {
   const designHere = () => {
     if (recZp == null) return;
     const lockZp = (l: AdvisorLockState): AdvisorLockState => ({ ...l, ratioMotor: false, on: { ...l.on, Zp: true }, values: { ...l.values, Zp: recZp } });
-    setStep(3);
+    openSection('advisor', slot);
     runAdvisor(slot, lockZp);
   };
 
@@ -102,11 +104,11 @@ export function MotorCard({ slot, eff }: { slot: Slot; eff: GearboxInputs }) {
     >
       <div className="mr-head">
         <span className="mr-spec">{u.text(specLine)}</span>
-        <Button size="sm" variant="ghost" onClick={() => setStep(1)}>Edit motor</Button>
+        {!inline && <Button size="sm" variant="ghost" onClick={() => openSection('motor', slot)}>Edit motor</Button>}
       </div>
 
       {rec && (rec.status === 'incomplete' || rec.status === 'invalid') && (
-        <p className="card-sub">{u.text(rec.reasons[0] ?? 'Enter the motor’s max torque on Arm & Loads.')}</p>
+        <p className="card-sub">{u.text(rec.reasons[0] ?? 'Enter the motor’s max torque above.')}</p>
       )}
 
       {rec && (rec.status === 'ok' || rec.status === 'warning') && (

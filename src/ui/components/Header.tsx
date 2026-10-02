@@ -1,17 +1,9 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Icon } from './Icon';
 import { useStore } from '../store';
-import type { Step } from '../session';
 import { IMPERIAL, METRIC, QUANTITIES, UNIT_OPTIONS, systemOf, type Quantity } from '../units';
 
 export const OPEN_ASSUMPTIONS_EVENT = 'cgd-open-assumptions';
-
-const TABS: { step: Step; num: string; short: string; long: string }[] = [
-  { step: 1, num: '01', short: 'Arm', long: 'Arm & Loads' },
-  { step: 2, num: '02', short: 'Gearbox', long: 'Gearbox' },
-  { step: 3, num: '03', short: 'Advisor', long: 'Design Advisor' },
-  { step: 4, num: '04', short: 'Joints', long: 'All Joints' },
-];
 
 const QUANTITY_LABEL: Record<Quantity, string> = { length: 'Length', mass: 'Mass', force: 'Force', torque: 'Torque', stress: 'Stress' };
 
@@ -237,11 +229,11 @@ function MenuButton() {
 }
 
 // ---------------------------------------------------------------------------
-// Title block + tabs
+// Title block
 // ---------------------------------------------------------------------------
 
 export function Header() {
-  const { state, dispatch, setStep, resolvedTheme } = useStore();
+  const { dispatch, resolvedTheme } = useStore();
   const dark = resolvedTheme === 'dark';
   return (
     <header className="app-header">
@@ -269,23 +261,6 @@ export function Header() {
           </div>
         </div>
       </div>
-      <nav className="tabs" aria-label="Design steps">
-        <div className="tabs-inner">
-          {TABS.map((t) => (
-            <button
-              key={t.step}
-              type="button"
-              className={`tab${state.step === t.step ? ' is-current' : ''}`}
-              aria-current={state.step === t.step ? 'step' : undefined}
-              onClick={() => setStep(t.step)}
-            >
-              <span className="tab-num" aria-hidden="true">{t.num}</span>
-              <span className="tab-short">{t.short}</span>
-              <span className="tab-long">{t.long}</span>
-            </button>
-          ))}
-        </div>
-      </nav>
     </header>
   );
 }

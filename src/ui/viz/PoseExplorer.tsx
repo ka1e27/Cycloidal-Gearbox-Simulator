@@ -1,23 +1,24 @@
-// Pose explorer (CLAUDE.md Addition 9): a movable 3D arm in an orthographic SVG with the static gravity load at the
-// chosen pose. Display only: every gearbox check keeps using the worst case (arm straight out).
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode } from 'react';
+// Pose explorer (CLAUDE.md Additions 9 and 10): a movable 3D arm in an orthographic SVG with the static gravity load at the
+// chosen pose, filling the workbench stage. Display only: every gearbox check keeps using the worst case (arm straight out).
+// The live angles, camera and toggles come from the workbench's PoseLiveProvider (shared with the inspector's slider).
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode } from 'react';
 import {
-  MOTION_LABEL, clampAngle, clampPose, computePose, hasLimits, jointLabel, jointLimits, lerpAngle, posePreset, randomPose,
-  validateJointLimits,
-  type ArmInputs, type ArmJoint, type ArmResult, type PosePresetName, type PoseResult, type PoseStatus,
+  computePose, clampPose, hasLimits, jointLabel, jointLimits, posePreset,
+  type ArmInputs, type ArmResult, type PosePresetName, type PoseResult, type PoseStatus,
 } from '../../calc';
-import { Button, Card, Cu, Notice, ResponsiveTable, Segmented, Switch } from '../components/primitives';
+import { Button, Cu, Notice, ResponsiveTable, Segmented } from '../components/primitives';
+import { InfoTip } from '../components/InfoTip';
 import { JointTag } from '../components/JointTag';
 import { DASH } from '../format';
 import { useStore } from '../store';
-import { normalizePoseView, type PoseViewState } from '../session';
 import { patchJoint } from '../armEdit';
+import { PRESET_LABEL, usePoseLive } from '../workbench/poseLive';
 import { forceColor, forceStops } from './colors';
 import { type Box } from './armLayout';
+import { JointSlider } from './JointSlider';
 import { LABEL_CHAR_W, LABEL_H, placePoseLabels, type PoseLabelReq } from './poseLabels';
-import { useWidth } from './useWidth';
 import {
-  NO_ZOOM, VIEW_PRESETS, ZOOM_MAX, ZOOM_MIN, add, applyZoomPan, basis, boxOf, clampCamera, cylinder, dot, frameFromBox, knobDir, len,
+  NO_ZOOM, VIEW_PRESETS, ZOOM_MAX, ZOOM_MIN, add, applyZoomPan, basis, boxOf, cylinder, dot, frameFromBox, knobDir, len,
   perpRef, planeAngle, project, projectDir, ringPoints, scl, sub, unionBox, unit, viewNameOf, zoomAbout,
   type Box2, type Camera, type Cyl, type Ellipse, type Frame, type V3, type ViewName, type ZoomPan,
 } from './view3d';
@@ -27,175 +28,120 @@ const LINK_W = 9;
 const SEG_PX = 16; // links are cut into pieces about this long on screen, each depth-sorted on its own
 const FILL_OV = 0.75; // px each piece's colour fill runs past its ends
 const EDGE_OV = 0.4; // px each piece's outline runs past its ends (less than the fill)
-const SEG_S = 2.6; // sweep: seconds per preset (2.0 s move + 0.6 s hold)
-const MOVE_S = 2.0;
-const SWEEP_KEYS: PosePresetName[] = ['ready', 'straight', 'folded', 'reachUp'];
-const PRESET_LABEL: Record<PosePresetName | 'random', string> = {
-  ready: 'Ready', straight: 'Straight out (worst case)', folded: 'Folded', reachUp: 'Reach up', random: 'Random',
-};
-const PRESET_BUTTONS: { key: PosePresetName | 'random'; title: string }[] = [
-  { key: 'ready', title: 'Upper arm up, forearm out (the drawing’s ready pose)' },
-  { key: 'straight', title: 'Every angle 0: the pose all torques are computed for' },
-  { key: 'folded', title: 'Tucked in' },
-  { key: 'reachUp', title: 'Everything from the first pitch joint points up' },
-  { key: 'random', title: 'A random pose inside the joint limits' },
+const CLICK_PX = 4; // a press on a joint that moves less than this is a click (select), not a drag (rotate)
+const PRESET_BUTTONS: { key: PosePresetName | 'random'; title: string; short: string }[] = [
+  { key: 'ready', title: 'Upper arm up, forearm out (the drawing’s ready pose)', short: 'Ready' },
+  { key: 'straight', title: 'Every angle 0: the pose all torques are computed for', short: 'Straight' },
+  { key: 'folded', title: 'Tucked in', short: 'Folded' },
+  { key: 'reachUp', title: 'Everything from the first pitch joint points up', short: 'Reach up' },
+  { key: 'random', title: 'A random pose inside the joint limits', short: 'Random' },
 ];
 const VIEW_OPTIONS: { value: ViewName | 'custom'; label: string; title: string }[] = [
-  { value: 'side', label: 'Side', title: 'Looking along the pitch axes (like the drawing above)' },
+  { value: 'side', label: 'Side', title: 'Looking along the pitch axes (like the schematic)' },
   { value: 'front', label: 'Front', title: 'Looking back along the arm' },
   { value: 'top', label: 'Top', title: 'Looking down' },
   { value: 'iso', label: 'Iso', title: 'Three-quarter view' },
 ];
-const smooth = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 const pct = (u: number | null) => (u == null ? DASH : `${Math.round(u * 100)}%`);
 const STATUS_TEXT: Record<PoseStatus, string> = { ok: 'OK', marginal: 'MARGINAL', fail: 'OVER', none: 'N/A' };
 const STATUS_CLASS: Record<PoseStatus, string> = { ok: 'ok', marginal: 'marginal', fail: 'fail', none: 'neutral' };
-const fmtDeg = (x: number) => `${Math.round(x * 10) / 10}°`;
-const listJoints = (idx: number[]) => idx.map((i) => `J${i + 1}`).join(', ');
 
-export function usePrefersReducedMotion(): boolean {
-  const [r, setR] = useState(false);
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const m = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const on = () => setR(!!m.matches);
-    on();
-    m.addEventListener?.('change', on);
-    return () => m.removeEventListener?.('change', on);
-  }, []);
-  return r;
-}
+export { usePrefersReducedMotion } from '../workbench/poseLive';
+
+const HOW_TO = {
+  what: 'Click a joint (or the link after it) to select it; drag it to turn it. Drag the background to orbit, Shift-drag or middle-drag to pan, and scroll or pinch to zoom.',
+  typical: 'Shift while dragging a joint snaps to 15°. A dashed ring means the joint is at a limit.',
+};
 
 type DragKind = 'orbit' | 'joint' | 'pan' | 'pinch';
 type Drag =
   | { kind: 'orbit'; x: number; y: number; cam: Camera; id: number }
   | { kind: 'pan'; x: number; y: number; zp: ZoomPan; id: number }
   | { kind: 'pinch'; d0: number; mx: number; my: number; zp: ZoomPan }
-  | { kind: 'joint'; i: number; jid: string; method: 'plane' | 'knob'; prevPhi: number | null; x: number; y: number; acc: number; id: number };
+  | { kind: 'joint'; i: number; jid: string; method: 'plane' | 'knob'; prevPhi: number | null; x: number; y: number; x0: number; y0: number; moved: boolean; acc: number; id: number };
 
-/** The Pose Explorer card. */
-export function PoseExplorer() {
-  const { state, arm: armRes, dispatch } = useStore();
-  const a = state.arm;
-  return (
-    <Card title="Pose explorer" className="pose-card"
-      subtitle="Move the arm and see the static gravity load at that pose. Drag a joint (or the link after it) to turn it, drag the background to orbit, or use the sliders.">
-      {armRes.valid && a.joints.length > 0
-        ? <PoseExplorerBody arm={a} res={armRes} stored={state.poseView} onSave={(v) => dispatch({ type: 'poseView', value: v })} />
-        : <Notice kind="info" title="Waiting for valid arm inputs">Fix the arm inputs above to move the arm and see the load at each pose.</Notice>}
-    </Card>
-  );
+/** Width and height of an element (the stage figure fills its box). */
+function useSize<T extends HTMLElement>(initial: { w: number; h: number }): [React.RefObject<T | null>, { w: number; h: number }] {
+  const ref = useRef<T | null>(null);
+  const [size, setSize] = useState(initial);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const read = () => {
+      const r = el.getBoundingClientRect();
+      const w = Math.max(160, Math.floor(r.width));
+      const h = Math.max(200, Math.floor(r.height));
+      setSize((s) => (s.w === w && s.h === h ? s : { w, h }));
+    };
+    read();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', read);
+      return () => window.removeEventListener('resize', read);
+    }
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, size];
 }
 
-function PoseExplorerBody({ arm, res, stored, onSave }: { arm: ArmInputs; res: ArmResult; stored: PoseViewState; onSave: (v: PoseViewState) => void }) {
-  const { resolvedTheme, updateArm } = useStore();
+/**
+ * The 3D arm filling the stage, with compact overlays: view, zoom and Fit at the top right; presets, Sweep, weights and
+ * the "All angles" popover at the bottom; the pose-loads table in a drawer under the view (closed by default).
+ */
+export function PoseStage({ selectedId, onSelectJoint, anglesOpen = false }: {
+  /** Joint highlighted in the view (the workbench selection) */
+  selectedId?: string | null;
+  /** A joint was clicked (not dragged) in the view */
+  onSelectJoint?: (id: string) => void;
+  /** Start with the "All angles" popover open */
+  anglesOpen?: boolean;
+}) {
+  const { state, arm: armRes } = useStore();
+  const a = state.arm;
+  if (!armRes.valid || a.joints.length === 0) {
+    return (
+      <div className="pz-stage pz-stage-empty">
+        <Notice kind="info" title="Waiting for valid arm inputs">Fix the arm inputs (the Arm item or the joint named in the error) to move the arm and see the load at each pose.</Notice>
+      </div>
+    );
+  }
+  return <PoseStageBody arm={a} res={armRes} selectedId={selectedId ?? null} onSelectJoint={onSelectJoint} anglesOpen={anglesOpen} />;
+}
+
+function PoseStageBody({ arm, res, selectedId, onSelectJoint, anglesOpen }: {
+  arm: ArmInputs; res: ArmResult; selectedId: string | null; onSelectJoint?: (id: string) => void; anglesOpen: boolean;
+}) {
+  const { resolvedTheme, state, patchWb, updateArm } = useStore();
+  const live = usePoseLive();
+  const { angles, cam, setCam, zp, setZp, weights, setWeights, playing, setPlaying, stop, setStop, note, setNote, reduced, setOne, applyPreset } = live;
   const joints = arm.joints;
   const uid = useId().replace(/:/g, '');
-  const reduced = usePrefersReducedMotion();
-
-  // ---- local display state (persisted to the session, debounced) ----
-  const init = useMemo(() => normalizePoseView(stored), []); // eslint-disable-line react-hooks/exhaustive-deps
-  const [angleMap, setAngleMap] = useState<Record<string, number>>(init.angles);
-  const [cam, setCam] = useState<Camera>(clampCamera({ az: init.az, el: init.el }));
-  const [zp, setZp] = useState<ZoomPan>({ zoom: init.zoom, px: init.px, py: init.py });
-  const [weights, setWeights] = useState(init.weights);
-  const [playing, setPlaying] = useState(false);
   const [dragging, setDragging] = useState<DragKind | null>(null);
-  const [stop, setStop] = useState<{ i: number; side: 'min' | 'max' } | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const lastSaved = useRef<PoseViewState>(stored);
+  const [showAngles, setShowAngles] = useState(anglesOpen);
+  const drawer = state.wb.drawer;
 
-  // the store changed under us (reset, import): take its state
-  useEffect(() => {
-    if (stored === lastSaved.current) return;
-    lastSaved.current = stored;
-    const v = normalizePoseView(stored);
-    setAngleMap(v.angles);
-    setCam(clampCamera({ az: v.az, el: v.el }));
-    setWeights(v.weights);
-    setZp({ zoom: v.zoom, px: v.px, py: v.py });
-  }, [stored]);
-  useEffect(() => {
-    if (playing) return;
-    const t = window.setTimeout(() => {
-      const v: PoseViewState = { angles: angleMap, az: cam.az, el: cam.el, weights, zoom: zp.zoom, px: zp.px, py: zp.py };
-      lastSaved.current = v;
-      onSave(v);
-    }, 400);
-    return () => window.clearTimeout(t);
-  }, [angleMap, cam, weights, zp, playing]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const ready = useMemo(() => posePreset(joints, 'ready'), [joints]);
-  // what is shown is always inside the joint limits (a limit tightened after the angle was set clamps it)
-  const angles = joints.map((j, i) => {
-    const v = angleMap[j.id];
-    return clampAngle(j, typeof v === 'number' && Number.isFinite(v) ? v : ready[i]);
-  });
-  const anglesRef = useRef(angles);
-  anglesRef.current = angles;
-
-  const setAll = useCallback((list: number[]) => {
-    const c = clampPose(joints, list);
-    const m: Record<string, number> = {};
-    joints.forEach((j, i) => { m[j.id] = c.angles[i]; });
-    setAngleMap(m);
-    return c.clamped;
-  }, [joints]);
-  const setOne = useCallback((i: number, deg: number) => {
-    const j = joints[i];
-    if (!j) return;
-    setAngleMap((p) => ({ ...p, [j.id]: clampAngle(j, deg) }));
-  }, [joints]);
-
-  const applyPreset = (key: PosePresetName | 'random') => {
-    setPlaying(false);
-    if (key === 'random') { setAll(randomPose(joints)); setNote(null); return; }
-    const clamped = setAll(posePreset(joints, key));
-    setNote(clamped.length ? `${PRESET_LABEL[key]} was clamped to the joint limits at ${listJoints(clamped)}.` : null);
-  };
-
-  // ---- sweep ----
-  const sweepRef = useRef({ joints, setAll });
-  sweepRef.current = { joints, setAll };
-  useEffect(() => {
-    if (!playing) return;
-    const { joints: js, setAll: set } = sweepRef.current;
-    const keys = SWEEP_KEYS.map((k) => clampPose(js, posePreset(js, k)).angles);
-    setNote(null);
-    if (reduced) {
-      // reduced motion: no tweening, step through the presets
-      let s = 0;
-      set(keys[0]);
-      const h = window.setInterval(() => { s = (s + 1) % keys.length; set(keys[s]); }, SEG_S * 1000);
-      return () => window.clearInterval(h);
-    }
-    const start = anglesRef.current.slice();
-    const cycle = SEG_S * keys.length;
-    let raf = 0;
-    const t0 = performance.now();
-    const tick = (now: number) => {
-      const t = Math.max(0, (now - t0) / 1000); // a frame timestamp can precede t0
-      const s = Math.floor(t / SEG_S) % keys.length;
-      const f = smooth((t % SEG_S) / MOVE_S);
-      const A = keys[s];
-      const B = keys[(s + 1) % keys.length];
-      const blend = smooth(t / 0.7);
-      const out = js.map((j, i) => {
-        let v = A[i] + (B[i] - A[i]) * f;
-        if (j.motion === 'yaw') v += 55 * Math.sin((2 * Math.PI * t) / cycle);
-        if (j.motion === 'roll') v += 90 * Math.sin((2 * Math.PI * t) / (cycle / 2));
-        return blend < 1 ? (hasLimits(j) ? start[i] + (v - start[i]) * blend : lerpAngle(start[i], v, blend)) : v;
-      });
-      set(out); // clamped to the limits
-      raf = requestAnimationFrame(tick);
+  const pose = useMemo(() => computePose(arm, angles, res), [arm, res, angles]);
+  const [figRef, size] = useSize<HTMLDivElement>({ w: 720, h: 520 });
+  const W = size.w;
+  const H = size.h;
+  // room kept for the overlay controls, measured (they wrap to more rows on a narrow stage)
+  const trRef = useRef<HTMLDivElement>(null);
+  const blRef = useRef<HTMLDivElement>(null);
+  const [insets, setInsets] = useState({ top: 48, bottom: 46 });
+  useLayoutEffect(() => {
+    const read = () => {
+      const top = (trRef.current?.offsetHeight ?? 32) + 16;
+      const bottom = (blRef.current?.offsetHeight ?? 30) + 16;
+      setInsets((v) => (v.top === top && v.bottom === bottom ? v : { top, bottom }));
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [playing, reduced]);
-
-  const pose = useMemo(() => computePose(arm, angles, res), [arm, res, angles.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [figRef, W] = useWidth<HTMLDivElement>(640);
-  const H = Math.round(Math.max(280, Math.min(560, W < 520 ? W * 0.95 : W * 0.72)));
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(read);
+    if (trRef.current) ro.observe(trRef.current);
+    if (blRef.current) ro.observe(blRef.current);
+    return () => ro.disconnect();
+  }, []);
   // the arm's on-screen bounds at the current pose, written by the drawing on every render
   const armBox = useRef<{ x1: number; x2: number; y1: number; y2: number } | null>(null);
   /** +/- zoom about the arm's on-screen centre (the view centre when the arm is off-screen), so it never drifts out. */
@@ -206,143 +152,132 @@ function PoseExplorerBody({ arm, res, stored, onSave }: { arm: ArmInputs; res: A
     const on = bx && cx >= 0 && cx <= W && cy >= 0 && cy <= H;
     return zoomAbout(z, k, on ? cx : W / 2, on ? cy : H / 2, W, H);
   });
-  /** Fit: frame the arm's current-pose bounds with a margin (room for the labels). */
+  /** Fit: frame the arm's current-pose bounds with a margin (room for the labels and the overlays). */
   const fit = () => setZp((z) => {
     const bx = armBox.current;
     if (!bx) return NO_ZOOM;
-    const m = Math.min(70, Math.max(30, W * 0.08));
+    const m = Math.min(90, Math.max(40, W * 0.08));
     const bw = Math.max(bx.x2 - bx.x1, 24);
     const bh = Math.max(bx.y2 - bx.y1, 24);
-    const k = Math.min((W - 2 * m) / bw, (H - 2 * m) / bh);
+    const availH = Math.max(80, H - insets.top - insets.bottom);
+    const k = Math.min((W - 2 * m) / bw, (availH - 2 * m) / bh);
     const cx = (bx.x1 + bx.x2) / 2;
     const cy = (bx.y1 + bx.y2) / 2;
     const z1 = zoomAbout(z, k, cx, cy, W, H);
-    // the box centre stays put under zoomAbout; then move it to the view centre
-    return { ...z1, px: z1.px + (W / 2 - cx), py: z1.py + (H / 2 - cy) };
+    // the box centre stays put under zoomAbout; then move it to the centre of the area between the overlays
+    return { ...z1, px: z1.px + (W / 2 - cx), py: z1.py + (insets.top + availH / 2 - cy) };
   });
 
+  const worst = pose.worstJoint;
+  const worstText = worst >= 0 ? `J${worst + 1} ${pct(pose.joints[worst]?.util ?? null)} of T_des` : 'no load';
+  const selIndex = selectedId ? joints.findIndex((j) => j.id === selectedId) : -1;
+  const drawerId = `${uid}-drawer`;
+  const anglesId = `${uid}-angles`;
+
+  // Escape closes the angles popover
+  useEffect(() => {
+    if (!showAngles) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowAngles(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showAngles]);
+
   return (
-    <div className="pz">
-      <div className="pz-main">
-        <div className="pz-figwrap" ref={figRef}>
-          <div className="pz-tools">
-            <Segmented<ViewName | 'custom'> value={viewNameOf(cam) ?? 'custom'} onChange={(v) => { if (v !== 'custom') setCam({ ...VIEW_PRESETS[v] }); }}
-              label="Camera view" size="sm" options={VIEW_OPTIONS} />
-            <div className="pz-zoom" role="group" aria-label="Zoom">
-              <button type="button" className="icon-btn pz-zbtn" onClick={() => zoomBy(1 / 1.25)} disabled={zp.zoom <= ZOOM_MIN + 1e-9} aria-label="Zoom out" title="Zoom out">−</button>
-              <span className="pz-zval mono" aria-live="off">{Math.round(zp.zoom * 100)}%</span>
-              <button type="button" className="icon-btn pz-zbtn" onClick={() => zoomBy(1.25)} disabled={zp.zoom >= ZOOM_MAX - 1e-9} aria-label="Zoom in" title="Zoom in">+</button>
-              <Button size="sm" variant="ghost" onClick={fit} title="Frame the arm at its current pose">Fit</Button>
-              <Button size="sm" variant="ghost" icon="reset" onClick={() => { setCam({ ...VIEW_PRESETS.side }); setZp(NO_ZOOM); }} title="Side view, zoom and pan reset">Reset view</Button>
-            </div>
+    <div className="pz-stage">
+      <div className="pz-figwrap" ref={figRef}>
+        <PoseSvg
+          arm={arm} pose={pose} cam={cam} zp={zp} W={W} H={H} uid={uid} theme={resolvedTheme} weights={weights} dragging={dragging}
+          hold={playing || dragging === 'joint'} stop={stop} armBox={armBox} selected={selIndex}
+          insets={insets}
+          onOrbit={(c) => setCam(c)}
+          onZoomPan={setZp}
+          onJoint={(i, deg) => {
+            const L = jointLimits(joints[i]);
+            const lim = hasLimits(joints[i]);
+            setOne(i, deg);
+            setStop(lim && deg < L.min - 1e-9 ? { i, side: 'min' } : lim && deg > L.max + 1e-9 ? { i, side: 'max' } : null);
+          }}
+          onClickJoint={(i) => { const j = joints[i]; if (j) onSelectJoint?.(j.id); }}
+          onDragState={(d) => { setDragging(d); if (d) setPlaying(false); if (!d) setStop(null); if (d === 'joint') setNote(null); }}
+        />
+
+        <div className="pz-ov pz-ov-tr" ref={trRef}>
+          <Segmented<ViewName | 'custom'> value={viewNameOf(cam) ?? 'custom'} onChange={(v) => { if (v !== 'custom') setCam({ ...VIEW_PRESETS[v] }); }}
+            label="Camera view" size="sm" options={VIEW_OPTIONS} />
+          <div className="pz-zoom" role="group" aria-label="Zoom">
+            <button type="button" className="icon-btn pz-zbtn" onClick={() => zoomBy(1 / 1.25)} disabled={zp.zoom <= ZOOM_MIN + 1e-9} aria-label="Zoom out" title="Zoom out">−</button>
+            <span className="pz-zval mono" aria-live="off">{Math.round(zp.zoom * 100)}%</span>
+            <button type="button" className="icon-btn pz-zbtn" onClick={() => zoomBy(1.25)} disabled={zp.zoom >= ZOOM_MAX - 1e-9} aria-label="Zoom in" title="Zoom in">+</button>
+            <Button size="sm" variant="secondary" onClick={fit} title="Frame the arm at its current pose">Fit</Button>
+            <button type="button" className="icon-btn pz-zbtn" onClick={() => { setCam({ ...VIEW_PRESETS.side }); setZp(NO_ZOOM); }}
+              aria-label="Reset view" title="Side view, zoom and pan reset">⟲</button>
+            <InfoTip help={HOW_TO} label="How to move the arm" />
           </div>
-          <PoseSvg
-            arm={arm} pose={pose} cam={cam} zp={zp} W={W} H={H} uid={uid} theme={resolvedTheme} weights={weights} dragging={dragging}
-            hold={playing || dragging === 'joint'} stop={stop} armBox={armBox}
-            onOrbit={(c) => setCam(clampCamera(c))}
-            onZoomPan={setZp}
-            onJoint={(i, deg) => {
-              const L = jointLimits(joints[i]);
-              const lim = hasLimits(joints[i]);
-              setOne(i, deg);
-              setStop(lim && deg < L.min - 1e-9 ? { i, side: 'min' } : lim && deg > L.max + 1e-9 ? { i, side: 'max' } : null);
-            }}
-            onDragState={(d) => { setDragging(d); if (d) setPlaying(false); if (!d) setStop(null); if (d === 'joint') setNote(null); }}
-          />
-          <p className="pz-hint muted small">
-            Drag a joint to turn it · drag the background to orbit · Shift-drag or middle-drag to pan · Ctrl (⌘) + scroll, or pinch, to zoom; plain scrolling scrolls the page.
-          </p>
-          <FigLegend pose={pose} theme={resolvedTheme} />
         </div>
 
-        <div className="pz-controls">
+        <div className="pz-ov pz-ov-bl" ref={blRef}>
           <div className="pz-presets" role="group" aria-label="Pose presets">
             {PRESET_BUTTONS.map((p) => (
-              <Button key={p.key} size="sm" variant="secondary" title={p.title} onClick={() => applyPreset(p.key)}>{PRESET_LABEL[p.key]}</Button>
+              <Button key={p.key} size="sm" variant="secondary" title={p.title} onClick={() => applyPreset(p.key)} aria-label={PRESET_LABEL[p.key]}>{p.short}</Button>
             ))}
             <Button size="sm" variant="primary" icon={playing ? 'pause' : 'play'} aria-pressed={playing}
               title={reduced ? 'Steps through the presets (reduced motion is on)' : 'Animate a smooth path through the presets'}
               onClick={() => setPlaying((x) => !x)}>
-              {playing ? 'Pause sweep' : 'Sweep'}
+              {playing ? 'Pause' : 'Sweep'}
             </Button>
+            <button type="button" className={`btn btn-secondary btn-sm pz-toggle${weights ? ' is-on' : ''}`} aria-pressed={weights}
+              title="An arrow at every mass, length in proportion to the mass" onClick={() => setWeights(!weights)}>
+              Weights
+            </button>
+            <button type="button" className={`btn btn-secondary btn-sm pz-toggle${showAngles ? ' is-on' : ''}`} aria-expanded={showAngles} aria-controls={anglesId}
+              onClick={() => setShowAngles((o) => !o)} title="Every joint angle and its limits">
+              All angles
+            </button>
           </div>
-          {reduced && <p className="muted small pz-rm">Reduced motion is on: Sweep steps through the presets without animating.</p>}
+          {reduced && <p className="muted small pz-rm">Reduced motion is on: Sweep steps through the presets.</p>}
           {note && <p className="pz-note small" role="status">{note}</p>}
-          <div className="pz-sliders">
-            {joints.map((j, i) => (
-              <JointSlider key={j.id} joint={j} index={i} uid={uid} angle={angles[i]} atStop={stop?.i === i ? stop.side : null}
-                onAngle={(d) => { setPlaying(false); setOne(i, d); }}
-                onLimits={(lim) => updateArm((x) => patchJoint(x, j.id, { limits: lim }))} />
-            ))}
-          </div>
-          <Switch checked={weights} onChange={setWeights} label="Weight arrows" description="An arrow at every mass, length in proportion to the mass." />
         </div>
+
+        {showAngles && (
+          <div className="pz-angles popover" id={anglesId} role="dialog" aria-label="All joint angles"
+            style={{ bottom: insets.bottom - 8, maxHeight: Math.max(160, H - insets.bottom - insets.top) }}>
+            <div className="pz-angles-head">
+              <strong className="small">Joint angles <span className="muted">(display only)</span></strong>
+              <button type="button" className="icon-btn" aria-label="Close joint angles" onClick={() => setShowAngles(false)}>×</button>
+            </div>
+            <div className="pz-sliders">
+              {joints.map((j, i) => (
+                <JointSlider key={j.id} joint={j} index={i} uid={uid} angle={angles[i]} atStop={stop?.i === i ? stop.side : null}
+                  onAngle={(d) => { setPlaying(false); setOne(i, d); }}
+                  onLimits={(lim) => updateArm((x) => patchJoint(x, j.id, { limits: lim }))} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
-      <PoseTable arm={arm} res={res} pose={pose} angles={angles} />
-      <p className="card-foot muted small">
-        The gearbox checks always use the worst case (arm straight out, the T_static column), whatever the joint limits. This view shows the static
-        gravity load at the chosen pose only: no dynamics (α·I), so a joint can need more while it accelerates.
-        Positive torque means the joint pushes in its + angle direction; + pitch lifts the link.
-      </p>
-    </div>
-  );
-}
-
-/** One joint: angle slider plus a compact "Limits" disclosure (min / max angle, degrees). */
-function JointSlider({ joint: j, index: i, uid, angle, atStop, onAngle, onLimits }: {
-  joint: ArmJoint; index: number; uid: string; angle: number; atStop: 'min' | 'max' | null;
-  onAngle: (deg: number) => void; onLimits: (l: { min: number; max: number } | undefined) => void;
-}) {
-  const id = `${uid}-q-${j.id}`;
-  const L = jointLimits(j);
-  const limited = hasLimits(j);
-  const deg = Math.round(angle);
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState({ min: String(L.min), max: String(L.max) });
-  useEffect(() => { setDraft({ min: String(L.min), max: String(L.max) }); }, [L.min, L.max]);
-  const nmin = draft.min.trim() === '' ? NaN : Number(draft.min);
-  const nmax = draft.max.trim() === '' ? NaN : Number(draft.max);
-  const err = validateJointLimits(nmin, nmax);
-  const commit = (mn: string, mx: string) => {
-    setDraft({ min: mn, max: mx });
-    const a = mn.trim() === '' ? NaN : Number(mn);
-    const b = mx.trim() === '' ? NaN : Number(mx);
-    if (validateJointLimits(a, b) === null) onLimits(a === -180 && b === 180 ? undefined : { min: a, max: b });
-  };
-  const pid = `${id}-lim`;
-  return (
-    <div className={`pz-slider${atStop ? ' is-stop' : ''}`}>
-      <label htmlFor={id} className="pz-slider-label">
-        <span className="mono strong">J{i + 1}</span>{' '}
-        <span className="pz-slider-name">{j.name.trim() || MOTION_LABEL[j.motion].toLowerCase()}</span>
-        <small className="muted"> · {MOTION_LABEL[j.motion]}{j.drive === 'servo' ? ' · servo' : ''}</small>
-      </label>
-      <output htmlFor={id} className="pz-slider-val mono">{deg}°{atStop && <span className="pz-stoptag"> limit</span>}</output>
-      <input id={id} type="range" min={Math.ceil(L.min)} max={Math.floor(L.max)} step={1} value={Math.min(Math.floor(L.max), Math.max(Math.ceil(L.min), deg))}
-        aria-valuetext={`${deg} degrees${limited ? `, limits ${L.min} to ${L.max}` : ''}`}
-        onChange={(e) => onAngle(Number(e.target.value))} />
-      <button type="button" className="pz-limbtn" aria-expanded={open} aria-controls={pid} onClick={() => setOpen((o) => !o)}>
-        Limits <span className="mono">{limited ? `${fmtDeg(L.min)} … ${fmtDeg(L.max)}` : '±180°'}</span>
-      </button>
-      {open && (
-        <div className="pz-limits" id={pid}>
-          <label className="pz-limfield">
-            <span>Min</span>
-            <input className="nf-input" type="number" inputMode="decimal" step={1} min={-180} max={180} value={draft.min}
-              aria-invalid={!!err} aria-label={`Minimum angle of J${i + 1}, degrees`} onChange={(e) => commit(e.target.value, draft.max)} />
-            <span className="nf-unit">°</span>
-          </label>
-          <label className="pz-limfield">
-            <span>Max</span>
-            <input className="nf-input" type="number" inputMode="decimal" step={1} min={-180} max={180} value={draft.max}
-              aria-invalid={!!err} aria-label={`Maximum angle of J${i + 1}, degrees`} onChange={(e) => commit(draft.min, e.target.value)} />
-            <span className="nf-unit">°</span>
-          </label>
-          <Button size="sm" variant="ghost" disabled={!limited && !err} onClick={() => commit('-180', '180')}>Clear</Button>
-          {err && <p className="pz-limerr small" role="alert">{err}</p>}
-        </div>
-      )}
+      <section className={`pz-drawer${drawer ? ' is-open' : ''}`} aria-label="Pose loads">
+        <h3 className="pz-drawer-h">
+          <button type="button" className="pz-drawer-toggle" aria-expanded={drawer} aria-controls={drawerId} onClick={() => patchWb({ drawer: !drawer })}>
+            <span className="pz-drawer-title">Pose loads</span>
+            <span className={`pz-drawer-sum st st-${worst >= 0 ? STATUS_CLASS[pose.joints[worst].status] : 'neutral'}`}>
+              <i className="st-sq" aria-hidden="true" />{worstText}
+            </span>
+            <span className="pz-drawer-chev" aria-hidden="true">{drawer ? '▾' : '▴'}</span>
+          </button>
+        </h3>
+        {drawer && (
+          <div className="pz-drawer-body" id={drawerId}>
+            <PoseTable arm={arm} res={res} pose={pose} angles={angles} />
+            <FigLegend pose={pose} theme={resolvedTheme} />
+            <p className="card-foot muted small">
+              The gearbox checks always use the worst case (arm straight out, the T_static column), whatever the joint limits. This view shows the static
+              gravity load at the chosen pose only: no dynamics (α·I), so a joint can need more while it accelerates.
+              Positive torque means the joint pushes in its + angle direction; + pitch lifts the link.
+            </p>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -360,6 +295,12 @@ interface SvgProps {
   armBox: { current: { x1: number; x2: number; y1: number; y2: number } | null };
   /** A joint being dragged against one of its limits */
   stop: { i: number; side: 'min' | 'max' } | null;
+  /** Index of the selected joint (ringed), or -1 */
+  selected: number;
+  /** Screen space kept clear for the overlay controls when framing the arm, px */
+  insets?: { top: number; bottom: number };
+  /** A joint was pressed and released without moving (a click) */
+  onClickJoint: (i: number) => void;
   onOrbit: (c: Camera) => void;
   onZoomPan: (z: ZoomPan) => void;
   onJoint: (i: number, deg: number) => void;
@@ -368,7 +309,7 @@ interface SvgProps {
 
 const clean = (x: number) => (Number.isFinite(x) && x > 0 ? Math.min(x, 1e7) : 0);
 
-function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold, stop, armBox, onOrbit, onZoomPan, onJoint, onDragState }: SvgProps) {
+function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold, stop, armBox, selected, insets, onOrbit, onZoomPan, onJoint, onClickJoint, onDragState }: SvgProps) {
   const { u } = useStore();
   const svgRef = useRef<SVGSVGElement>(null);
   const joints = arm.joints;
@@ -417,7 +358,9 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
   const camKey = `${cam.az},${cam.el},${W},${H}`;
   if (hold && held.current && held.current.key === camKey) box = unionBox(box, held.current.box);
   held.current = { key: camKey, box };
-  const f: Frame = applyZoomPan(frameFromBox(b, box, W, H, 34), zp, W, H);
+  const it = insets ?? { top: 0, bottom: 0 };
+  const base = frameFromBox(b, box, W, Math.max(120, H - it.top - it.bottom), 34);
+  const f: Frame = applyZoomPan({ ...base, oy: base.oy + it.top }, zp, W, H);
   const frameRef = useRef(f);
   frameRef.current = f;
   const poseRef = useRef(pose);
@@ -496,7 +439,7 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
       const pa = planeAngle(fr, pj.pos_mm as V3, pj.axis as V3, x, y);
       prevPhi = pa && pa.radiusPx >= 12 ? pa.phi : null;
     }
-    drag.current = { kind: 'joint', i, jid: joints[i].id, method, prevPhi, x, y, acc: pj.angleDeg, id: e.pointerId };
+    drag.current = { kind: 'joint', i, jid: joints[i].id, method, prevPhi, x, y, x0: x, y0: y, moved: false, acc: pj.angleDeg, id: e.pointerId };
     onDragState('joint');
   };
   const onMove = (e: RPointerEvent) => {
@@ -514,6 +457,11 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
     const { x, y } = toSvg(e);
     if (d.kind === 'orbit') { onOrbit({ az: d.cam.az - (x - d.x) * 0.5, el: d.cam.el + (y - d.y) * 0.5 }); return; }
     if (d.kind === 'pan') { onZoomPan({ ...d.zp, px: d.zp.px + (x - d.x), py: d.zp.py + (y - d.y) }); return; }
+    // a press that has not moved past the threshold is still a click: the joint does not turn yet
+    if (!d.moved) {
+      if (Math.hypot(x - d.x0, y - d.y0) < CLICK_PX) return;
+      d.moved = true;
+    }
     const pj = poseRef.current.joints[d.i];
     if (!pj) return;
     const fr = frameRef.current;
@@ -554,13 +502,16 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
       if (pointers.current.size < 2) { drag.current = null; onDragState(null); }
       return;
     }
-    if (d.id === e.pointerId) { drag.current = null; onDragState(null); }
+    if (d.id === e.pointerId) {
+      drag.current = null;
+      onDragState(null);
+      if (d.kind === 'joint' && !d.moved && e.type === 'pointerup') onClickJoint(d.i);
+    }
   };
 
-  // ctrl / cmd + wheel (and trackpad pinch, which arrives as ctrl + wheel) zooms about the pointer; a plain wheel scrolls the page
+  // the wheel (and a trackpad pinch, which arrives as ctrl + wheel) zooms about the pointer: the view fills the stage, which does not scroll
   const onWheelRef = useRef<(e: WheelEvent) => void>(() => {});
   onWheelRef.current = (e: WheelEvent) => {
-    if (!(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
     const { x, y } = toSvg(e);
     const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
@@ -767,6 +718,7 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
           <g className={st}>{ell(cy.front, 'pz-cap')}{frontExtra}</g>
           {arc}
           {atStop && <circle className="pz-stop" cx={cs.x} cy={cs.y} r={rr + 4} />}
+          {selected === i && <circle className="pz-selring" cx={cs.x} cy={cs.y} r={rr + 7} />}
         </g>
       ),
     });
@@ -835,8 +787,13 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
   items.sort((p1, p2) => p1.depth - p2.depth);
 
   // labels: placed in screen space around everything drawn
-  const captionBox: Box = { x1: 0, x2: 110, y1: H - 22, y2: H, text: true };
-  const placed = placePoseLabels(labelReqs, [...obstacles, ...linkObstacles, captionBox], { W, H });
+  const capY = H - 8 - it.bottom;
+  const captionBox: Box = { x1: 0, x2: 110, y1: capY - 14, y2: capY + 8, text: true };
+  // the overlay controls cover the top-right corner and the bottom strip: keep labels out of them
+  const overlayBoxes: Box[] = it.top > 0 || it.bottom > 0
+    ? [{ x1: Math.max(0, W - 440), x2: W, y1: 0, y2: it.top }, { x1: 0, x2: W, y1: H - it.bottom, y2: H }]
+    : [];
+  const placed = placePoseLabels(labelReqs, [...obstacles, ...linkObstacles, captionBox, ...overlayBoxes], { W, H });
   const worst = pose.worstJoint;
   const aria = `Arm in 3D at the chosen pose. ${pose.joints.map((pj, i) => `J${i + 1} ${Math.round(pj.angleDeg)} degrees, ${u.fu('torque', pj.absTau_Nm, { fixed: true })}, ${pct(pj.util)} of T_des`).join('; ')}.${worst >= 0 ? ` Highest: J${worst + 1}.` : ''}`;
 
@@ -861,7 +818,7 @@ function PoseSvg({ arm, pose, cam, zp, W, H, uid, theme, weights, dragging, hold
           </g>
         ))}
       </g>
-      <text className="pz-caption" x={8} y={H - 8}>{`Grid ${u.fu('length', gridStep, { dp: 0, trim: true })}`}</text>
+      <text className="pz-caption" x={8} y={capY}>{`Grid ${u.fu('length', gridStep, { dp: 0, trim: true })}`}</text>
     </svg>
   );
 }

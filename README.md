@@ -5,17 +5,24 @@
 A static web app for sizing and checking pin-type cycloidal gearboxes for a robot arm of 1 to 8
 joints (the default is a 5-DOF arm: J1–J4 cycloidal, J5 direct-drive servo). Everything runs in the browser.
 
-- **Arm & Loads:** build the arm joint by joint (add, remove, reorder; each joint is a base yaw,
-  a pitch or a roll, driven by a cycloidal gearbox or a servo) and enter masses and
-  center-to-center lengths. The app derives the static and dynamic torque on each joint, the
-  output-bearing loads, and the requirement of every servo joint. The drawing shows a ready
-  pose or the worst-case pose the torques are computed for.
-- **Gearbox:** contact stresses, pin forces, pin bending, ligaments, cusp, and eccentric-bearing
-  static and life checks. Discs and pins can be steel, aluminum, PETG or PLA. Each check shows its
-  utilization and the governing failure mode, alongside an animated disc drawing and charts.
-- **Design Advisor:** recommends pin circle and housing diameter, eccentricity, pin sizes, inner
-  pin count, disc thickness, disc count and bearing.
-- **All Joints:** pass/fail for every joint at a glance.
+The app is a one-screen workbench:
+
+- **Joints rail (left):** build the arm joint by joint. Add, remove, reorder or rename joints.
+  Each joint is a base yaw, a pitch or a roll, driven by a cycloidal gearbox or a servo. Every
+  row shows a pass/marginal/fail status.
+- **Stage (centre):**
+  - **3D arm:** drag joints to pose the arm. Joints are coloured by torque against design
+    torque, links by bending moment.
+  - **Schematic:** ready pose and worst-case pose.
+  - **Disc:** the disc animation and charts.
+  - **Summary:** every joint's verdict.
+- **Inspector (right):** for the selected joint.
+  - Joint & link, motor and recommended gear ratio, loads.
+  - Gearbox design: contact stresses, pin forces and bending, ligaments, cusp, and eccentric-bearing
+    static and life checks. Discs and pins can be steel, aluminum, PETG or PLA.
+  - Disc & charts, the minimum-size solver, and the Design Advisor. In the Advisor you can lock
+    any dimension and let it optimize the rest.
+  - DXF export of the disc, plates, cam and pins.
 
 The calculation engine in `src/calc/` reproduces `reference/cycloidal_disc_check.py`. The test
 suite checks it against the validation cases in `docs/SPEC.md`.

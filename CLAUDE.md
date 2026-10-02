@@ -195,6 +195,27 @@ Required invariants:
 - a base yaw with a vertical axis always reads 0
 Display only: the gearbox checks keep using the worst case.
 
+## Addition 10 — Workbench layout (replaces the 01–04 step pages)
+The user disliked scrolling down to find things. The app becomes a one-screen workbench, like a
+CAD tool:
+- **Header:** title, mm|in, Units, Assumptions, theme, session menu.
+- **Left rail, "Joints":** an Arm item, then one row per joint (J#, name, motion symbol, drive
+  tag, status dot from the gearbox verdict / servo check / motor chip). Rows can be selected,
+  renamed, reordered and removed. "+ Add joint", Summary, and a Custom gearbox item.
+- **Centre stage:** a big view with stage tabs 3D arm | Schematic | Disc | Summary. 3D is the
+  Pose Explorer; clicking a joint in it selects that joint. The pose presets and the
+  pose-loads readout are a collapsible overlay or drawer.
+- **Right inspector** for the selection: a header with the name, motion, drive and a sticky
+  verdict badge. Below it, collapsible sections, each showing a one-line summary while closed:
+  Joint & link | Motor & ratio | Loads | Gearbox design | Checks | Disc & charts | Min-size
+  solver | Design Advisor | Export DXF. Servo joints show only the first three. The Arm item
+  shows arm settings, totals and the all-joint torque table. A chip bar at the top of the
+  inspector jumps to and opens any section.
+- **Scrolling:** on desktop (≥ 1100 px) nothing scrolls at page level; each column scrolls
+  internally. On narrow screens the layout becomes a joint selector plus bottom tabs (View |
+  Details | Summary).
+- Nothing is removed; every existing feature has an obvious home.
+
 ## UI / UX — "very nice and very user friendly"
 - Clean engineering-tool look: light and dark themes (follow the OS, plus a toggle), one accent
   color, generous spacing, clear typographic hierarchy, cards, no clutter. Responsive down to

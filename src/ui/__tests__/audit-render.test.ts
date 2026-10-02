@@ -4,13 +4,13 @@ import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkGearbox, presetInputs } from '../../calc';
-import { defaultSession, STORAGE_KEY, type Session, type Step } from '../session';
+import { defaultSession, STORAGE_KEY, type Session } from '../session';
 import { IMPERIAL, METRIC, type UnitPrefs } from '../units';
 import { StoreProvider } from '../store';
-import { ArmScreen } from '../screens/ArmScreen';
-import { GearboxScreen } from '../screens/GearboxScreen';
-import { JointsScreen } from '../screens/JointsScreen';
-import { AdvisorScreen } from '../screens/AdvisorScreen';
+import { ArmScreen } from './workbenchScreens';
+import { GearboxScreen } from './workbenchScreens';
+import { JointsScreen } from './workbenchScreens';
+import { AdvisorScreen } from './workbenchScreens';
 import { AssumptionsPanel } from '../components/AssumptionsPanel';
 
 const ALL: UnitPrefs = { length: 'in', mass: 'lb', force: 'lbf', torque: 'lbf·ft', stress: 'psi' };
@@ -18,9 +18,8 @@ const g = globalThis as unknown as { window?: unknown };
 afterEach(() => { delete g.window; });
 
 /** The SPEC.md J2 validation case: Gearbox tab, J2 preset, arm loads OFF, T 5.85 / 8.8, D 85, e 1.3, 1 disc. */
-export function specCaseSession(units: UnitPrefs, step: Step = 2): Session {
+export function specCaseSession(units: UnitPrefs): Session {
   const s = defaultSession();
-  s.step = step;
   s.selected = 'J2';
   s.units = { ...units };
   s.useArmLoads.J2 = false;
@@ -149,7 +148,7 @@ describe('audit: other screens render with numbers (metric and imperial)', () =>
     for (const units of [METRIC, IMPERIAL, { length: 'in', mass: 'lb', force: 'lbf', torque: 'lbf·ft', stress: 'psi' } as UnitPrefs]) {
       it(`${name} / ${units.length} ${units.mass} ${units.torque}: no NaN, undefined, Infinity, null`, () => {
         const s = defaultSession();
-        s.step = step;
+        void step; // the old page number: the equivalent workbench view is the Screen above
         s.units = { ...units };
         const html = render(s, Screen);
         const t = text(html);
@@ -162,7 +161,6 @@ describe('audit: other screens render with numbers (metric and imperial)', () =>
 
   it('imperial arm page: torque, mass, length tagged with the right unit', () => {
     const s = defaultSession();
-    s.step = 1;
     s.units = { ...IMPERIAL };
     const html = render(s, ArmScreen);
     const t = text(html);
@@ -258,7 +256,7 @@ describe('audit: hostile inputs never show NaN / Infinity / undefined and never 
       for (const units of [METRIC, IMPERIAL]) {
         it(`${name} / ${sn} / ${units.length}`, () => {
           const s = hostile(name);
-          s.step = step;
+          void step; // the old page number: the equivalent workbench view is the Screen above
           s.units = { ...units };
           for (const slot of ['J1', 'J2', 'J3', 'J4', 'custom'] as const) {
             s.selected = slot === 'custom' ? 'J2' : s.selected; // keep default selection; all slots are hostile anyway
@@ -276,7 +274,7 @@ describe('audit: hostile inputs never show NaN / Infinity / undefined and never 
     for (const [Screen, step] of [[GearboxScreen, 2], [AdvisorScreen, 3]] as const) {
       const s = hostile('zp<8, negatives');
       s.selected = 'custom';
-      s.step = step;
+      void step; // the old page number: the equivalent workbench view is the Screen above
       const html = render(s, Screen);
       expect(html).not.toMatch(/NaN|Infinity|undefined|\[object/);
     }
@@ -352,7 +350,6 @@ describe('audit: one bad field shows its own inline message, never the "cannot b
   for (const [name, patch, msg] of armCases) {
     it(`arm: ${name}`, () => {
       const s = defaultSession();
-      s.step = 1;
       patch(s.arm);
       const t = text(render(s, ArmScreen));
       expect(t).toContain(msg);
@@ -402,7 +399,6 @@ describe('audit: every number is tagged with the right quantity', () => {
 
   it('arm diagram: lengths and masses on the right labels, converted once', () => {
     const s = defaultSession();
-    s.step = 1;
     s.armPose = 'worst'; // the reach dimension belongs to the worst-case (straight out) view
     s.arm.joints[0].length_mm = 100; // the default column is 0 mm (no dimension drawn); give it the old 100 mm to check the unit conversion
     s.units = { ...IMPERIAL };
@@ -423,7 +419,6 @@ describe('audit: every number is tagged with the right quantity', () => {
 
   it('arm diagram: J1 is a yaw turntable, J2 starts bar A, J4 is a roll collar, and the names agree everywhere', () => {
     const s = defaultSession();
-    s.step = 1;
     const html = render(s, ArmScreen);
     const t = text(html);
     // joints are labelled "J<position> <name>" everywhere, in the drawing, the editor and the torque table
@@ -466,7 +461,7 @@ describe('audit: every number is tagged with the right quantity', () => {
   it('imperial: no unconverted metric quantity on any screen', () => {
     for (const [Screen, step] of [[ArmScreen, 1], [GearboxScreen, 2], [AdvisorScreen, 3], [JointsScreen, 4]] as const) {
       const s = defaultSession();
-      s.step = step;
+      void step; // the old page number: the equivalent workbench view is the Screen above
       s.units = { ...ALL };
       const t = text(render(s, Screen))
         .replace(/\d+×\d+×\d+ mm/g, '').replace(/g\/cm³/g, '').replace(/\d+(?:\.\d+)? mm \(\d+\.\d+ in\)/g, '');
