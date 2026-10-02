@@ -40,6 +40,13 @@ export interface GearboxInputs {
   RwOverride: number | null;
   /** Housing wall beyond the outer pins, mm (only used for the housing OD read-out, default 4) */
   wall: number;
+  /**
+   * How the inner pins (standoffs) are held, for the inner pin bending check. They are always fixed at the output
+   * face (recessed and bolted). 'ringClamped': the far ends are bolted to a free-floating tie ring (tip slope 0).
+   * 'ringPinned': the far ends are tied by the ring but free to rotate in it. 'cantilever': no tie ring.
+   * Missing (older sessions) = 'ringClamped'.
+   */
+  innerPinSupport: InnerPinSupport;
 
   // Materials
   discMaterial: MaterialProps;
@@ -63,6 +70,11 @@ export interface GearboxInputs {
   /** Required bearing life, h */
   reqLifeH: number;
 }
+
+/** Inner pin end support for the bending check (see GearboxInputs.innerPinSupport). */
+export type InnerPinSupport = 'ringClamped' | 'ringPinned' | 'cantilever';
+export const INNER_PIN_SUPPORTS: readonly InnerPinSupport[] = ['ringClamped', 'ringPinned', 'cantilever'];
+export const DEFAULT_INNER_PIN_SUPPORT: InnerPinSupport = 'ringClamped';
 
 export type CheckStatus = 'ok' | 'marginal' | 'fail';
 
@@ -146,6 +158,12 @@ export interface UnitResults {
   Fb: number;
   /** Minimum convex actual-profile radius of curvature, mm (Infinity if none) */
   rhoMinConvex: number;
+  /**
+   * Peak inner pin bending moment with the tips tied by a floating ring, N*mm (reference sine-law pin forces over the
+   * theta sweep, max over pins and sections): bolted ring (tip slope 0) and pins free to rotate in the ring.
+   */
+  MRingClamped: number;
+  MRingPinned: number;
 }
 
 export interface ScaledLoads {
@@ -161,10 +179,15 @@ export interface ScaledLoads {
   /** Bolt/pin bending, fixed-fixed and simply-supported, MPa */
   boltBendingFixed: number;
   boltBendingSimple: number;
-  /** Inner pin bending with tie ring and cantilever, MPa */
+  /** Inner pin bending, SPEC heuristic "tie ring = cantilever / 2" and cantilever (F_in_pk * arm / Z), MPa */
   standoffBendingTie: number;
   standoffBendingCantilever: number;
   standoffArm: number;
+  /** Inner pin bending with the tips tied by a floating ring: bolted ring (tip slope 0) and pinned tips, MPa */
+  standoffBendingRingClamped: number;
+  standoffBendingRingPinned: number;
+  /** The value the inner pin bending check uses (per GearboxResult.innerPinSupport), MPa */
+  standoffBending: number;
   /** Bearing peak load (design torque) and working load (required torque), N */
   bearingPeak: number;
   bearingWorking: number;
@@ -207,6 +230,8 @@ export interface GearboxResult {
   unit: UnitResults;
   loads: ScaledLoads;
   checks: Check[];
+  /** The inner pin support model the inner pin bending check used */
+  innerPinSupport: InnerPinSupport;
   verdict: Verdict;
   /** Check with the highest utilization (the governing failure mode) */
   governing: Check | null;

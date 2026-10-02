@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import {
   BEARINGS,
   BEARING_NOTE,
+  INNER_PIN_SUPPORTS,
   DISC_STOCK_METAL,
   DISC_STOCK_POLYMER,
   INNER_PIN_OPTIONS,
@@ -15,6 +16,7 @@ import {
   validateGearboxInputs,
   type GearboxInputs,
   type GearboxResult,
+  type InnerPinSupport,
   type MaterialProps,
 } from '../../calc';
 import { Advanced, Button, FieldRow, Notice, Section, SelectField, Segmented, Switch } from '../components/primitives';
@@ -23,6 +25,25 @@ import { HELP } from '../help';
 import { CUSTOM, armToggle, gearboxOf, presetFor, presetIdFor, type Slot } from '../session';
 import { useStore } from '../store';
 import { inchFraction, type U } from '../units';
+
+// ---------------------------------------------------------------------------
+// Inner pin support (how the far ends of the output pins are held)
+// ---------------------------------------------------------------------------
+
+export const INNER_PIN_SUPPORT_OPTIONS: Record<InnerPinSupport, { label: string; tip: string }> = {
+  ringClamped: {
+    label: 'Recessed + bolted tie ring (default)',
+    tip: 'Pins recessed and bolted into the output face, far ends bolted to one floating tie ring, so the tips cannot tilt.',
+  },
+  ringPinned: {
+    label: 'Tie ring, pins free to rotate in it',
+    tip: 'Far ends tied together by the ring but free to tilt in it (loose fit), which gives a higher, more conservative stress.',
+  },
+  cantilever: {
+    label: 'No tie ring (cantilever)',
+    tip: 'Each pin is held only at the output face and bends as a cantilever: the most conservative case.',
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Material picker
@@ -107,7 +128,7 @@ function MaterialPicker({
               onChange={(v) => set({ sigmaF: v ?? 0 })} defaultValue={reference.sigmaF} error={err('fatigue')} help={HELP.sigmaF} step={5} />
             <NumberField label="Density" unit={'g/cm³'} value={value.density} onChange={(v) => set({ density: v ?? 0 })}
               defaultValue={reference.density} error={err('density')} help={HELP.density} step={0.1} />
-            <FieldRow label="Material type">
+            <FieldRow label="Material type" help={HELP.materialKind}>
               <Segmented
                 size="sm"
                 label={`${label} type`}
@@ -172,6 +193,7 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         checked={toggle}
         onChange={(val) => dispatch({ type: 'useArm', joint: slot, value: val })}
         label="Loads from arm model"
+        help={HELP.armLoads}
         description={
           toggle
             ? fromArmNow
@@ -219,6 +241,7 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           <SelectField
             inline
             label="Copy values from"
+            help={HELP.copyFrom}
             value=""
             onChange={(val) => {
               if (val === 'defaults') updateGearbox('custom', () => structuredClone(presetFor('custom')));
@@ -266,6 +289,7 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         <SelectField
           inline
           label="Stock thickness"
+          help={HELP.stockThickness}
           value={stockMatch != null ? String(stockMatch) : 'custom'}
           onChange={(val) => { if (val !== 'custom') set({ L: Number(val) }); }}
           options={[
@@ -304,13 +328,14 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           reference={ref.discMaterial} errors={v.errors} errPrefix="Disc material" full help={HELP.discMaterial} />
 
         <h4 className="subgroup-h">Outer pins (ring)</h4>
-        <FieldRow label="Construction" stacked>
+        <FieldRow label="Construction" help={HELP.outerConstruction} stacked>
           <Segmented label="Outer pin construction" value={g.outerPin.construction} fullWidth
             onChange={(c) => set({ outerPin: { ...g.outerPin, construction: c } })}
             options={[{ value: 'boltBushing', label: 'Steel bolt + bushing' }, { value: 'solid', label: 'Solid pin' }]} />
         </FieldRow>
         <SelectField
           label={g.outerPin.construction === 'solid' ? 'Pin size' : 'Bolt and bushing size'}
+          help={HELP.outerPinSize}
           value={outerMatch ? String(outerMatch.od) : 'custom'}
           onChange={(val) => {
             const o = OUTER_PIN_OPTIONS.find((x) => String(x.od) === val);
@@ -331,6 +356,7 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           reference={ref.outerPin.material}
           errors={v.errors}
           errPrefix="Outer pin material"
+          help={HELP.pinMaterial}
           full={g.outerPin.construction === 'solid'}
           extra={g.outerPin.construction === 'boltBushing' ? (
             <>
@@ -345,13 +371,14 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         />
 
         <h4 className="subgroup-h">Inner pins (output)</h4>
-        <FieldRow label="Construction" stacked>
+        <FieldRow label="Construction" help={HELP.innerConstruction} stacked>
           <Segmented label="Inner pin construction" value={g.innerPin.construction} fullWidth
             onChange={(c) => set({ innerPin: { ...g.innerPin, construction: c } })}
             options={[{ value: 'standoff', label: 'Steel standoff' }, { value: 'solid', label: 'Solid pin' }]} />
         </FieldRow>
         <SelectField
           label={g.innerPin.construction === 'solid' ? 'Pin size' : 'Standoff size'}
+          help={HELP.innerPinSize}
           value={innerMatch ? String(innerMatch.od) : 'custom'}
           onChange={(val) => {
             const o = INNER_PIN_OPTIONS.find((x) => String(x.od) === val);
@@ -365,6 +392,17 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
             { value: 'custom', label: 'Custom (set the radius under Geometry, Advanced)', disabled: !!innerMatch },
           ]}
         />
+        <SelectField
+          label="Inner pin support"
+          value={g.innerPinSupport}
+          onChange={(val) => {
+            const v = INNER_PIN_SUPPORTS.find((x) => x === val);
+            if (v) set({ innerPinSupport: v });
+          }}
+          options={INNER_PIN_SUPPORTS.map((v) => ({ value: v, label: INNER_PIN_SUPPORT_OPTIONS[v].label, title: INNER_PIN_SUPPORT_OPTIONS[v].tip }))}
+          help={HELP.innerPinSupport}
+          note={INNER_PIN_SUPPORT_OPTIONS[g.innerPinSupport]?.tip}
+        />
         <MaterialPicker
           label={g.innerPin.construction === 'solid' ? 'Pin material' : 'Standoff material'}
           value={g.innerPin.material}
@@ -372,6 +410,7 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           reference={ref.innerPin.material}
           errors={v.errors}
           errPrefix="Inner pin material"
+          help={HELP.pinMaterial}
           full={g.innerPin.construction === 'solid'}
           extra={g.innerPin.construction === 'standoff' ? (
             <>
@@ -401,6 +440,7 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         )}
         <SelectField
           label="Eccentric bearing"
+          help={HELP.bearing}
           value={bearingMatch ? bearingMatch.name : 'custom'}
           onChange={(val) => {
             const b = BEARINGS.find((x) => x.name === val);

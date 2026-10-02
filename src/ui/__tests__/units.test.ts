@@ -171,9 +171,14 @@ describe('makeU', () => {
 
 describe('tooltip and message texts follow the unit choice', () => {
   it('leaves no metric number-with-unit behind in imperial mode', async () => {
-    const { HELP } = await import('../help');
-    for (const [key, h] of Object.entries(HELP)) {
-      for (const text of [h.what, h.typical ?? '']) {
+    const { HELP, LOCK_HELP, DXF_HELP } = await import('../help');
+    const entries = [
+      ...Object.entries(HELP).map(([k, h]) => [`HELP.${k}`, h] as const),
+      ...Object.entries(LOCK_HELP).map(([k, h]) => [`LOCK_HELP.${k}`, h] as const),
+      ...Object.entries(DXF_HELP).map(([k, h]) => [`DXF_HELP.${k}`, h] as const),
+    ];
+    for (const [key, h] of entries) {
+      for (const text of [h.what, h.why, h.up, h.down, h.typical, h.formula].map((t) => t ?? '')) {
         const out = localizeText(text, IMPERIAL);
         expect(out, `${key}: ${out}`).not.toMatch(/\d\s?(mm|MPa|N·m|N\*m)(?![\w/])/);
         expect(out, `${key}: ${out}`).not.toMatch(/\d\s?(g|N)(?![\w/²³])/);

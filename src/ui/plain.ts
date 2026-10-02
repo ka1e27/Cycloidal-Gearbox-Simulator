@@ -51,7 +51,7 @@ export const PLAIN: Record<CheckId, { name: string; problem: string; fix: string
   standoffBending: {
     name: 'inner pin bending',
     problem: 'the output standoffs would bend more than the limit allows',
-    fix: 'Use a larger standoff, more output pins, or a stronger material.',
+    fix: 'Use a larger standoff, more output pins, or a stronger material, or bolt the pin ends to a tie ring.',
   },
   bearingStatic: {
     name: 'eccentric bearing static load',

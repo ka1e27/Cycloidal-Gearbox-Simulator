@@ -26,7 +26,7 @@ import {
   ZP_OPTIONS,
   ZW_OPTIONS,
 } from './catalog';
-import { bearingUnitLoad, CUSP_RHO, innerForceTable, ringUnit } from './kernel';
+import { bearingUnitLoad, CUSP_RHO, innerForceTable, ringUnit, standoffRingUnit } from './kernel';
 import {
   checkGearbox,
   contactLimits,
@@ -34,6 +34,7 @@ import {
   DEFAULT_NPF,
   DEFAULT_NTH,
   GEARBOX_MAX,
+  innerPinSupportOf,
   UTIL_CAP,
 } from './gearbox';
 import {
@@ -574,6 +575,24 @@ function* searchGen(
   const limIn = contactLimits(disc, base.innerPin.material);
   const boltLim = outerPinBendingLimit(base.outerPin);
   const soLim = innerPinBendingLimit(base.innerPin);
+  // Inner pin bending model. The tied-ring moment per N*m is exactly M_hat(Zw, Zp, discs, L, gap) / Rw, so it is swept
+  // once per (Zp, discs, L) for every Zw (at the coarse theta resolution) and rescaled by Rw inside the loops.
+  const support = innerPinSupportOf(base);
+  const ringHatCache = new Map<string, Float64Array>();
+  const ringHat = (Zp: number, di: number, L: number): Float64Array => {
+    const key = `${Zp}:${di}:${L}`;
+    let h = ringHatCache.get(key);
+    if (!h) {
+      h = new Float64Array(64);
+      for (const Zw of sp.Zws) {
+        if (Zw < 0 || Zw >= 64) continue;
+        const r = standoffRingUnit(Zw, Zp, o.nthCoarse, di, L, gap, 1);
+        h[Zw] = support === 'ringPinned' ? r.pinned : r.clamped;
+      }
+      ringHatCache.set(key, h);
+    }
+    return h;
+  };
   const stock = sp.Lfixed !== null
     ? [sp.Lfixed]
     : disc.kind === 'polymer' ? DISC_STOCK_POLYMER : DISC_STOCK_METAL;
@@ -708,6 +727,7 @@ function* searchGen(
           const uBolt = (Fpk * span / 4 / Zo) / boltLim;
           if (uBolt > thr) continue;
           const standoffArm = gap + (di - 1) * (L + gap) + L / 2;
+          const hat = support === 'cantilever' ? null : ringHat(Zp, di, L);
           const base1 = Math.max(uRS, uRL, uBolt, cuspUtil);
 
           for (let ii = 0; ii < sp.inner.length; ii++) {
@@ -726,7 +746,10 @@ function* searchGen(
               const uIS = (p0In * sStr) / limIn.strength;
               const uIL = (p0In * sLife) / limIn.life;
               if (uIS > thr || uIL > thr) continue;
-              const uSO = ((FIn * Fstr * standoffArm) / Zi / 2) / soLim;
+              const uSO = (hat === null
+                ? (FIn * Fstr * standoffArm) / Zi
+                : ((Zw < 64 ? hat[Zw] : standoffRingUnit(Zw, Zp, o.nthCoarse, di, L, gap, 1)[support === 'ringPinned' ? 'pinned' : 'clamped'])
+                  / Rw) * Fstr / Zi) / soLim;
               if (uSO > thr) continue;
               const base2 = Math.max(base1, uLH, uIS, uIL, uSO);
 

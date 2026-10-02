@@ -6,7 +6,7 @@ import {
   checkGearbox, deriveGeometry, presetInputs,
 } from '../../calc';
 import { parseNumberText } from '../components/NumberField';
-import { HELP, STEP_HINTS } from '../help';
+import { DXF_HELP, HELP, LOCK_HELP, STEP_HINTS } from '../help';
 import { PLAIN } from '../plain';
 import { defaultSession, exportSession } from '../session';
 import {
@@ -193,7 +193,7 @@ describe('audit: typed input converts to SI exactly once and does not drift', ()
 
 describe('audit: text localisation is safe to apply twice and leaves no metric numbers behind', () => {
   const samples: string[] = [
-    ...Object.values(HELP).flatMap((h) => [h.what, h.typical ?? '']),
+    ...[HELP, LOCK_HELP, DXF_HELP].flatMap((m) => Object.values(m)).flatMap((h) => [h.what, h.why, h.up, h.down, h.typical, h.formula].map((t) => t ?? '')),
     ...Object.values(STEP_HINTS),
     ...Object.values(PLAIN).flatMap((p) => [p.problem, p.fix]),
     ...MATERIALS.map((m) => m.note),

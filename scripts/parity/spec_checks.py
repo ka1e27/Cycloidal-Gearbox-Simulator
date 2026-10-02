@@ -18,6 +18,66 @@ def estar(pin, disc):
     return 1.0 / ((1 - pin["nu"] ** 2) / pin["E"] + (1 - disc["nu"] ** 2) / disc["E"])
 
 
+INNER_PIN_SUPPORTS = ("ringClamped", "ringPinned", "cantilever")
+
+
+def standoff_ring_unit(Zw, Zp, Rw, L, gap, discs, nth=240, per_theta=False):
+    """Peak inner-pin bending moment (N*mm per N*m on one disc, Kc = 1) for pins fixed at the output face (x = 0)
+    whose far ends (x = H) are bolted to one free-floating rigid tie ring. Returns (clamped, pinned): ring bolted
+    (tip slope 0) and pins free to rotate in the ring. Vectorized over theta; written from the derivation in
+    scripts/parity/standoff/README.md (closed form validated against an exact-constraint FEM there), not from the
+    TypeScript engine.
+      pin forces: reference sine law, F_j = 1000 |tq_j| / sum(tq^2) over the loaded pins (tq_j < 0), along u
+      disc k at a_k = gap + k (L + gap) + L/2, the second disc 180 deg out of phase (force -P_j on the same pins)
+      ring: no net force, no net moment about the axis -> tip force Ft_j = -sum_k c_k (P_kj - mean P_k - m_k z x r_j)
+      clamped: c = a^2 (3H - 2a) / H^3, tip couple C_j = -sum_k P_kj a_k^2 / (2H) - Ft_j H / 2
+      pinned:  c = a^2 (3H - a) / (2 H^3), C_j = 0
+      M_j(x) = Ft_j (H - x) + C_j + sum_{a_k > x} P_kj (a_k - x), max |M| over x in {0, H, a_k}."""
+    Zc = Zp - 1
+    th = 2 * np.pi * np.arange(nth) / nth
+    ux, uy = np.cos(th), np.sin(th)
+    chi = 2 * np.pi * np.arange(Zw)[None, :] / Zw - th[:, None] / Zc          # (T, Zw)
+    rx, ry = Rw * np.cos(chi), Rw * np.sin(chi)
+    tq = Rw * (np.cos(chi) * (-uy[:, None]) - np.sin(chi) * (-ux[:, None]))
+    lo = tq < 0
+    s2 = np.sum(np.where(lo, tq * tq, 0.0), axis=1)
+    s2safe = np.where(s2 > 0, s2, 1.0)
+    F = np.where(lo & (s2[:, None] > 0), 1e3 * np.abs(tq) / s2safe[:, None], 0.0)
+    Px, Py = F * ux[:, None], F * uy[:, None]
+    H = discs * L + (discs + 1) * gap
+    stations = [(gap + k * (L + gap) + L / 2, 1.0 if k == 0 else -1.0) for k in range(discs)]
+    R2 = np.mean(rx * rx + ry * ry, axis=1, keepdims=True)
+    out = {}
+    for tip in ("clamped", "pinned"):
+        Ftx = np.zeros_like(Px); Fty = np.zeros_like(Px)
+        Cx = np.zeros_like(Px); Cy = np.zeros_like(Px)
+        for a, sg in stations:
+            qx, qy = sg * Px, sg * Py
+            c = a * a * (3 * H - 2 * a) / H ** 3 if tip == "clamped" else a * a * (3 * H - a) / (2 * H ** 3)
+            mz = np.sum(rx * qy - ry * qx, axis=1, keepdims=True) / (Zw * R2)
+            Ftx += -c * (qx - qx.mean(axis=1, keepdims=True) + mz * ry)
+            Fty += -c * (qy - qy.mean(axis=1, keepdims=True) - mz * rx)
+            if tip == "clamped":
+                Cx += -qx * a * a / (2 * H)
+                Cy += -qy * a * a / (2 * H)
+        if tip == "clamped":
+            Cx += -Ftx * H / 2
+            Cy += -Fty * H / 2
+        best = np.zeros(nth)
+        for x in [0.0, H] + [a for a, _ in stations]:
+            Mx = Ftx * (H - x) + Cx
+            My = Fty * (H - x) + Cy
+            for a, sg in stations:
+                if a > x:
+                    Mx = Mx + sg * Px * (a - x)
+                    My = My + sg * Py * (a - x)
+            best = np.maximum(best, np.max(np.hypot(Mx, My), axis=1))
+        out[tip] = best
+    if per_theta:
+        return out["clamped"], out["pinned"]
+    return float(out["clamped"].max()), float(out["pinned"].max())
+
+
 def profile_extras(Zp, Rp, e, rr, npf=6000):
     """Profile formulas of SPEC.md: minimum convex rho_a, cusp flag (0 < rho_a < 0.3),
     undercut flag (path curvature > 1/rr), and the polygon area of the actual profile."""
@@ -107,7 +167,13 @@ def spec_checks(inp, u, extras):
         Zi = math.pi * (2 * inp["rw"]) ** 3 / 32
         so_lim = min(0.5 * ip["mat"]["Sy"], ip["mat"]["sigmaF"])
     so_cant = Fw_pk * arm / Zi
-    so_tie = so_cant / 2
+    so_tie = so_cant / 2          # SPEC heuristic, kept as a reported number
+    # The check uses the selected inner pin support (default: recessed standoffs + bolted tie ring)
+    Mc, Mp = standoff_ring_unit(inp["Zw"], inp["Zp"], u["Rw"], inp["L"], inp["gap"], discs)
+    so_ring_c = Mc * Kc * Tdes * share / Zi
+    so_ring_p = Mp * Kc * Tdes * share / Zi
+    support = inp.get("innerPinSupport", "ringClamped")
+    so_used = {"ringClamped": so_ring_c, "ringPinned": so_ring_p, "cantilever": so_cant}[support]
 
     # bearing
     Fb_peak = u["Fb"] * Tdes * share
@@ -125,7 +191,7 @@ def spec_checks(inp, u, extras):
         ("ligamentHoles", u["lig_holes"], tmin, "min"),
         ("cusp", extras["rho_min"], CUSP_RHO, "min"),
         ("boltBending", bolt_sim, bolt_lim, "max"),
-        ("standoffBending", so_tie, so_lim, "max"),
+        ("standoffBending", so_used, so_lim, "max"),
         ("bearingStatic", Fb_peak, C0, "max"),
         ("bearingLife", L10h, inp["reqLifeH"], "min"),
     ]
@@ -153,6 +219,7 @@ def spec_checks(inp, u, extras):
         checks=checks, cusp_flag=cusp_flag, max_util=max_util, max_util_noncusp=max(c[3] for c in others),
         verdict=verdict, mass_total=per_disc * discs, mass_net_area=net,
         housingOD=inp["D"] + 2 * inp["rr"] + 2 * inp["wall"],
-        bolt_fix=bolt_fix, so_cant=so_cant, Fb_work=Fb_work, share=share,
+        bolt_fix=bolt_fix, so_cant=so_cant, so_tie=so_tie, Fb_work=Fb_work, share=share,
+        Mc=Mc, Mp=Mp, so_ring_c=so_ring_c, so_ring_p=so_ring_p,
         Es_ring=Es_ring, Es_in=Es_in,
     )

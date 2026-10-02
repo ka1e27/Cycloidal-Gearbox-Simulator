@@ -215,6 +215,8 @@ export function Segmented<T extends string | number>({
   label,
   size = 'md',
   fullWidth,
+  help,
+  helpLabel,
 }: {
   value: T;
   options: { value: T; label: ReactNode; title?: string }[];
@@ -222,6 +224,10 @@ export function Segmented<T extends string | number>({
   label: string;
   size?: 'sm' | 'md';
   fullWidth?: boolean;
+  /** Info tip shown right after the group (for a segmented control that is not inside a FieldRow) */
+  help?: HelpEntry;
+  /** Name in the tip's title and its "About …" label; defaults to `label` */
+  helpLabel?: string;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const matched = options.findIndex((o) => o.value === value);
@@ -237,7 +243,7 @@ export function Segmented<T extends string | number>({
     onChange(options[n].value);
     refs.current[n]?.focus();
   };
-  return (
+  const group = (
     <div className={`seg seg-${size}${fullWidth ? ' seg-full' : ''}`} role="radiogroup" aria-label={label} onKeyDown={onKey}>
       {options.map((o, i) => (
         <button
@@ -255,6 +261,13 @@ export function Segmented<T extends string | number>({
         </button>
       ))}
     </div>
+  );
+  if (!help) return group;
+  return (
+    <span className={`seg-tip${fullWidth ? ' seg-tip-full' : ''}`}>
+      {group}
+      <InfoTip help={help} label={helpLabel ?? label} />
+    </span>
   );
 }
 
@@ -277,7 +290,8 @@ export function SelectField({
   symbol?: string;
   value: string;
   onChange: (v: string) => void;
-  options: { value: string; label: string; disabled?: boolean }[];
+  /** `title`: optional one-line hover text for the option */
+  options: { value: string; label: string; disabled?: boolean; title?: string }[];
   help?: HelpEntry;
   note?: ReactNode;
   /** Label on the left, select on the right (short lists). Default is stacked: label above a full-width select. */
@@ -290,7 +304,7 @@ export function SelectField({
       <div className="sf-box">
         <select id={id} className="sf-select" value={value} onChange={(e) => onChange(e.target.value)}>
           {options.map((o) => (
-            <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
+            <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>
           ))}
         </select>
         <Icon name="chevron" size={14} className="sf-chevron" />
@@ -304,11 +318,13 @@ export function Switch({
   onChange,
   label,
   description,
+  help,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   description?: ReactNode;
+  help?: HelpEntry;
 }) {
   const id = useId();
   return (
@@ -320,6 +336,7 @@ export function Switch({
         <span className="switch-label">{label}</span>
         {description && <span className="switch-desc">{description}</span>}
       </label>
+      {help && <InfoTip help={help} label={label} />}
     </div>
   );
 }

@@ -5,6 +5,7 @@ export * from './presets';
 export {
   checkGearbox, createGearboxModel, validateGearboxInputs, deriveGeometry, discShareOf,
   contactLimits, statusOf, GEARBOX_MAX, DEFAULT_NPF, DEFAULT_NTH, GREEN_LIMIT, UTIL_CAP,
+  innerPinSupportOf, INNER_PIN_SUPPORT_TEXT,
 } from './gearbox';
 export * from './arm';
 export * from './pose';

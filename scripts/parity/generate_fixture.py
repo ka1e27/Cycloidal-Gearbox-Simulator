@@ -51,6 +51,7 @@ def defaults():
         reqLifeH=2000.0, discMat=dict(MATS["al6061"]),
         outerPin=dict(kind="boltBushing", shank=3.0, **{"yield": 640.0}, mat=dict(STEEL)),
         innerPin=dict(kind="standoff", od=5.0, bore=2.46, **{"yield": 300.0}, mat=dict(STEEL)),
+        innerPinSupport="ringClamped",
     )
 
 
@@ -58,6 +59,37 @@ def diff(inp):
     """Keys of inp that differ from defaults(), for a compact fixture."""
     d0 = defaults()
     return {k: v for k, v in inp.items() if v != d0[k]}
+
+
+# ----------------------------------------------------------------------------- lead's closed form (cross-check)
+def _lead_closed_form():
+    """The lead's clamped-ring closed form from scripts/parity/standoff/standoff_ring.py (definitions only), used to
+    cross-check spec_checks.standoff_ring_unit on a subset of cases."""
+    path = os.path.join(HERE, "standoff", "standoff_ring.py")
+    src = open(path, encoding="utf-8").read().split('case("J2 1 disc')[0]
+    ns = {}
+    exec(src, ns)
+    return ns["ring_solve_closed_form"], ns["pin_loads"]
+
+
+LEAD_CLOSED, LEAD_PIN_LOADS = _lead_closed_form()
+
+
+def cross_check_ring(inp, Rw, Mc):
+    """Clamped-ring peak from the lead's closed form at 24 of the 240 sweep angles must not exceed Mc, and the peak
+    over those angles must equal the vectorized value at the same angles."""
+    Zw, Zc, L, gap, discs = inp["Zw"], inp["Zp"] - 1, inp["L"], inp["gap"], inp["discs"]
+    H = discs * L + (discs + 1) * gap
+    per_c, _ = sc.standoff_ring_unit(Zw, inp["Zp"], Rw, L, gap, discs, per_theta=True)
+    for i in range(0, 240, 10):
+        th = 2 * np.pi * i / 240
+        P, r, _F = LEAD_PIN_LOADS(Zw, Rw, Zc, th)
+        loads = [(gap + k * (L + gap) + L / 2, (1.0 if k == 0 else -1.0) * P) for k in range(discs)]
+        best, _ = LEAD_CLOSED(loads, r, H)
+        # the lead's routine also samples 401 interior points; the moment is piecewise linear, so same maximum
+        m = float(best.max())
+        assert abs(m - per_c[i]) <= 1e-9 * max(1.0, m), (inp, i, m, per_c[i])
+        assert m <= Mc * (1 + 1e-12)
 
 
 # ----------------------------------------------------------------------------- reference plumbing
@@ -146,10 +178,13 @@ def add_case(tag, inp, group, extra_ref_check=True):
     u = dict(p0r=p0r, Fr=Fr, p0w=p0w, Fw=Fw, Fb=Fb, Rw=geo["Rw"], dh=geo["dh"], Rroot=geo["R_root"],
              lig_bore=geo["lig_bore"], lig_holes=geo["lig_holes"], Estar_ref=ref.Estar)
     spec = sc.spec_checks(inp, u, ex)
+    if len(CASES) % 12 == 0:
+        cross_check_ring(inp, geo["Rw"], spec["Mc"])
     case = dict(
         id=len(CASES), tag=tag, g=group, x=diff(inp),
         u={k: rnd(v) for k, v in dict(p0r=p0r, Fr=Fr, p0w=p0w, Fw=Fw, Fb=Fb, Rw=geo["Rw"], dh=geo["dh"],
-                                      ligB=geo["lig_bore"], ligH=geo["lig_holes"], Rroot=geo["R_root"]).items()},
+                                      ligB=geo["lig_bore"], ligH=geo["lig_holes"], Rroot=geo["R_root"],
+                                      Mc=spec["Mc"], Mp=spec["Mp"]).items()},
         ex=dict(rho=rnd(ex["rho_min"]), cusp=ex["cusp"], under=ex["undercut"], area=rnd(ex["area"])),
         spec=dict(
             checks={c[0]: [rnd(c[1]), rnd(c[3]), c[4][0]] for c in spec["checks"]},  # value, utilization, status
@@ -159,6 +194,11 @@ def add_case(tag, inp, group, extra_ref_check=True):
             share=spec["share"],
         ),
     )
+    # keep the fixture small: maxUnc only when it differs from maxU, cuspFlag only when set
+    if case["spec"]["maxUnc"] == case["spec"]["maxU"]:
+        del case["spec"]["maxUnc"]
+    if not case["spec"]["cuspFlag"]:
+        del case["spec"]["cuspFlag"]
     if group == "A":
         s = ref_scaled(inp, geo, p0r, Fr, p0w, Fw, Fb)
         verify_against_printout(run_reference_print(tag, inp), inp, geo, s)
@@ -445,6 +485,17 @@ def build_cases():
     weaker("weaker: PETG bushing and PLA standoff on PLA disc", "pla", MATS["petg"], MATS["pla"])
     weaker("weaker: PLA bushing on PETG disc", "petg", MATS["pla"], steel)
     weaker("weaker: 4140 parts on 1018 disc", "st1018", MATS["st4140"], MATS["st4140"], Treq=2.25, Tdes=3.4)
+
+    # 11. group B, appended: the other two inner pin support models (pins free to rotate in the ring, no ring)
+    for support in ("ringPinned", "cantilever"):
+        for D, e, Treq, Tdes, discs in ((85.0, 1.3, 5.85, 8.8, 1), (85.0, 1.6, 5.85, 8.8, 2), (70.0, 1.07, 2.25, 3.4, 1)):
+            inp = defaults()
+            inp.update(D=D, e=e, Treq=Treq, Tdes=Tdes, discs=discs, innerPinSupport=support)
+            add_case(f"support {support}", inp, "B")
+    inp = defaults()
+    inp.update(D=90.0, e=1.2, Zw=9, L=9.525, gap=1.2, discs=2, Treq=4.0, Tdes=7.0, innerPinSupport="ringPinned",
+               innerPin=dict(kind="solid", od=5.0, bore=2.46, **{"yield": 300.0}, mat=dict(MATS["st4140"])))
+    add_case("support ringPinned solid", inp, "B")
 
 
 def main():

@@ -96,11 +96,27 @@ export function InfoTip({ help, label }: { help: HelpEntry; label: string }) {
           >
             <strong className="infotip-title">{help.title ?? label}</strong>
             <span>{u.text(help.what)}</span>
+            {help.why && <span className="infotip-why">{u.text(help.why)}</span>}
+            {(help.up || help.down) && (
+              <span className="infotip-effects">
+                {help.up && (
+                  <span className="infotip-effect">
+                    <em className="infotip-dir"><span aria-hidden="true">▲ </span>Raise</em> {u.text(help.up)}
+                  </span>
+                )}
+                {help.down && (
+                  <span className="infotip-effect">
+                    <em className="infotip-dir"><span aria-hidden="true">▼ </span>Lower</em> {u.text(help.down)}
+                  </span>
+                )}
+              </span>
+            )}
             {help.typical && (
               <span className="infotip-typical">
                 <em>Typical:</em> {u.text(help.typical)}
               </span>
             )}
+            {help.formula && <span className="infotip-formula">{u.text(help.formula)}</span>}
           </div>,
           document.body,
         )}

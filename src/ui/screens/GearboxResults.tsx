@@ -1,4 +1,4 @@
-import { POLYMER_WARNING_LINES, type Check, type GearboxResult } from '../../calc';
+import { POLYMER_WARNING_LINES, type Check, type GearboxResult, type InnerPinSupport } from '../../calc';
 import { Card, DataTable, Notice, ResponsiveTable, STATUS_WORD, StatusChip, UtilBar, verdictKind, type StatusKind } from '../components/primitives';
 import { checkLimit, checkValue, fixed, hours, num, util, DASH } from '../format';
 import { PLAIN, verdictHeadline } from '../plain';
@@ -87,14 +87,26 @@ export function PolymerCard() {
 // Checks table
 // ---------------------------------------------------------------------------
 
-function checkNote(c: Check, u: ReturnType<typeof useStore>['u']): string | null {
+function checkNote(c: Check, u: ReturnType<typeof useStore>['u'], used: InnerPinSupport): string | null {
   if (c.info && c.id === 'boltBending') {
     return `fixed-fixed ${u.fu('stress', c.info.fixedFixed, { dp: 0 })}, simply supported ${u.fu('stress', c.info.simplySupported, { dp: 0 })} (used)`;
   }
-  if (c.info && c.id === 'standoffBending') {
-    return `tie ring ${u.fu('stress', c.info.tieRing, { dp: 0 })} (used), cantilever ${u.fu('stress', c.info.cantilever, { dp: 0 })}`;
-  }
+  if (c.info && c.id === 'standoffBending') return standoffNote(c, used, u);
   return null;
+}
+
+/** "Ring (bolted) 61 MPa (used) · ring (pinned) 84 MPa · cantilever 113 MPa": the model used plus the other two as info. */
+export function standoffNote(c: Check, used: InnerPinSupport, u: ReturnType<typeof useStore>['u']): string {
+  const info = c.info ?? {};
+  const parts: [InnerPinSupport, string, number | undefined][] = [
+    ['ringClamped', 'ring (bolted)', info.ringClamped],
+    ['ringPinned', 'ring (pinned)', info.ringPinned],
+    ['cantilever', 'cantilever', info.cantilever],
+  ];
+  const s = parts
+    .map(([id, label, v]) => `${label} ${u.fu('stress', v ?? NaN, { dp: 0 })}${id === used ? ' (used)' : ''}`)
+    .join(' · ');
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /** `compact`: the narrow inspector column keeps it a table (smaller type, no bar) instead of stacking cards. */
@@ -118,7 +130,7 @@ export function CheckCards({ r, compact }: { r: GearboxResult; compact?: boolean
             const kind = c.status as StatusKind;
             const gov = r.governing?.id === c.id;
             const valueText = c.id === 'cusp' && !Number.isFinite(c.value) ? DASH : checkValue(c.id, c.value, c.unit, u);
-            const note = checkNote(c, u) ?? (c.id === 'cusp' && !Number.isFinite(c.value) ? 'no convex lobe to measure' : c.basis);
+            const note = checkNote(c, u, r.innerPinSupport) ?? (c.id === 'cusp' && !Number.isFinite(c.value) ? 'no convex lobe to measure' : c.basis);
             return (
               <tr key={c.id} className={gov ? 'is-gov' : undefined}>
                 <th scope="row" data-label="Check">

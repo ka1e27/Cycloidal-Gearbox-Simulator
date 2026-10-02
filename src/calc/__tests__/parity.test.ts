@@ -2,7 +2,7 @@
 //   (a) reference/cycloidal_disc_check.py (unit values and every scaled number the script prints), and
 //   (b) an independent Python implementation of the SPEC.md checks the script does not have
 //       (scripts/parity/spec_checks.py: ligament between holes, bolt / standoff limits, bearing, mass,
-//       utilization, status thresholds, verdict).
+//       utilization, status thresholds, verdict, and the inner pins tied by a floating ring: bolted / pinned tips).
 // The cases and the Python numbers live in scripts/parity/fixture.json (seeded, regenerate with
 // `npm run parity:gen`, see scripts/parity/README.md). Tolerance: 1e-6 relative.
 // `npm run parity` sets PARITY_REPORT=1 to print the per-quantity error table and the joint printout.
@@ -20,11 +20,16 @@ interface FixtureCase {
   tag: string;
   g: 'A' | 'B';
   x: Record<string, unknown>;
-  u: { p0r: number; Fr: number; p0w: number; Fw: number; Fb: number; Rw: number; dh: number; ligB: number; ligH: number; Rroot: number };
+  u: {
+    p0r: number; Fr: number; p0w: number; Fw: number; Fb: number; Rw: number; dh: number; ligB: number; ligH: number; Rroot: number;
+    /** tied-standoff peak bending moment per N*m on one disc (Kc = 1), N*mm: bolted ring / pinned tips */
+    Mc: number; Mp: number;
+  };
   ex: { rho: number | null; cusp: boolean; under: boolean; area: number };
   spec: {
     checks: Record<string, [number | null, number, string]>;
-    verdict: string; maxU: number; maxUnc: number; cuspFlag: boolean; mass: number; housingOD: number;
+    /** maxUnc is written only when it differs from maxU, cuspFlag only when true (keeps the fixture small) */
+    verdict: string; maxU: number; maxUnc?: number; cuspFlag?: boolean; mass: number; housingOD: number;
     boltFix: number; soCant: number; share: number;
   };
   ref?: {
@@ -51,6 +56,7 @@ function buildInputs(x: Record<string, any>): GearboxInputs { // eslint-disable-
   for (const k of ['Zp', 'Zw', 'D', 'e', 'L', 'rr', 'rw', 'Db', 'tMin', 'discs', 'gap', 'wall', 'Treq', 'Tdes', 'Kc', 'KcLife', 'discShare', 'rpm', 'reqLifeH'] as const) {
     if (k in x) (o as unknown as Record<string, unknown>)[k] = x[k];
   }
+  if (typeof x.innerPinSupport === 'string') o.innerPinSupport = x.innerPinSupport as GearboxInputs['innerPinSupport'];
   if (x.bearing) o.bearing = { name: 'fixture', C: x.bearing.C, C0: x.bearing.C0 };
   if (x.discMat) o.discMaterial = { ...(x.discMat as Mat) };
   if (x.outerPin) {
@@ -109,6 +115,8 @@ for (const c of fixture.cases) {
   cmp('ligament to bore', c, r.derived.ligBore, c.u.ligB);
   cmp('ligament between holes', c, r.derived.ligHoles, c.u.ligH);
   if (c.ex.rho !== null && !c.ex.under) cmp('min convex rho_a', c, r.unit.rhoMinConvex, c.ex.rho);
+  cmp('unit standoff moment, bolted ring', c, r.unit.MRingClamped, c.u.Mc);
+  cmp('unit standoff moment, pinned tips', c, r.unit.MRingPinned, c.u.Mp);
   if (c.g === 'A') {
     cmp('unit p0_ring', c, r.unit.p0Ring, c.u.p0r);
     cmp('unit p0_in', c, r.unit.p0Inner, c.u.p0w);
@@ -148,7 +156,8 @@ for (const c of fixture.cases) {
 
   // ---- independent SPEC implementation: every check, utilization, status
   const sp = c.spec;
-  const cusped = sp.cuspFlag;
+  const cusped = sp.cuspFlag === true;
+  const maxUnc = sp.maxUnc ?? sp.maxU;
   for (const chk of r.checks) {
     const e = sp.checks[chk.id];
     if (!e) { failures.push(`case ${c.id} [${c.tag}] unexpected check ${chk.id}`); continue; }
@@ -171,12 +180,16 @@ for (const c of fixture.cases) {
   if (r.checks.length !== Object.keys(sp.checks).length) failures.push(`case ${c.id} [${c.tag}] check count ${r.checks.length}`);
   cmp('bolt bending fixed-fixed (SPEC)', c, r.loads.boltBendingFixed, sp.boltFix);
   cmp('standoff cantilever (SPEC)', c, r.loads.standoffBendingCantilever, sp.soCant);
+  cmp('standoff tie ring heuristic cantilever / 2 (SPEC)', c, r.loads.standoffBendingTie, sp.soCant / 2);
+  if (r.innerPinSupport !== ((c.x.innerPinSupport as string | undefined) ?? 'ringClamped')) {
+    failures.push(`case ${c.id} [${c.tag}] inner pin support ${r.innerPinSupport}`);
+  }
   cmp('disc mass (total g)', c, r.mass.total_g, sp.mass);
   cmp('housing OD', c, r.derived.housingOD, sp.housingOD);
   cmp('disc share', c, r.derived.share, sp.share);
   if (cusped) {
     if (r.verdict !== 'fail') failures.push(`case ${c.id} [${c.tag}] cusp flagged but verdict ${r.verdict}`);
-    if (r.maxUtilization < sp.maxUnc * (1 - 1e-6)) failures.push(`case ${c.id} [${c.tag}] maxUtilization below other checks`);
+    if (r.maxUtilization < maxUnc * (1 - 1e-6)) failures.push(`case ${c.id} [${c.tag}] maxUtilization below other checks`);
     if (r.cusp !== true) failures.push(`case ${c.id} [${c.tag}] result.cusp false but py flags cusp/undercut`);
   } else {
     cmp('max utilization', c, r.maxUtilization, sp.maxU);
@@ -266,7 +279,8 @@ describe('parity with reference/cycloidal_disc_check.py and the independent SPEC
 
   it('covers edge cases: near-cusp, ligament exactly at t_min, very small and very large K1', () => {
     const tags = fixture.cases.map((c) => c.tag).join('|');
-    for (const t of ['cusp rho=0.3+0.1%', 'cusp rho=0.3-0.1%', 'undercut', 'ligBore exact', 'ligHoles exact', 'K1=0.05', 'K1=0.99', 'util boltBending']) {
+    for (const t of ['cusp rho=0.3+0.1%', 'cusp rho=0.3-0.1%', 'undercut', 'ligBore exact', 'ligHoles exact', 'K1=0.05', 'K1=0.99', 'util boltBending',
+      'util standoffBending', 'support ringPinned', 'support cantilever']) {
       expect(tags, t).toContain(t);
     }
     // the near-cusp pair really straddles the flag

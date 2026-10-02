@@ -4,7 +4,7 @@ import {
   BEARINGS, INNER_PIN_OPTIONS, OUTER_PIN_OPTIONS, DISC_STOCK_METAL, DISC_STOCK_POLYMER, ZP_OPTIONS,
 } from '../index';
 import type { AdvisorDesign, AdvisorProgress, GearboxInputs } from '../index';
-import { bearingUnitLoad, innerForceTable, ringUnit } from '../kernel';
+import { bearingUnitLoad, innerForceTable, ringUnit, standoffRingUnit } from '../kernel';
 import { buildChecks, deriveGeometry, scaleLoads } from '../gearbox';
 import type { UnitInputs } from '../gearbox';
 
@@ -221,6 +221,8 @@ describe('Design Advisor: minimality against an independent brute force', () => 
                     const unit: UnitInputs = {
                       p0RingUnit: p0, FRingUnit: u.F, p0InnerUnit: p0In, FInnerUnit, FbUnit,
                       rhoMinConvex: u.rhoMinConvex, cusp: u.cusp, undercut: u.undercut,
+                      ...(({ clamped, pinned }) => ({ MRingClamped: clamped, MRingPinned: pinned }))(
+                        standoffRingUnit(Zw, Zp, 120, discs, L, inp.gap, g.Rw)),
                     };
                     const checks = buildChecks(inp, g, unit, scaleLoads(inp, g, unit));
                     const mx = Math.max(...checks.map((c) => c.utilization));

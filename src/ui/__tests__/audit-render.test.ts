@@ -66,7 +66,11 @@ describe('audit: SPEC J2 case as displayed (metric)', () => {
     row('Inner hole contact, strength', /374 MPa ≤ 461 MPa/);
     row('Inner hole contact, life', /246 MPa ≤ 240 MPa/);
     row('Outer bolt bending', /122 MPa ≤ 256 MPa/);
-    row('Inner standoff bending', /57 MPa ≤ 150 MPa/);
+    // the check uses the inner pin support model (default: recessed + bolted tie ring); the SPEC tie / cantilever
+    // numbers (57 / 113) stay in the engine result and the cantilever value is shown on the row
+    row('Inner standoff bending', /61 MPa ≤ 150 MPa/);
+    expect(Math.abs(r.loads.standoffBendingTie / 57 - 1)).toBeLessThan(0.02);
+    expect(Math.abs(r.loads.standoffBendingCantilever / 113 - 1)).toBeLessThan(0.02);
     row('Bearing static', /475 N ≤ 585 N/);
   });
 
@@ -80,8 +84,15 @@ describe('audit: SPEC J2 case as displayed (metric)', () => {
     expect(after(t, 'Inner pin circle radius, Rw')).toMatch(/^\s*32\.9 mm/);
     expect(after(t, 'Housing outside diameter')).toMatch(/^\s*98\.0 mm/);
     expect(t).toMatch(/fixed-fixed 61 MPa, simply supported 122 MPa/); // 61-122
-    expect(t).toMatch(/tie ring 57 MPa \(used\), cantilever 113 MPa/); // 57 / 113
+    expect(t).toMatch(/Ring \(bolted\) 61 MPa \(used\) · ring \(pinned\) 84 MPa · cantilever 113 MPa/);
     expect(after(t, 'K1 (eccentricity ratio)')).toMatch(/^\s*0\.551/);
+  });
+
+  it('shows the inner pin support select with the bolted tie ring selected and a hover text on every option', () => {
+    expect(t).toMatch(/Inner pin support.{0,40}?Recessed \+ bolted tie ring \(default\) Tie ring, pins free to rotate in it No tie ring \(cantilever\)/);
+    expect(html).toMatch(/<option value="ringClamped" title="[^"]+" selected="">/);
+    expect(html).toMatch(/<option value="ringPinned" title="[^"]+">/);
+    expect(html).toMatch(/<option value="cantilever" title="[^"]+">/);
   });
 
   it('shows the SPEC unit case torque inputs (arm loads OFF) and the FAIL verdict', () => {
@@ -112,7 +123,7 @@ describe('audit: SPEC J2 case as displayed (imperial, exact conversions)', () =>
     expect(after(t, 'Inner pin circle radius, Rw')).toMatch(/^\s*1\.295 in/); // 32.9 mm
     expect(after(t, 'Housing outside diameter')).toMatch(/^\s*3\.858 in/); // 98 mm
     expect(t).toContain(`fixed-fixed ${ksi(r.loads.boltBendingFixed)} ksi, simply supported ${ksi(r.loads.boltBendingSimple)} ksi`);
-    expect(t).toContain(`tie ring ${ksi(r.loads.standoffBendingTie)} ksi (used), cantilever ${ksi(r.loads.standoffBendingCantilever)} ksi`);
+    expect(t).toContain(`Ring (bolted) ${ksi(r.loads.standoffBendingRingClamped)} ksi (used) · ring (pinned) ${ksi(r.loads.standoffBendingRingPinned)} ksi · cantilever ${ksi(r.loads.standoffBendingCantilever)} ksi`);
     // typed inputs: exactly 5.85 N*m = 51.78 lbf*in, stored SI value unchanged by the display
     expect(html).toMatch(/value="51\.78"/);
     expect(html).toMatch(/value="3\.346"/); // D 85 mm
@@ -183,7 +194,8 @@ describe('audit: engine values behind the SPEC J2 read-outs (printed for the rec
     const v = {
       ringStr: r.loads.p0RingStrength, ringLife: r.loads.p0RingLife, inStr: r.loads.p0InnerStrength, inLife: r.loads.p0InnerLife,
       FRing: r.loads.FRingPeak, FInner: r.loads.FInnerPeak, bolt: [r.loads.boltBendingFixed, r.loads.boltBendingSimple],
-      standoff: [r.loads.standoffBendingTie, r.loads.standoffBendingCantilever], brgPeak: r.loads.bearingPeak, L10h: r.loads.L10h,
+      standoff: [r.loads.standoffBendingTie, r.loads.standoffBendingCantilever],
+      standoffRing: [r.loads.standoffBendingRingClamped, r.loads.standoffBendingRingPinned], brgPeak: r.loads.bearingPeak, L10h: r.loads.L10h,
       Rw: r.derived.Rw, housingOD: r.derived.housingOD,
     };
     // eslint-disable-next-line no-console

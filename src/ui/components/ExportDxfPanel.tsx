@@ -11,7 +11,7 @@ import {
   type ExportTarget,
   type PartDrawing,
 } from '../../export/parts';
-import type { HelpEntry } from '../help';
+import { DXF_HELP } from '../help';
 import { useStore } from '../store';
 import { NumberField } from './NumberField';
 import { Advanced, Button, Card, FieldRow, Notice, Segmented } from './primitives';
@@ -38,19 +38,6 @@ function saveOptions(o: ExportOptions): void {
     /* ignore */
   }
 }
-
-const EXPORT_HELP: Record<string, HelpEntry> = {
-  units: { what: 'Unit written into the DXF ($INSUNITS). Coordinates are converted from millimetres; inch files are millimetres divided by 25.4.', typical: 'mm for waterjet and laser shops. Pick inches only if your CAM works in inches.' },
-  profileClearance: { what: 'Shrinks the disc profile: the lobes are cut along the pin-centre path offset by rr + this value. It gives the disc running clearance against the ring pins and absorbs the cutting kerf error.', typical: '0 for the exact SPEC profile. 0.05 to 0.15 mm if your process cuts oversize pins or you want free-running fit.' },
-  resolution: { what: 'How finely the disc outline is cut into straight segments. Either a fixed number of points per lobe, or the largest gap allowed between the segments and the true curve.', typical: '120 points per lobe (chord error under 0.005 mm for the presets). Waterjet CAM usually smooths it anyway.' },
-  discHoleClearance: { what: 'Extra diameter added to the disc centre bore and the inner pin holes. The holes are 2·rw + 2·e wide by design, so 0 is normal; add a little if your bearing is a slip fit.', typical: '0 mm. Bearing seats are often +0.02 to 0.05 mm.' },
-  pinHoleClearance: { what: 'Extra diameter on the pin holes in the housing and output plates (bolt shank, screw or solid pin) and on the bushing bore.', typical: '0.2 mm (M3 bolt: 3.2 mm hole).' },
-  shaftDia: { what: 'Diameter of the input shaft hole through the eccentric cam.', typical: '5 mm. Keep at least 1 mm of wall to the bearing seat.' },
-  bearingBore: { what: 'Inner diameter of the eccentric bearing = outside diameter of the cam. Left empty it is looked up from the bearing in the catalog.', typical: '10 mm for a 61800 bearing.' },
-  housingCentre: { what: 'Optional hole through the middle of the housing plate, for the input shaft or a bearing.', typical: 'Off by default.' },
-  plateOutline: { what: 'Outside diameter of the output / tie plate. Left empty it is 2·Rw + inner pin OD + 2 × 4 mm.', typical: 'About 10 to 25% less than the housing OD.' },
-  outputCentre: { what: 'Optional hole through the middle of the output / tie plate.', typical: 'Off by default.' },
-};
 
 const PART_BLURB: Record<string, string> = {
   disc: 'Profile, centre bore and inner pin holes',
@@ -126,7 +113,7 @@ export function ExportDxfPanel({
       <div className="dxf-units">
         <span className="dxf-units-label">
           Units
-          <InfoTip help={EXPORT_HELP.units} label="DXF units" />
+          <InfoTip help={DXF_HELP.units} label="DXF units" />
         </span>
         <Segmented
           label="DXF units"
@@ -211,11 +198,11 @@ export function ExportDxfPanel({
           onChange={(v) => patch({ profileClearance: v ?? 0 })}
           defaultValue={DEFAULT_EXPORT_OPTIONS.profileClearance}
           step={0.01}
-          help={EXPORT_HELP.profileClearance}
+          help={DXF_HELP.profileClearance}
           error={fieldErrors.profileClearance}
           note="Positive shrinks the disc (offset = rr + c)"
         />
-        <FieldRow label="Outline resolution" help={EXPORT_HELP.resolution} stacked>
+        <FieldRow label="Outline resolution" help={DXF_HELP.resolution} stacked>
           <Segmented
             label="Outline resolution mode"
             size="sm"
@@ -229,6 +216,7 @@ export function ExportDxfPanel({
           <NumberField
             label="Points per lobe"
             unit="pts"
+            help={DXF_HELP.resolution}
             value={opts.pointsPerLobe}
             onChange={(v) => patch({ pointsPerLobe: v ?? 120 })}
             defaultValue={DEFAULT_EXPORT_OPTIONS.pointsPerLobe}
@@ -239,6 +227,7 @@ export function ExportDxfPanel({
           <NumberField
             label="Max chord error"
             quantity="length"
+            help={DXF_HELP.resolution}
             value={opts.maxChordError}
             onChange={(v) => patch({ maxChordError: v ?? DEFAULT_EXPORT_OPTIONS.maxChordError })}
             defaultValue={DEFAULT_EXPORT_OPTIONS.maxChordError}
@@ -253,7 +242,7 @@ export function ExportDxfPanel({
           onChange={(v) => patch({ discHoleClearance: v ?? 0 })}
           defaultValue={DEFAULT_EXPORT_OPTIONS.discHoleClearance}
           step={0.01}
-          help={EXPORT_HELP.discHoleClearance}
+          help={DXF_HELP.discHoleClearance}
           error={fieldErrors.discHoleClearance}
         />
         <NumberField
@@ -263,7 +252,7 @@ export function ExportDxfPanel({
           onChange={(v) => patch({ pinHoleClearance: v ?? 0 })}
           defaultValue={DEFAULT_EXPORT_OPTIONS.pinHoleClearance}
           step={0.05}
-          help={EXPORT_HELP.pinHoleClearance}
+          help={DXF_HELP.pinHoleClearance}
           error={fieldErrors.pinHoleClearance}
         />
         <NumberField
@@ -273,7 +262,7 @@ export function ExportDxfPanel({
           onChange={(v) => patch({ shaftDia: v ?? DEFAULT_EXPORT_OPTIONS.shaftDia })}
           defaultValue={DEFAULT_EXPORT_OPTIONS.shaftDia}
           step={0.5}
-          help={EXPORT_HELP.shaftDia}
+          help={DXF_HELP.shaftDia}
           error={fieldErrors.shaftDia}
         />
         <NumberField
@@ -285,7 +274,7 @@ export function ExportDxfPanel({
           defaultValue={null}
           step={0.5}
           placeholder="from catalog"
-          help={EXPORT_HELP.bearingBore}
+          help={DXF_HELP.bearingBore}
           error={fieldErrors.bearingBore}
         />
         <NumberField
@@ -297,7 +286,7 @@ export function ExportDxfPanel({
           defaultValue={null}
           step={1}
           placeholder="auto"
-          help={EXPORT_HELP.plateOutline}
+          help={DXF_HELP.plateOutline}
           error={fieldErrors.plateOutlineDia}
         />
         <div className="dxf-toggle">
@@ -305,12 +294,13 @@ export function ExportDxfPanel({
             <input type="checkbox" checked={opts.housingCentreHole} onChange={(e) => patch({ housingCentreHole: e.target.checked })} />
             <span>Centre hole in housing plate</span>
           </label>
-          <InfoTip help={EXPORT_HELP.housingCentre} label="housing centre hole" />
+          <InfoTip help={DXF_HELP.housingCentre} label="housing centre hole" />
         </div>
         {opts.housingCentreHole && (
           <NumberField
             label="Housing centre hole diameter"
             quantity="length"
+            help={DXF_HELP.housingCentre}
             value={opts.housingCentreDia}
             onChange={(v) => patch({ housingCentreDia: v ?? DEFAULT_EXPORT_OPTIONS.housingCentreDia })}
             defaultValue={DEFAULT_EXPORT_OPTIONS.housingCentreDia}
@@ -323,12 +313,13 @@ export function ExportDxfPanel({
             <input type="checkbox" checked={opts.outputCentreHole} onChange={(e) => patch({ outputCentreHole: e.target.checked })} />
             <span>Centre hole in output / tie plate</span>
           </label>
-          <InfoTip help={EXPORT_HELP.outputCentre} label="output plate centre hole" />
+          <InfoTip help={DXF_HELP.outputCentre} label="output plate centre hole" />
         </div>
         {opts.outputCentreHole && (
           <NumberField
             label="Output plate centre hole diameter"
             quantity="length"
+            help={DXF_HELP.outputCentre}
             value={opts.outputCentreDia}
             onChange={(v) => patch({ outputCentreDia: v ?? DEFAULT_EXPORT_OPTIONS.outputCentreDia })}
             defaultValue={DEFAULT_EXPORT_OPTIONS.outputCentreDia}

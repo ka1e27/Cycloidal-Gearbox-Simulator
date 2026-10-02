@@ -4,6 +4,8 @@ import { useMemo } from 'react';
 import type { GearboxModel } from '../../calc';
 import { Button, Card, DataTable } from '../components/primitives';
 import { DASH, num } from '../format';
+import { InfoTip } from '../components/InfoTip';
+import { HELP } from '../help';
 import { useStore } from '../store';
 import { DiscSvg, ForceLegend } from '../viz/DiscFigure';
 import { PinForceChart, SweepChart } from '../viz/Charts';
@@ -19,14 +21,16 @@ function useDiscAt(model: GearboxModel, deg: number, n = 600) {
 
 function ThetaControls({ id }: { id: string }) {
   const { deg, setDeg, playing, setPlaying } = useDiscTheta();
+  // one wrapper (display: contents, so the layout is unchanged) groups the slider with its info tip
   return (
-    <>
+    <div className="theta-controls">
       <div className="slider-row">
         <Button variant="secondary" size="md" icon={playing ? 'pause' : 'play'} onClick={() => setPlaying((p) => !p)}
           aria-pressed={playing} aria-label={playing ? 'Pause animation' : 'Play animation'}>
           {playing ? 'Pause' : 'Play'}
         </Button>
         <div className="theta-read" aria-hidden="true">θ = {num(deg, 0)}°</div>
+        <InfoTip help={HELP.discTheta} label="Input angle θ" />
       </div>
       <label className="slider" htmlFor={id}>
         <span className="visually-hidden">Input angle theta in degrees</span>
@@ -34,7 +38,7 @@ function ThetaControls({ id }: { id: string }) {
           onChange={(e) => { setPlaying(false); setDeg(Number(e.target.value) % 360); }}
           aria-valuetext={`${num(deg, 0)} degrees`} />
       </label>
-    </>
+    </div>
   );
 }
 

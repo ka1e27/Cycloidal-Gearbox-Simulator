@@ -242,9 +242,10 @@ function JointHeaderRows({ joint: j, index: i }: { joint: ArmJoint; index: numbe
         </h2>
       </div>
       <div className="insp-ctl-row">
-        <Segmented<MotionType> value={j.motion} onChange={(m) => updateArm((x) => setMotion(x, j.id, m))} label={`Motion type of ${label}`} size="sm" options={motionOpts} />
-        <Segmented<DriveType> value={j.drive} onChange={(d) => updateArm((x) => patchJoint(x, j.id, { drive: d }))} label={`Drive of ${label}`} size="sm" options={DRIVE_OPTIONS} />
-        <InfoTip help={{ what: `${HELP.jointMotion.what} ${HELP.jointDrive.what}`, typical: HELP.jointDrive.typical }} label="Motion and drive" />
+        <Segmented<MotionType> value={j.motion} onChange={(m) => updateArm((x) => setMotion(x, j.id, m))} label={`Motion type of ${label}`} size="sm" options={motionOpts}
+          help={HELP.jointMotion} helpLabel="Motion type" />
+        <Segmented<DriveType> value={j.drive} onChange={(d) => updateArm((x) => patchJoint(x, j.id, { drive: d }))} label={`Drive of ${label}`} size="sm" options={DRIVE_OPTIONS}
+          help={HELP.jointDrive} helpLabel="Drive" />
       </div>
     </>
   );

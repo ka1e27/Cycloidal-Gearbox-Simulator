@@ -8,6 +8,7 @@ import {
 } from '../../calc';
 import { Button, Cu, Notice, ResponsiveTable, Segmented } from '../components/primitives';
 import { InfoTip } from '../components/InfoTip';
+import { HELP } from '../help';
 import { JointTag } from '../components/JointTag';
 import { DASH } from '../format';
 import { useStore } from '../store';
@@ -203,7 +204,7 @@ function PoseStageBody({ arm, res, selectedId, onSelectJoint, anglesOpen }: {
 
         <div className="pz-ov pz-ov-tr" ref={trRef}>
           <Segmented<ViewName | 'custom'> value={viewNameOf(cam) ?? 'custom'} onChange={(v) => { if (v !== 'custom') setCam({ ...VIEW_PRESETS[v] }); }}
-            label="Camera view" size="sm" options={VIEW_OPTIONS} />
+            label="Camera view" size="sm" options={VIEW_OPTIONS} help={HELP.cameraView} />
           <div className="pz-zoom" role="group" aria-label="Zoom">
             <button type="button" className="icon-btn pz-zbtn" onClick={() => zoomBy(1 / 1.25)} disabled={zp.zoom <= ZOOM_MIN + 1e-9} aria-label="Zoom out" title="Zoom out">−</button>
             <span className="pz-zval mono" aria-live="off">{Math.round(zp.zoom * 100)}%</span>

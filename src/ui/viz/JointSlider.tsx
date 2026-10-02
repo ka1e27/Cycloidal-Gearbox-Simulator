@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { MOTION_LABEL, hasLimits, jointLimits, validateJointLimits, type ArmJoint } from '../../calc';
 import { Button } from '../components/primitives';
+import { InfoTip } from '../components/InfoTip';
+import { HELP } from '../help';
 
 const fmtDeg = (x: number) => `${Math.round(x * 10) / 10}°`;
 
@@ -31,6 +33,7 @@ export function JointSlider({ joint: j, index: i, uid, angle, atStop, onAngle, o
   const pid = `${id}-lim`;
   return (
     <div className={`pz-slider${atStop ? ' is-stop' : ''}`}>
+      <span className="pz-slider-head">
       <label htmlFor={id} className="pz-slider-label">
         {label ? <span className="strong">{label}</span> : (
           <>
@@ -40,13 +43,18 @@ export function JointSlider({ joint: j, index: i, uid, angle, atStop, onAngle, o
           </>
         )}
       </label>
+      <InfoTip help={HELP.poseAngle} label={label ?? `J${i + 1} angle`} />
+      </span>
       <output htmlFor={id} className="pz-slider-val mono">{deg}°{atStop && <span className="pz-stoptag"> limit</span>}</output>
       <input id={id} type="range" min={Math.ceil(L.min)} max={Math.floor(L.max)} step={1} value={Math.min(Math.floor(L.max), Math.max(Math.ceil(L.min), deg))}
         aria-valuetext={`${deg} degrees${limited ? `, limits ${L.min} to ${L.max}` : ''}`}
         onChange={(e) => onAngle(Number(e.target.value))} />
-      <button type="button" className="pz-limbtn" aria-expanded={open} aria-controls={pid} onClick={() => setOpen((o) => !o)}>
-        Limits <span className="mono">{limited ? `${fmtDeg(L.min)} … ${fmtDeg(L.max)}` : '±180°'}</span>
-      </button>
+      <span className="pz-limrow">
+        <button type="button" className="pz-limbtn" aria-expanded={open} aria-controls={pid} onClick={() => setOpen((o) => !o)}>
+          Limits <span className="mono">{limited ? `${fmtDeg(L.min)} … ${fmtDeg(L.max)}` : '±180°'}</span>
+        </button>
+        <InfoTip help={HELP.poseLimits} label={`J${i + 1} limits`} />
+      </span>
       {open && (
         <div className="pz-limits" id={pid}>
           <label className="pz-limfield">

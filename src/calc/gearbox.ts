@@ -16,7 +16,9 @@ import {
   innerForceTable,
   pinStateAtTheta,
   ringSweep,
+  standoffRingUnit,
 } from './kernel';
+import { DEFAULT_INNER_PIN_SUPPORT, INNER_PIN_SUPPORTS } from './types';
 import type {
   Check,
   CheckId,
@@ -27,6 +29,7 @@ import type {
   GearboxInputs,
   GearboxModel,
   GearboxResult,
+  InnerPinSupport,
   MassEstimate,
   ResolutionOptions,
   ScaledLoads,
@@ -152,6 +155,9 @@ export function validateGearboxInputs(inp: GearboxInputs): { errors: string[]; w
         }
       } else if (inp.innerPin.construction !== 'solid') errors.push('Inner pin construction must be standoff or solid');
     }
+    if (inp.innerPinSupport !== undefined && !INNER_PIN_SUPPORTS.includes(inp.innerPinSupport)) {
+      errors.push('Inner pin support must be ringClamped, ringPinned or cantilever');
+    }
     if (errors.length) return { errors, warnings };
 
     const Rp = inp.D / 2;
@@ -236,7 +242,23 @@ export interface UnitInputs {
   rhoMinConvex: number;
   cusp: boolean;
   undercut: boolean;
+  /** Tied-standoff peak bending moments per N*m on one disc (Kc = 1), N*mm: bolted ring and pinned tips */
+  MRingClamped: number;
+  MRingPinned: number;
 }
+
+/** The inner pin support model in effect (a missing value, e.g. from an older session, is the bolted tie ring). */
+export function innerPinSupportOf(inp: Pick<GearboxInputs, 'innerPinSupport'>): InnerPinSupport {
+  const v = inp.innerPinSupport;
+  return v !== undefined && INNER_PIN_SUPPORTS.includes(v) ? v : DEFAULT_INNER_PIN_SUPPORT;
+}
+
+/** One-line description of each inner pin support model (check basis and UI). */
+export const INNER_PIN_SUPPORT_TEXT: Record<InnerPinSupport, string> = {
+  ringClamped: 'Recessed standoffs + bolted tie ring: fixed at the output face, tips tied by a floating ring',
+  ringPinned: 'Recessed standoffs + tie ring, tips free to rotate: fixed at the output face, tips tied by a floating ring',
+  cantilever: 'No tie ring: each pin is a cantilever fixed at the output face',
+};
 
 export function scaleLoads(inp: GearboxInputs, g: DerivedGeometry, u: UnitInputs): ScaledLoads {
   const s = g.share;
@@ -248,6 +270,11 @@ export function scaleLoads(inp: GearboxInputs, g: DerivedGeometry, u: UnitInputs
   const Zi = innerPinSectionModulus(inp.innerPin, inp.rw);
   const standoffArm = inp.gap + (inp.discs - 1) * (inp.L + inp.gap) + inp.L / 2;
   const so = (FInnerPeak * standoffArm) / Zi;
+  const torque = inp.Kc * inp.Tdes * s;
+  const ringC = (u.MRingClamped * torque) / Zi;
+  const ringP = (u.MRingPinned * torque) / Zi;
+  const model = innerPinSupportOf(inp);
+  const used = model === 'ringClamped' ? ringC : model === 'ringPinned' ? ringP : so;
   const bearingPeak = u.FbUnit * inp.Tdes * s;
   const bearingWorking = u.FbUnit * inp.Treq * s;
   const L10h = bearingWorking > 0
@@ -265,6 +292,9 @@ export function scaleLoads(inp: GearboxInputs, g: DerivedGeometry, u: UnitInputs
     standoffBendingTie: so / 2,
     standoffBendingCantilever: so,
     standoffArm,
+    standoffBendingRingClamped: ringC,
+    standoffBendingRingPinned: ringP,
+    standoffBending: used,
     bearingPeak,
     bearingWorking,
     L10h,
@@ -312,11 +342,14 @@ export function buildChecks(
         : 'Simply-supported value vs 0.4 x bolt yield (fatigue)',
       { fixedFixed: l.boltBendingFixed, simplySupported: l.boltBendingSimple }),
     mkCheck('standoffBending', inp.innerPin.construction === 'solid' ? 'Inner pin bending' : 'Inner standoff bending',
-      l.standoffBendingTie, soLim, 'MPa', 'max',
-      inp.innerPin.construction === 'solid'
-        ? 'Tie-ring value vs min(0.5 Sy, sigma_f) of the pin material'
-        : 'Tie-ring value vs 0.5 x standoff yield',
-      { tieRing: l.standoffBendingTie, cantilever: l.standoffBendingCantilever }),
+      l.standoffBending, soLim, 'MPa', 'max',
+      `${INNER_PIN_SUPPORT_TEXT[innerPinSupportOf(inp)]}. Peak bending vs ${inp.innerPin.construction === 'solid'
+        ? 'min(0.5 Sy, sigma_f) of the pin material'
+        : '0.5 x standoff yield'}`,
+      {
+        ringClamped: l.standoffBendingRingClamped, ringPinned: l.standoffBendingRingPinned,
+        cantilever: l.standoffBendingCantilever, specTieRing: l.standoffBendingTie,
+      }),
     mkCheck('bearingStatic', 'Bearing static', l.bearingPeak, inp.bearing.C0, 'N', 'max',
       'Peak eccentric bearing load (design torque) vs static rating C0'),
     mkCheck('bearingLife', 'Bearing life (L10h)', l.L10h, inp.reqLifeH, 'h', 'min',
@@ -355,13 +388,15 @@ function invalidResult(errors: string[], warnings: string[], derived?: DerivedGe
     warnings,
     polymerWarning: false,
     derived: derived ?? nanGeometry(),
-    unit: { p0Ring: n, FRing: n, p0Inner: n, FInner: n, Fb: n, rhoMinConvex: n },
+    unit: { p0Ring: n, FRing: n, p0Inner: n, FInner: n, Fb: n, rhoMinConvex: n, MRingClamped: n, MRingPinned: n },
     loads: {
       p0RingStrength: n, p0RingLife: n, p0InnerStrength: n, p0InnerLife: n, FRingPeak: n, FInnerPeak: n,
       boltBendingFixed: n, boltBendingSimple: n, standoffBendingTie: n, standoffBendingCantilever: n,
-      standoffArm: n, bearingPeak: n, bearingWorking: n, L10h: n,
+      standoffArm: n, standoffBendingRingClamped: n, standoffBendingRingPinned: n, standoffBending: n,
+      bearingPeak: n, bearingWorking: n, L10h: n,
     },
     checks: [],
+    innerPinSupport: DEFAULT_INNER_PIN_SUPPORT,
     verdict: 'invalid',
     governing: null,
     maxUtilization: UTIL_CAP,
@@ -435,6 +470,7 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
   const gt = innerForceTable(inp.Zw, inp.Zp, nth);
   const fbArr = new Float64Array(nth);
   const FbUnit = bearingUnitLoad(sw, gt, g.Rw, fbArr);
+  const ring = standoffRingUnit(inp.Zw, inp.Zp, nth, inp.discs, inp.L, inp.gap, g.Rw);
 
   const FInnerUnit = 4000 / (inp.Zw * g.Rw);
   const invRin = 1 / inp.rw - 1 / (g.dh / 2);
@@ -444,6 +480,7 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
   const u: UnitInputs = {
     p0RingUnit, FRingUnit: sw.F, p0InnerUnit, FInnerUnit, FbUnit,
     rhoMinConvex: prof.rhoMinConvex, cusp: prof.cusp, undercut: prof.undercut,
+    MRingClamped: ring.clamped, MRingPinned: ring.pinned,
   };
   const loads = scaleLoads(inp, g, u);
   const checks = buildChecks(inp, g, u, loads);
@@ -487,7 +524,7 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
   const errors: string[] = [];
   const probe: [string, number][] = [
     ['ring contact', p0RingUnit], ['inner contact', p0InnerUnit], ['bearing load', FbUnit],
-    ['bolt bending', loads.boltBendingSimple], ['standoff bending', loads.standoffBendingTie],
+    ['bolt bending', loads.boltBendingSimple], ['standoff bending', loads.standoffBending],
     ['ring pin force', loads.FRingPeak], ['inner pin force', loads.FInnerPeak],
     ['ring contact stress', loads.p0RingStrength], ['inner contact stress', loads.p0InnerStrength],
     ['bearing peak load', loads.bearingPeak], ['disc area', prof.area],
@@ -509,10 +546,11 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
     derived: g,
     unit: {
       p0Ring: p0RingUnit, FRing: sw.F, p0Inner: p0InnerUnit, FInner: FInnerUnit, Fb: FbUnit,
-      rhoMinConvex: prof.rhoMinConvex,
+      rhoMinConvex: prof.rhoMinConvex, MRingClamped: ring.clamped, MRingPinned: ring.pinned,
     } satisfies UnitResults,
     loads,
     checks,
+    innerPinSupport: innerPinSupportOf(inp),
     verdict: w.verdict,
     governing: w.governing,
     maxUtilization: w.max,

@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import { jointLabel, type ArmInputs } from '../../calc';
 import { Segmented } from '../components/primitives';
+import { HELP } from '../help';
 import { useStore } from '../store';
 
 import { hit, layoutArm, placeLabels, type Box, type LabelRequest, type PoseMode } from './armLayout';
@@ -63,7 +64,7 @@ export function ArmDiagram({ arm }: { arm: ArmInputs }) {
   const mass_ = (g: number) => u.fu('mass', g, { dp: 1, trim: true });
   const poseSwitch = (
     <div className="armfig-tools">
-      <Segmented<PoseMode> value={mode} onChange={setMode} label="Drawing pose" size="sm" options={POSES} />
+      <Segmented<PoseMode> value={mode} onChange={setMode} label="Drawing pose" size="sm" options={POSES} help={HELP.drawingPose} />
     </div>
   );
   if (n === 0) return <div ref={ref} className="armfig">{poseSwitch}<p className="armfig-cap">Add a joint to see the arm.</p></div>;

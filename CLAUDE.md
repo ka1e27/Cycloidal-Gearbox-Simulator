@@ -216,6 +216,17 @@ CAD tool:
   Details | Summary).
 - Nothing is removed; every existing feature has an obvious home.
 
+## Addition 11 — Inner standoff support model (overrides the SPEC "tie ring ≈ cantilever/2")
+The user's standoffs are recessed and bolted into the output face and bolted to a common
+free-floating tie ring on the far side. The inner pin bending check uses a statically
+indeterminate model (`innerPinSupport`):
+- each pin is fixed at the output face
+- the tips are tied by a rigid floating ring (ΣF = 0, Σr×F = 0)
+- the tips have zero slope when the ring is bolted ('ringClamped', the default), or free slope ('ringPinned')
+- both discs load the pins at their mid-planes, in opposite directions
+The derivation and an exact-constraint FEM check are in `scripts/parity/standoff/`. The SPEC
+heuristic (σ_cant/2) and the cantilever stress stay in the results for reference/parity only.
+
 ## UI / UX — "very nice and very user friendly"
 - Clean engineering-tool look: light and dark themes (follow the OS, plus a toggle), one accent
   color, generous spacing, clear typographic hierarchy, cards, no clutter. Responsive down to

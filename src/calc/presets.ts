@@ -1,7 +1,8 @@
 // Default inputs and the SPEC.md joint presets.
 
 import { materialProps, SPEC_STEEL } from './materials';
-import type { GearboxInputs } from './types';
+import { DEFAULT_INNER_PIN_SUPPORT, INNER_PIN_SUPPORTS } from './types';
+import type { GearboxInputs, InnerPinSupport } from './types';
 
 export type JointId = 'J1' | 'J2' | 'J3' | 'J4';
 export const JOINT_IDS: readonly JointId[] = ['J1', 'J2', 'J3', 'J4'];
@@ -22,6 +23,7 @@ export function defaultGearboxInputs(): GearboxInputs {
     gap: 0.5,
     RwOverride: null,
     wall: 4,
+    innerPinSupport: DEFAULT_INNER_PIN_SUPPORT,
     discMaterial: materialProps('al-6061'),
     outerPin: {
       construction: 'boltBushing',
@@ -116,5 +118,8 @@ export function normalizeGearboxInputs(partial: unknown): GearboxInputs {
     }
     return out as T;
   };
-  return merge(d, p);
+  const out = merge(d, p);
+  // an unknown or missing support model (older sessions have none) is the bolted tie ring
+  if (!INNER_PIN_SUPPORTS.includes(out.innerPinSupport as InnerPinSupport)) out.innerPinSupport = DEFAULT_INNER_PIN_SUPPORT;
+  return out;
 }

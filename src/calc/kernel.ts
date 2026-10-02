@@ -352,3 +352,194 @@ export function ringUnit(Zp: number, D: number, e: number, rr: number, npf: numb
     undercut: prof.undercut, area: prof.area, sweep,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Inner standoffs tied by a floating ring (bending moment per unit torque)
+// ---------------------------------------------------------------------------
+//
+// Each inner pin is an Euler-Bernoulli beam fixed (recessed and bolted) at the output face, x = 0. At x = H the tips of
+// all pins are bolted to one free-floating rigid tie ring. Disc k loads every pin at a_k = gap + k(L + gap) + L/2 with
+// the reference sine-law force P_j = F_j u (u = (cos th, sin th)); a second disc is 180 deg out of phase, so it loads
+// the same pins with -P_j. The ring only moves as a rigid body in the plane (two translations, one rotation about the
+// axis), so its tip forces carry no net force and no net moment about the axis:
+//   Ft_j = -sum_k c(a_k) sign_k (P_j - Pbar - m z x r_j),  m = sum_j (r_j x P_j)_z / (Zw Rw^2)
+//   clamped tip (bolted ring, tip slope 0):  c = a^2 (3H - 2a) / H^3,  C_j = -sum_k sign_k P_j a_k^2 / (2H) - Ft_j H / 2
+//   pinned tip (tip slope free):             c = a^2 (3H - a) / (2 H^3), C_j = 0
+//   M_j(x) = Ft_j (H - x) + C_j + sum_{a_k > x} sign_k P_j (a_k - x), piecewise linear, so max |M| is at x in {0, a_k, H}.
+// Validated against an exact-constraint FEM in scripts/parity/standoff/ (see its README).
+
+export type RingTip = 'clamped' | 'pinned';
+
+/** One axial load station: position a (mm from the output face) and the force on every pin there (N). */
+export interface RingLoad { a: number; Px: ArrayLike<number>; Py: ArrayLike<number> }
+
+/**
+ * Peak bending moment magnitude over all pins and all sections (N*mm) for pins at (rx, ry) (mm), fixed at x = 0 and
+ * joined at x = H by a floating rigid ring, under the given loads. General form, used by the tests and as the
+ * reference for the fast sweep below.
+ */
+export function ringStandoffMoment(
+  rx: ArrayLike<number>, ry: ArrayLike<number>, loads: RingLoad[], H: number, tip: RingTip,
+): number {
+  const Zw = rx.length;
+  let R2 = 0;
+  for (let j = 0; j < Zw; j++) R2 += rx[j] * rx[j] + ry[j] * ry[j];
+  R2 /= Zw;
+  const Ftx = new Float64Array(Zw), Fty = new Float64Array(Zw);
+  const Cx = new Float64Array(Zw), Cy = new Float64Array(Zw);
+  for (const ld of loads) {
+    const a = ld.a;
+    const c = tip === 'clamped' ? (a * a * (3 * H - 2 * a)) / (H * H * H) : (a * a * (3 * H - a)) / (2 * H * H * H);
+    let mx = 0, my = 0, mz = 0;
+    for (let j = 0; j < Zw; j++) {
+      mx += ld.Px[j]; my += ld.Py[j];
+      mz += rx[j] * ld.Py[j] - ry[j] * ld.Px[j];
+    }
+    mx /= Zw; my /= Zw; mz /= Zw * R2;
+    for (let j = 0; j < Zw; j++) {
+      Ftx[j] -= c * (ld.Px[j] - mx + mz * ry[j]);
+      Fty[j] -= c * (ld.Py[j] - my - mz * rx[j]);
+      if (tip === 'clamped') {
+        Cx[j] -= (ld.Px[j] * a * a) / (2 * H);
+        Cy[j] -= (ld.Py[j] * a * a) / (2 * H);
+      }
+    }
+  }
+  if (tip === 'clamped') {
+    for (let j = 0; j < Zw; j++) { Cx[j] -= (Ftx[j] * H) / 2; Cy[j] -= (Fty[j] * H) / 2; }
+  }
+  const xs = [0, H, ...loads.map((l) => l.a)];
+  let best = 0;
+  for (let j = 0; j < Zw; j++) {
+    for (const x of xs) {
+      let Mx = Ftx[j] * (H - x) + Cx[j], My = Fty[j] * (H - x) + Cy[j];
+      for (const ld of loads) {
+        if (ld.a > x) { Mx += ld.Px[j] * (ld.a - x); My += ld.Py[j] * (ld.a - x); }
+      }
+      const m = Math.hypot(Mx, My);
+      if (m > best) best = m;
+    }
+  }
+  return best;
+}
+
+export interface StandoffRingSweep {
+  /** Peak |M| over theta, pins and sections, N*mm per N*m on one disc (Kc = 1): bolted ring (tip slope 0) */
+  clamped: number;
+  /** Same with the pin tips free to rotate in the ring */
+  pinned: number;
+  /** Per-theta peaks (only when requested) */
+  clampedTheta?: Float64Array;
+  pinnedTheta?: Float64Array;
+}
+
+/** Axial geometry: H (output face to ring) and the load stations a_k with their signs (+1 first disc, -1 second). */
+export function standoffStations(discs: number, L: number, gap: number): { H: number; a: number[]; sign: number[] } {
+  const n = discs === 2 ? 2 : 1;
+  const a: number[] = [], sign: number[] = [];
+  for (let k = 0; k < n; k++) { a.push(gap + k * (L + gap) + L / 2); sign.push(k === 0 ? 1 : -1); }
+  return { H: n * L + (n + 1) * gap, a, sign };
+}
+
+/**
+ * Sweep the reference input angles th_t = 2 pi t / nth and return the peak tied-standoff bending moment per N*m
+ * (one disc share, Kc = 1) for both tip conditions. Pin forces are the reference sine law (the forces behind the
+ * inner-pin / bearing sweep). At fixed (Zw, Zp, nth, discs, L, gap) the moment scales exactly as 1/Rw, which the
+ * cached `standoffRingUnit` uses.
+ */
+export function standoffRingSweep(
+  Zw: number, Zp: number, nth: number, discs: number, L: number, gap: number, Rw: number, perTheta = false,
+): StandoffRingSweep {
+  const Zc = Zp - 1;
+  const { H, a, sign } = standoffStations(discs, L, gap);
+  const nk = a.length;
+  // At the sections x in {0, H, a_k}: M_j(x) = alpha(x) D_j + beta(x) P_j, with Ft_j = -S D_j and
+  // D_j = P_j - Pbar - m z x r_j (the part of the load the rigid ring cannot take as a rigid-body motion).
+  const xs = [0, H, ...a];
+  const nx = xs.length;
+  let Sc = 0, Sp = 0, A2 = 0;
+  for (let k = 0; k < nk; k++) {
+    const ak = a[k];
+    Sc += (sign[k] * ak * ak * (3 * H - 2 * ak)) / (H * H * H);
+    Sp += (sign[k] * ak * ak * (3 * H - ak)) / (2 * H * H * H);
+    A2 += sign[k] * ak * ak;
+  }
+  const alphaC = new Float64Array(nx), alphaP = new Float64Array(nx);
+  const betaC = new Float64Array(nx), betaP = new Float64Array(nx);
+  for (let i = 0; i < nx; i++) {
+    const x = xs[i];
+    let tail = 0;
+    for (let k = 0; k < nk; k++) if (a[k] > x) tail += sign[k] * (a[k] - x);
+    // clamped: Ft (H - x) + C with C = -P A2 / (2H) - Ft H / 2  ->  Ft (H/2 - x) - P A2 / (2H)
+    alphaC[i] = -Sc * (H / 2 - x);
+    betaC[i] = tail - A2 / (2 * H);
+    // pinned: Ft (H - x)
+    alphaP[i] = -Sp * (H - x);
+    betaP[i] = tail;
+  }
+  const cs = new Float64Array(Zw), sn = new Float64Array(Zw), F = new Float64Array(Zw);
+  const ct = perTheta ? new Float64Array(nth) : undefined;
+  const pt = perTheta ? new Float64Array(nth) : undefined;
+  let bestC = 0, bestP = 0;
+  for (let t = 0; t < nth; t++) {
+    const th = (TWO_PI * t) / nth;
+    const ux = Math.cos(th), uy = Math.sin(th);
+    let sumSq = 0;
+    for (let j = 0; j < Zw; j++) {
+      const chi = (TWO_PI * j) / Zw - th / Zc;
+      const c = Math.cos(chi), s = Math.sin(chi);
+      cs[j] = c; sn[j] = s;
+      const q = -c * uy + s * ux; // tq_j / Rw of the reference; loaded where q < 0
+      if (q < 0) { F[j] = -q; sumSq += q * q; } else F[j] = 0;
+    }
+    let mC = 0, mP = 0;
+    if (sumSq > 0) {
+      const k = 1000 / (Rw * sumSq);
+      let fs = 0, mz = 0;
+      for (let j = 0; j < Zw; j++) {
+        F[j] *= k;
+        fs += F[j];
+        mz += Rw * (cs[j] * uy - sn[j] * ux) * F[j]; // (r_j x P_j)_z
+      }
+      const pbx = (fs / Zw) * ux, pby = (fs / Zw) * uy;
+      mz /= Zw * Rw * Rw;
+      for (let j = 0; j < Zw; j++) {
+        const Px = F[j] * ux, Py = F[j] * uy;
+        const Dx = Px - pbx + mz * Rw * sn[j];
+        const Dy = Py - pby - mz * Rw * cs[j];
+        for (let i = 0; i < nx; i++) {
+          const Mcx = alphaC[i] * Dx + betaC[i] * Px, Mcy = alphaC[i] * Dy + betaC[i] * Py;
+          const Mpx = alphaP[i] * Dx + betaP[i] * Px, Mpy = alphaP[i] * Dy + betaP[i] * Py;
+          const vc = Mcx * Mcx + Mcy * Mcy, vp = Mpx * Mpx + Mpy * Mpy;
+          if (vc > mC) mC = vc;
+          if (vp > mP) mP = vp;
+        }
+      }
+      mC = Math.sqrt(mC); mP = Math.sqrt(mP);
+    }
+    if (ct && pt) { ct[t] = mC; pt[t] = mP; }
+    if (mC > bestC) bestC = mC;
+    if (mP > bestP) bestP = mP;
+  }
+  return { clamped: bestC, pinned: bestP, clampedTheta: ct, pinnedTheta: pt };
+}
+
+const standoffRingCache = new Map<string, { clamped: number; pinned: number }>();
+
+/**
+ * Cached peak tied-standoff moments, N*mm per N*m on one disc (Kc = 1), for both tip conditions. Swept once at
+ * Rw = 1 per (Zw, Zp, nth, discs, L, gap) and scaled by 1/Rw (exact: the forces go as 1/Rw at fixed lever arms).
+ */
+export function standoffRingUnit(
+  Zw: number, Zp: number, nth: number, discs: number, L: number, gap: number, Rw: number,
+): { clamped: number; pinned: number } {
+  const key = `${Zw}:${Zp}:${nth}:${discs === 2 ? 2 : 1}:${L}:${gap}`;
+  let v = standoffRingCache.get(key);
+  if (!v) {
+    const s = standoffRingSweep(Zw, Zp, nth, discs, L, gap, 1);
+    v = { clamped: s.clamped, pinned: s.pinned };
+    if (standoffRingCache.size > 4096) standoffRingCache.clear();
+    standoffRingCache.set(key, v);
+  }
+  return { clamped: v.clamped / Rw, pinned: v.pinned / Rw };
+}

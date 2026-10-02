@@ -12,7 +12,7 @@ import {
   type InnerPinLock,
   type OuterPinLock,
 } from '../../calc';
-import type { HelpEntry } from '../help';
+import { LOCK_HELP } from '../help';
 import {
   LOCK_VAR_KEYS,
   defaultLockState,
@@ -38,19 +38,6 @@ import type { Slot } from '../session';
 import { useStore } from '../store';
 import { inchFraction, inputText, niceStep, type Quantity } from '../units';
 import '../../styles/advisor-locks.css';
-
-const HELPS: Record<LockVarKey | 'maxHousingOD', HelpEntry> = {
-  Zp: { what: 'Number of outer pins. The gear ratio is Zp − 1 : 1. Lock it to keep the ratio your joint needs; free it and the advisor tries Zp = 12, 14, …, 26 (slower); From motor tries only the Zp your motor can drive (torque and speed), then picks the smallest housing.', typical: '18 gives 17:1.' },
-  D: { what: 'Diameter of the circle through the outer pin centres. It mostly sets the size of the gearbox. Any value is accepted when locked, not only whole millimetres.', typical: 'Free: 30 to 150 mm in 1 mm steps.' },
-  e: { what: 'Eccentricity. If you lock e and leave D free, the advisor searches D with this e, so K1 = e·Zp / Rp simply follows D.', typical: 'Free: K1 from 0.40 to 0.85.' },
-  outerPin: { what: 'Outer pin (bushing) size. Pick a catalog size or enter your own outside diameter (and bolt shank for a bolt + bushing).', typical: 'Free: 3, 4, 5, 6, 8 and 10 mm.' },
-  innerPin: { what: 'Inner (output) pin size. Pick a catalog standoff or enter your own outside diameter (and bore for a standoff).', typical: 'Free: 4.5 to 10 mm.' },
-  Zw: { what: 'Number of inner (output) pins.', typical: 'Free: 4 to 10.' },
-  L: { what: 'Disc thickness, also the contact length. Any thickness is accepted when locked; free, the advisor uses stock plate sizes.', typical: 'Free: 3.175 to 12.7 mm for metals.' },
-  discs: { what: 'One disc, or two discs 180° apart that each take about 55% of the torque.', typical: 'Free: tries both.' },
-  bearing: { what: 'Eccentric bearing in the disc centre bore. The bore diameter of the disc equals the bearing OD. Ratings C and C0 are approximate: verify on the datasheet.', typical: 'Free: the eight 618xx / 600x bearings of the catalog.' },
-  maxHousingOD: { what: 'Optional limit on the housing outside diameter (D + 2·rr + 2·wall). The advisor only considers designs that fit inside it.', typical: 'Off by default.' },
-};
 
 // ---------------------------------------------------------------------------
 // Small controls
@@ -414,7 +401,7 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
               <div className="lv-name">
                 <span className="lv-name-text">{name}</span>
                 {sym && <span className="row-sym" aria-hidden="true">{sym}</span>}
-                <InfoTip help={HELPS[k]} label={name} />
+                <InfoTip help={LOCK_HELP[k]} label={name} />
               </div>
               <div className="lv-value">
                 {locked ? control : (
@@ -451,7 +438,7 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
           <div className="lv-name">
             <span className="lv-name-text">Maximum housing OD</span>
             <span className="lv-opt">optional limit</span>
-            <InfoTip help={HELPS.maxHousingOD} label="Maximum housing OD" />
+            <InfoTip help={LOCK_HELP.maxHousingOD} label="Maximum housing OD" />
           </div>
           <div className="lv-value">
             {ls.limitOn

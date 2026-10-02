@@ -25,6 +25,7 @@ interface GearboxInputs {
   Zp; Zw; D; e; L; rr; rw; Db; tMin; discs; gap;   // SPEC geometry (mm; Zp, Zw integers; discs 1|2)
   RwOverride: number | null;                        // null = pins as far out as t_min allows
   wall: number;                                     // housing wall for housingOD, default 4 mm
+  innerPinSupport: 'ringClamped' | 'ringPinned' | 'cantilever';   // inner pin bending model, default 'ringClamped'
   discMaterial: MaterialProps;                      // {E, nu, Sy, sigmaF, density, kind}
   outerPin: { construction: 'boltBushing' | 'solid'; shankDia; boltYield; material: MaterialProps };
   innerPin: { construction: 'standoff' | 'solid'; od; bore; standoffYield; material: MaterialProps };
@@ -38,6 +39,8 @@ interface GearboxInputs {
 * `defaultGearboxInputs()` – SPEC defaults (D 85, e 1.3, 6061-T6, M3 bolt + 5 mm bushing, M3 standoff, 61800).
 * `PRESETS.J1 | J2 | J3 | J4` (`JointId`) and `presetInputs(id)`, `JOINT_PRESET_SPECS` (labels, notes), `JOINT_IDS`.
 * `normalizeGearboxInputs(unknown)` – fills missing/garbage fields from the defaults. Use for localStorage/JSON import.
+  A missing or unknown `innerPinSupport` (older sessions have none) becomes `'ringClamped'`. `checkGearbox` also treats
+  a missing value as `'ringClamped'`; a present but unknown one is a validation error.
 * `validateGearboxInputs(inputs) -> { errors, warnings }` – for inline field validation. Every number has an upper
   bound (`GEARBOX_MAX`: D 10000 mm, e/L/rr/rw/t_min/gap/wall/pin diameters 1000 mm, Db 10000 mm, torques 1e6 N·m, Kc 100,
   rpm 1e6, life 1e9 h, bearing ratings 1e9 N, E 1e7 MPa, strengths 1e6 MPa, density 100 g/cm³) with a message such as
@@ -51,6 +54,12 @@ interface GearboxInputs {
 min(0.5·Sy, σf). E\* is computed from the real disc/pin pair for ring and inner contact separately
 (`derived.EstarRing`, `derived.EstarInner`). Note `rr`/`rw` are radii and are independent of
 `shankDia`/`od`: when you change the pin option in the UI, set both (`rr = OD/2`).
+
+**Inner pin support (`innerPinSupport`).** The inner pins are always fixed (recessed and bolted) at the output face.
+`'ringClamped'` (default, the arm's hardware): the far ends are bolted to one free-floating rigid tie ring, tip slope 0.
+`'ringPinned'`: tied by the ring but free to rotate in it. `'cantilever'`: no tie ring, the SPEC cantilever
+`F_in_pk·arm/Z`. `INNER_PIN_SUPPORTS` lists them, `INNER_PIN_SUPPORT_TEXT[model]` is the one-line description used
+in the check basis, `innerPinSupportOf(inputs)` resolves a missing value to the default.
 
 ## 2. Materials (`materials.ts`)
 
@@ -76,11 +85,14 @@ GearboxResult {
   valid; errors; warnings; polymerWarning: boolean;
   derived: { Zc, ratio, Rp, K1, dh, Rroot, Rw, RwIsOverride, ligBore, ligHoles, ligRoot,
              pinClearance, EstarRing, EstarInner, share, span, housingOD };
-  unit:    { p0Ring, FRing, p0Inner, FInner, Fb, rhoMinConvex };     // T = 1 N·m, one disc, Kc = 1
+  unit:    { p0Ring, FRing, p0Inner, FInner, Fb, rhoMinConvex,       // T = 1 N·m, one disc, Kc = 1
+             MRingClamped, MRingPinned };                             // tied-pin peak moment, N·mm
   loads:   { p0RingStrength, p0RingLife, p0InnerStrength, p0InnerLife, FRingPeak, FInnerPeak,
              boltBendingFixed, boltBendingSimple, standoffBendingTie, standoffBendingCantilever,
-             standoffArm, bearingPeak, bearingWorking, L10h };
+             standoffArm, standoffBendingRingClamped, standoffBendingRingPinned, standoffBending,
+             bearingPeak, bearingWorking, L10h };
   checks:  Check[];            // value, limit, unit, kind 'max'|'min', utilization, status, basis, info?
+  innerPinSupport;             // the model the standoffBending check used
   verdict: 'pass' | 'marginal' | 'fail' | 'invalid';
   governing: Check | null;     // the worst check = governing failure mode
   maxUtilization; contactScore; cusp: boolean;
@@ -93,8 +105,22 @@ Check ids: `ringContactStrength, ringContactLife, innerContactStrength, innerCon
 ligamentHoles, cusp, boltBending, standoffBending, bearingStatic, bearingLife`, plus `ligamentRoot`
 only when `RwOverride` is set. `utilization` = value/limit (`max`) or limit/value (`min`), finite, capped
 at 99. `status`: `ok` ≤ 0.85 (green), `marginal` ≤ 1.0 (amber), `fail` > 1.0 (red). Use an icon/text as
-well as colour. `boltBending.info = {fixedFixed, simplySupported}`, `standoffBending.info = {tieRing, cantilever}`
-(show the other value as info, SPEC asks for both). `derived.pinClearance` (< 1 mm also adds a warning) is
+well as colour. `boltBending.info = {fixedFixed, simplySupported}`. `standoffBending.info = {ringClamped, ringPinned,
+cantilever, specTieRing}` (MPa); the check value is `loads.standoffBending`, the one of the first three that
+`innerPinSupport` selects, and its `basis` names the model (e.g. "Recessed standoffs + bolted tie ring: fixed at the
+output face, tips tied by a floating ring. Peak bending vs 0.5 x standoff yield").
+
+Inner pin bending, tied model (`kernel.ts`: `standoffRingSweep`, cached `standoffRingUnit`, general
+`ringStandoffMoment`): pins are Euler-Bernoulli beams fixed at x = 0 (output face); H = discs·L + (discs+1)·gap;
+disc k loads every pin at a_k = gap + k(L+gap) + L/2 with the reference sine-law force P_j = F_j·u at the sweep angles
+θ_i = 2πi/nth (a second disc is 180° out of phase: −P_j on the same pins). The floating ring takes no net force and no
+net moment about the axis: Ft_j = −Σ_k c_k (P_j − P̄ − m ẑ×r_j), m = Σ(r_j×P_j)_z/(Zw Rw²); bolted ring
+c = a²(3H−2a)/H³ with tip couple C_j = −Σ P_j a²/(2H) − Ft_j H/2; pinned c = a²(3H−a)/(2H³), C_j = 0;
+M_j(x) = Ft_j(H−x) + C_j + Σ_{a_k>x} P_j(a_k−x), max at x ∈ {0, a_k, H}. `unit.MRing*` is the max over θ, pins and
+sections per N·m on one disc (Kc = 1); stress = M·Kc·T_des·share/Z. It scales exactly as 1/Rw, so the cache sweeps
+once at Rw = 1 per (Zw, Zp, nth, discs, L, gap). The SPEC heuristic `standoffBendingTie` = cantilever/2 and
+`standoffBendingCantilever` keep their SPEC values (57 / 113 MPa for J2) but the heuristic is no longer a check.
+Derivation and FEM validation: `scripts/parity/standoff/README.md`. `derived.pinClearance` (< 1 mm also adds a warning) is
 information, not a SPEC check. `sweep` is the "max ring p0 vs θ" chart (one point per input step, strength and
 life curves plus the two limit lines) and also has bearing load vs θ.
 
@@ -223,7 +249,8 @@ Options: `target` (default 0.85, clamped 0.7–1.0), `ratioVary` (Zp ∈ 12…26
 `kind`, 8 bearings). The pin *construction* and materials come from `inputs`. A manual `discShare` is ignored
 (1.0 / 0.55 used). Objective: smallest housing OD (`D + 2rr + 2wall`), then lower disc mass, fewer discs, lower max
 utilization. Every check (incl. both ligaments, cusp, bearings) must be ≤ `target`. The pick and alternatives are
-re-verified with `checkGearbox` at full resolution.
+re-verified with `checkGearbox` at full resolution. The inner pin bending check uses `inputs.innerPinSupport`; in the
+coarse search the tied-ring moment is swept once per (Zp, discs, L, Zw) at Rw = 1 and nthCoarse and rescaled by 1/Rw.
 
 ```ts
 AdvisorResult { valid; cancelled; errors; warnings; target; best: AdvisorDesign | null;

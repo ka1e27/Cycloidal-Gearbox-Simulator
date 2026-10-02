@@ -14,6 +14,7 @@ const GROUPS: { title: string; items: string[] }[] = [
       'Hard anodizing improves wear, not subsurface fatigue. It is not modeled.',
       'Bushing-on-bolt friction, pin rotation, disc tilt, thermal effects and dynamic impact are not modeled. The TMC2209 current limit should cap motor torque near T_des.',
       'Contact length assumes the full disc thickness bears on each pin.',
+      'Inner pin bending: the pins are beams fixed at the output face (recessed and bolted). With the default support their far ends are bolted to one free-floating rigid tie ring, so the tips cannot tilt and move only as the ring moves (two translations and a rotation). Each disc loads every pin at mid-thickness with the rigid-body sine-law force; a second disc is 180° out of phase. The peak moment over the input revolution, all pins and all sections is the check, scaled by Kc. "Pins free to rotate in the ring" frees the tip slope; "no tie ring" is the SPEC cantilever (F_in · arm). The SPEC estimate "tie ring = cantilever ÷ 2" is no longer the check. Ring and pin compliance, bolt-joint slip and the bore of a recessed pin are not modeled.',
       'The default yaw and roll torques are estimates until link masses come from CAD.',
     ],
   },

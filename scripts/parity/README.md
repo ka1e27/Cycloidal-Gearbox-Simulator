@@ -6,9 +6,10 @@ checks in `docs/SPEC.md`.
 | File | Role |
 |---|---|
 | `generate_fixture.py` | Seeded (20260930) case generator. Imports the reference module, sets its module globals (`Zp, Zw, L, rr, rw, Db, t_min, Kc, Kc_life, C_ECC, RPM_IN, Estar`) per case, calls `unit_case()` and `check()`, and writes `fixture.json`. |
-| `spec_checks.py` | Independent implementation of the SPEC formulas the script lacks (ligament between holes, bolt/standoff limits, bearing static + life, disc mass, utilization, status thresholds, verdict). Written from SPEC.md only; takes the unit numbers from the reference `unit_case()`. |
+| `spec_checks.py` | Independent implementation of the SPEC formulas the script lacks (ligament between holes, bolt/standoff limits, bearing static + life, disc mass, utilization, status thresholds, verdict). Written from SPEC.md only; takes the unit numbers from the reference `unit_case()`. The inner pin bending check uses the tied-standoff model (`standoff_ring_unit`, numpy, both tip conditions) selected by `innerPinSupport`, see `standoff/README.md`. |
+| `standoff/` | Derivation and FEM validation of the inner standoffs tied by a floating ring (README there). |
 | `solver_bruteforce.py` | Brute-forces the SPEC minimum-size solver with the reference `unit_case()` at full resolution on every (D, K1) point and writes `solver_fixture.json`. |
-| `fixture.json`, `solver_fixture.json` | Committed outputs (about 480 KB and 3 KB). The TS test only reads these, so it needs no Python. |
+| `fixture.json`, `solver_fixture.json` | Committed outputs (about 483 KB and 3 KB; `spec.maxUnc` is only written when it differs from `maxU`, `spec.cuspFlag` only when true). The TS test only reads these, so it needs no Python. |
 | `../../src/calc/__tests__/parity.test.ts` | Vitest side. Runs `checkGearbox` / `solveMinimumSize` on the same inputs and compares at 1e-6 relative. Part of `npm test`. |
 | `run.mjs` | Cross-platform runner behind the npm scripts. |
 
@@ -38,7 +39,8 @@ or `PYTHON=<venv>/Scripts/python npm run parity:gen` (runs `generate_fixture.py`
 for a given numpy; fixture values are rounded to 9 significant digits, so the engine can be compared at
 1e-6 with ample margin. Keep `fixture.json` under 500 KB (cases: 90 random, 90 random and feasible, corners,
 K1 0.05 to 0.99, near-cusp pairs at rho_a = 0.3 mm +/- 0.1 %, undercuts, ligament exactly at t_min
-and +/- 1e-7 mm, utilization thresholds, 50 SPEC-extras cases with other materials, bolts, standoffs and bearings).
+and +/- 1e-7 mm, utilization thresholds, 50 SPEC-extras cases with other materials, bolts, standoffs and bearings,
+the weaker-part contact cases, and 7 cases with the other two inner pin supports).
 
 ## What is compared
 
@@ -47,7 +49,9 @@ and +/- 1e-7 mm, utilization thresholds, 50 SPEC-extras cases with other materia
   The script's `check()` output is also parsed and asserted equal to the replicated formulas inside the generator.
 * Group B (50 cases): other gap, shank, standoff, yields, bearings, required life, disc share, disc and pin
   materials (including solid pins and polymers). Compared to `spec_checks.py` only.
-* Every case: all 11 checks (value, utilization, status), mass, housing OD, verdict, max utilization.
+* Every case: all 11 checks (value, utilization, status), mass, housing OD, verdict, max utilization, the tied-standoff
+  unit moments (bolted ring and pinned tips, `u.Mc` / `u.Mp`) and the SPEC heuristic tie value (cantilever / 2), which
+  stays a reported number while the inner pin bending check uses the tied model.
 * The script's PASS covers contact + ligament-to-bore + cusp, so it is compared with the same subset of TS checks.
   The script uses rounded limits 460/240; the engine uses 1.67 Sy = 460.92 and 0.577 sigma_f / 0.25 = 240.032.
   Cases built inside that window disagree on purpose and are listed as explained differences, as are the cases

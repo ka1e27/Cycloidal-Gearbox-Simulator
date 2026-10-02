@@ -59,7 +59,7 @@ export function AddJoint({ onAdded, compact }: { onAdded?: (id: string) => void;
   };
   return (
     <div className={`joint-add${compact ? ' is-compact' : ''}`}>
-      <Segmented<MotionType> value={newType} onChange={setNewType} label="Type of the joint to add" size="sm"
+      <Segmented<MotionType> value={newType} onChange={setNewType} label="Type of the joint to add" size="sm" help={HELP.jointMotion} helpLabel="Joint type"
         options={compact ? MOTION_OPTIONS.map((o) => ({ ...o, label: <span className="seg-icon" title={MOTION_LABEL[o.value]}><MotionIcon motion={o.value} size={18} /><span className="visually-hidden">{MOTION_LABEL[o.value]}</span></span> })) : MOTION_OPTIONS} />
       <Button variant="secondary" size="sm" disabled={n >= MAX_JOINTS} onClick={onAdd}
         title={n >= MAX_JOINTS ? `An arm has at most ${MAX_JOINTS} joints` : 'Add a joint at the tip of the arm'}>
