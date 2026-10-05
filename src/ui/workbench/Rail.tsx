@@ -12,6 +12,14 @@ import { MotionIcon } from '../viz/armSymbols';
 import { RENAME_EVENT } from './Inspector';
 import type { JointStatus } from './status';
 import { useJointStatuses } from './useStatuses';
+import { useFixAvailable } from '../fixes';
+
+/** Tiny "fix available" mark on an amber / red joint when a single change fixes its gearbox. */
+function FixMark({ slot, st }: { slot: string; st: JointStatus | undefined }) {
+  const ok = useFixAvailable(slot);
+  if (!ok || !st || (st.kind !== 'marginal' && st.kind !== 'fail')) return null;
+  return <span className="rail-fixmark" title="A single change fixes this gearbox: open it to see the highlighted fields">FIX</span>;
+}
 
 const STATUS_WORD_LOWER: Record<string, string> = { ok: 'ok', marginal: 'marginal', fail: 'fail', neutral: 'no check' };
 
@@ -111,6 +119,7 @@ export function Rail() {
                 <MotionIcon motion={j.motion} size={18} />
                 {!collapsed && <span className="rail-name">{name}</span>}
                 {!collapsed && <span className={`rail-tag${j.drive === 'servo' ? ' is-servo' : ''}`}>{j.drive === 'servo' ? 'servo' : 'gear'}</span>}
+                {j.drive === 'cycloidal' && <FixMark slot={j.id} st={st} />}
                 <Dot st={st} />
               </button>
               {!collapsed && (

@@ -579,3 +579,37 @@ export function analyzeJointMotor(
     check: checkMotor(load, spec, joint.drive, Zp ?? null),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Applying a recommended Zp: keep K1 ("Use recommended ratio" and the fix engine)
+// ---------------------------------------------------------------------------
+
+export const K1_MIN = 0.4;
+export const K1_MAX = 0.85;
+
+export interface ZpRescale {
+  /** e after the change, mm (rounded to 0.0001) */
+  e: number;
+  /** K1 before and after */
+  k1Before: number;
+  k1After: number;
+  /** The old K1 was outside 0.40..0.85 (or not usable), so the new one was clamped into the range */
+  clamped: boolean;
+  /** e did not change */
+  unchanged: boolean;
+}
+
+/**
+ * Eccentricity that keeps K1 = e·Zp / (D/2) when Zp changes: e_new = K1·Rp / Zp_new. A K1 outside 0.40..0.85
+ * (or a non-finite one) is clamped into the range first. D is not touched. Returns null for unusable numbers.
+ */
+export function rescaleEForZp(g: { D: number; e: number; Zp: number }, newZp: number): ZpRescale | null {
+  if (![g.D, g.e, g.Zp, newZp].every(Number.isFinite) || g.D <= 0 || g.Zp <= 0 || newZp <= 0) return null;
+  const Rp = g.D / 2;
+  const k1Before = (g.e * g.Zp) / Rp;
+  const target = Math.min(K1_MAX, Math.max(K1_MIN, k1Before));
+  const e = Math.round(((target * Rp) / newZp) * 1e4) / 1e4;
+  return {
+    e, k1Before, k1After: (e * newZp) / Rp, clamped: target !== k1Before, unchanged: Math.abs(e - g.e) < 1e-9,
+  };
+}

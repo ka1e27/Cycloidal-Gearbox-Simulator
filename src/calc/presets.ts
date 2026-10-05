@@ -1,6 +1,6 @@
 // Default inputs and the SPEC.md joint presets.
 
-import { materialProps, SPEC_STEEL } from './materials';
+import { materialForm, materialProps, SPEC_STEEL, type MaterialProps } from './materials';
 import { DEFAULT_INNER_PIN_SUPPORT, INNER_PIN_SUPPORTS } from './types';
 import type { GearboxInputs, InnerPinSupport } from './types';
 
@@ -121,5 +121,14 @@ export function normalizeGearboxInputs(partial: unknown): GearboxInputs {
   const out = merge(d, p);
   // an unknown or missing support model (older sessions have none) is the bolted tie ring
   if (!INNER_PIN_SUPPORTS.includes(out.innerPinSupport as InnerPinSupport)) out.innerPinSupport = DEFAULT_INNER_PIN_SUPPORT;
+  // stock form: older sessions have none, so it follows the saved kind (a missing value must not inherit the default's)
+  const rawMat = (x: unknown): Record<string, unknown> | null => (x && typeof x === 'object' ? x as Record<string, unknown> : null);
+  const fixForm = (m: MaterialProps, raw: Record<string, unknown> | null) => {
+    const f = raw?.form;
+    m.form = f === 'plate' || f === 'printed' ? f : materialForm({ kind: m.kind });
+  };
+  fixForm(out.discMaterial, rawMat(p.discMaterial));
+  fixForm(out.outerPin.material, rawMat(rawMat(p.outerPin)?.material));
+  fixForm(out.innerPin.material, rawMat(rawMat(p.innerPin)?.material));
   return out;
 }

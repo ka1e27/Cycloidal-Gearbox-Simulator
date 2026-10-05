@@ -49,6 +49,8 @@ export interface NumberFieldProps {
   disabled?: boolean;
   note?: ReactNode;
   className?: string;
+  /** Extra line under the field (e.g. a "fixes it" chip) */
+  addon?: ReactNode;
 }
 
 /**
@@ -130,6 +132,7 @@ export function NumberField(p: NumberFieldProps) {
       messageKind={err ? 'error' : warn ? 'warning' : 'note'}
       messageId={msgId}
       className={`nf${p.disabled ? ' is-disabled' : ''}${p.className ? ` ${p.className}` : ''}`}
+      addon={p.addon}
     >
       <div className="nf-box">
         <input

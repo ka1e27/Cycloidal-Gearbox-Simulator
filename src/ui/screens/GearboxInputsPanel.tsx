@@ -3,22 +3,29 @@ import {
   BEARINGS,
   BEARING_NOTE,
   INNER_PIN_SUPPORTS,
-  DISC_STOCK_METAL,
-  DISC_STOCK_POLYMER,
   INNER_PIN_OPTIONS,
   JOINT_IDS,
   JOINT_PRESET_SPECS,
   MATERIALS,
+  MATERIAL_FAMILIES,
   OUTER_PIN_OPTIONS,
   SPEC_STEEL,
   SUPPLIER_DATA_NOTE,
+  bearingsBySeries,
+  discStockFor,
+  materialForm,
   materialProps,
+  sameMaterialProps,
   validateGearboxInputs,
+  type Fix,
+  type FixField,
   type GearboxInputs,
   type GearboxResult,
   type InnerPinSupport,
   type MaterialProps,
 } from '../../calc';
+import { FixBadge, FixChip } from '../components/FixChips';
+import { fixesByField, useApplyFix, useFixes } from '../fixes';
 import { Advanced, Button, FieldRow, Notice, Section, SelectField, Segmented, Switch } from '../components/primitives';
 import { NumberField } from '../components/NumberField';
 import { HELP } from '../help';
@@ -51,8 +58,30 @@ export const INNER_PIN_SUPPORT_OPTIONS: Record<InnerPinSupport, { label: string;
 
 const SPEC_STEEL_ID = 'spec-steel';
 
-function matchesMaterial(a: MaterialProps, b: MaterialProps): boolean {
-  return a.E === b.E && a.nu === b.nu && a.Sy === b.Sy && a.sigmaF === b.sigmaF && a.density === b.density && a.kind === b.kind;
+const matchesMaterial = sameMaterialProps;
+
+/** The bearing picker's options, grouped by series (ultra-thin 67xx, thin 618xx, standard 60xx). */
+export function bearingOptions(u: U): { value: string; label: string; group: string }[] {
+  return bearingsBySeries().flatMap((g) => g.indices.map((i) => {
+    const b = BEARINGS[i];
+    return {
+      value: b.name,
+      group: g.label,
+      label: u.prefs.length === 'mm'
+        ? `${b.name}  (${b.bore}×${b.OD}×${b.width} mm)`
+        : `${b.name}  (${b.bore}×${b.OD}×${b.width} mm, OD ${u.fu('length', b.OD)})`,
+    };
+  }));
+}
+
+/** Library materials as select options grouped by family (Metals; Machined plastics; 3D-printed plastics). */
+function materialOptions(u: U): { value: string; label: string; group?: string }[] {
+  const out: { value: string; label: string; group?: string }[] = [];
+  for (const f of MATERIAL_FAMILIES) {
+    if (f.id === 'metal') out.push({ value: SPEC_STEEL_ID, label: u.text('Steel, generic (E 200 GPa)'), group: f.label });
+    for (const m of MATERIALS) if (m.family === f.id) out.push({ value: m.id, label: m.name, group: f.label });
+  }
+  return out;
 }
 
 function currentMaterialId(m: MaterialProps): string {
@@ -77,6 +106,10 @@ function MaterialPicker({
   full,
   help,
   extra,
+  showForm,
+  fixClass,
+  fixChip,
+  advBadge,
 }: {
   label: string;
   value: MaterialProps;
@@ -89,6 +122,13 @@ function MaterialPicker({
   help?: (typeof HELP)[string];
   /** Extra advanced rows shown above the property rows */
   extra?: ReactNode;
+  /** Show the stock form (plate / printed) switch: the disc only */
+  showForm?: boolean;
+  /** Fix highlight for the select and its chip */
+  fixClass?: string;
+  fixChip?: ReactNode;
+  /** Marker on the Advanced header when a fixing field sits inside it */
+  advBadge?: ReactNode;
 }) {
   const { u } = useStore();
   const id = currentMaterialId(value);
@@ -96,8 +136,7 @@ function MaterialPicker({
   const err = (key: string) => errors.find((e) => e.startsWith(`${errPrefix}: ${key}`)) ?? null;
   const set = (patch: Partial<MaterialProps>) => onChange({ ...value, ...patch });
   const options = [
-    { value: SPEC_STEEL_ID, label: u.text('Steel, generic (E 200 GPa)') },
-    ...MATERIALS.map((m) => ({ value: m.id as string, label: m.name })),
+    ...materialOptions(u),
     { value: 'custom', label: 'Custom (edited values)', disabled: id !== 'custom' },
   ];
   const pick = (v: string) => {
@@ -113,8 +152,10 @@ function MaterialPicker({
         options={options}
         help={help}
         note={lib ? lib.note : id === SPEC_STEEL_ID ? 'E 200 GPa, ν 0.30: the SPEC contact pair (E* = 57,259 MPa on 6061-T6).' : 'Edited values. Pick a material to reset them.'}
+        className={fixClass}
+        addon={fixChip}
       />
-      <Advanced label={`Advanced: ${full ? 'strength and stiffness' : 'contact stiffness'}`}>
+      <Advanced label={`Advanced: ${full ? 'strength and stiffness' : 'contact stiffness'}`} badge={advBadge}>
         {extra}
         <NumberField label="Young's modulus" symbol="E" quantity="stress" value={value.E} onChange={(v) => set({ E: v ?? 0 })}
           defaultValue={reference.E} error={err('E ')} help={HELP.E} step={1000} />
@@ -137,6 +178,17 @@ function MaterialPicker({
                 options={[{ value: 'metal', label: 'Metal' }, { value: 'polymer', label: 'Polymer' }]}
               />
             </FieldRow>
+            {showForm && (
+              <FieldRow label="Stock form" help={HELP.materialForm}>
+                <Segmented
+                  size="sm"
+                  label={`${label} stock form`}
+                  value={materialForm(value)}
+                  onChange={(f) => set({ form: f })}
+                  options={[{ value: 'plate', label: 'Plate' }, { value: 'printed', label: 'Printed' }]}
+                />
+              </FieldRow>
+            )}
           </>
         )}
       </Advanced>
@@ -160,6 +212,21 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
   const startedFrom = slot !== CUSTOM && !(JOINT_IDS as readonly string[]).includes(slot) && state.presetBase[slot] ? presetIdFor(slot, state.presetBase) : null;
   const set = (patch: Partial<GearboxInputs>) => updateGearbox(slot, (x) => ({ ...x, ...patch }));
   const v = useMemo(() => validateGearboxInputs(eff), [eff]);
+  // fix highlights ("how to fix"): every field that appears in a fix gets an accent border and a chip
+  const fx = useFixes(part === 'loads' ? null : slot);
+  const applyFix = useApplyFix();
+  const byField = useMemo(() => fixesByField(fx.report), [fx.report]);
+  const fixOf = (f: FixField): Fix | undefined => byField[f];
+  const hl = (...f: FixField[]) => (f.some((x) => byField[x]) ? 'has-fix' : undefined);
+  const chip = (f: FixField) => {
+    const x = byField[f];
+    return x ? <FixChip fix={x} onApply={(fix) => applyFix(slot, fix)} /> : undefined;
+  };
+  const badgeFor = (...f: FixField[]) => {
+    const list = f.map((x) => byField[x]).filter((x): x is Fix => !!x);
+    return list.length ? <FixBadge fixes={list} /> : undefined;
+  };
+  const insideBadge = (f: FixField) => (fixOf(f) ? <span className="fix-badge is-inside">{fixOf(f)!.passesTarget ? 'fix inside' : 'helps inside'}</span> : undefined);
   const pick = (list: string[], ...prefixes: string[]) => list.find((m) => prefixes.some((p) => m.startsWith(p))) ?? null;
   const E = (...p: string[]) => pick(v.errors, ...p);
   const W = (...p: string[]) => pick(v.warnings, ...p);
@@ -175,10 +242,11 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
   const outerMatch = OUTER_PIN_OPTIONS.find((o) => Math.abs(2 * g.rr - o.od) < 1e-9);
   const innerMatch = INNER_PIN_OPTIONS.find((o) => Math.abs(2 * g.rw - o.od) < 1e-9);
   const bearingMatch = BEARINGS.find((b) => b.name === g.bearing.name && b.C === g.bearing.C && b.C0 === g.bearing.C0);
-  const stock = g.discMaterial.kind === 'polymer' ? DISC_STOCK_POLYMER : DISC_STOCK_METAL;
+  const stock = discStockFor(g.discMaterial);
+  const plate = materialForm(g.discMaterial) === 'plate';
   const stockMatch = stock.find((s) => Math.abs(s - g.L) < 1e-9);
   const imperial = u.prefs.length === 'in';
-  const stockLabel = (s: number) => (imperial && g.discMaterial.kind !== 'polymer' ? `${inchFraction(s)} plate` : u.fu('length', s, { dp: 3, trim: true }));
+  const stockLabel = (s: number) => (imperial && plate ? `${inchFraction(s)} plate` : u.fu('length', s, { dp: 3, trim: true }));
 
   const derived = result.derived;
   const k1Note = Number.isFinite(derived.K1)
@@ -274,20 +342,30 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         </Notice>
       )}
 
-      <Section title="Geometry" summary={`${u.fu('length', eff.D, { dp: 1, trim: true })} · ${eff.discs} disc${eff.discs > 1 ? 's' : ''}`}>
+      {fx.report && fx.report.fixes.length > 0 && (
+        <p className="fix-intro" role="note">
+          <span className="fix-chip-mark">{fx.report.fixes.some((f) => f.passesTarget) ? 'FIX' : 'HELPS'}</span>{' '}
+          {fx.report.fixes.some((f) => f.passesTarget)
+            ? 'Highlighted fields can fix this design on their own. Click a chip to apply it (you can undo).'
+            : 'No single field gets every check to 0.85; the highlighted ones help the most. Combine two, or run the Design Advisor.'}
+        </p>
+      )}
+
+      <Section title="Geometry" badge={badgeFor('Zp', 'Zw', 'D', 'e', 'L', 'discs')} summary={`${u.fu('length', eff.D, { dp: 1, trim: true })} · ${eff.discs} disc${eff.discs > 1 ? 's' : ''}`}>
         <NumberField label="Outer pins (count)" symbol="Zp" value={g.Zp} onChange={(x) => set({ Zp: x ?? 0 })}
           defaultValue={ref.Zp} error={E('Zp ')} help={HELP.Zp} step={1}
-          note={Number.isInteger(g.Zp) && g.Zp >= 8 ? `Ratio ${g.Zp - 1}:1` : undefined} />
+          note={Number.isInteger(g.Zp) && g.Zp >= 8 ? `Ratio ${g.Zp - 1}:1` : undefined} className={hl('Zp')} addon={chip('Zp')} />
         <NumberField label="Inner pins (count)" symbol="Zw" value={g.Zw} onChange={(x) => set({ Zw: x ?? 0 })}
-          defaultValue={ref.Zw} error={E('Zw ')} help={HELP.Zw} step={1} />
+          defaultValue={ref.Zw} error={E('Zw ')} help={HELP.Zw} step={1} className={hl('Zw')} addon={chip('Zw')} />
         <NumberField label="Pin circle diameter" symbol="D" quantity="length" value={g.D} onChange={(x) => set({ D: x ?? 0 })}
-          defaultValue={ref.D} error={E('D ', 'Outer pin circle')} help={HELP.D} step={1} />
+          defaultValue={ref.D} error={E('D ', 'Outer pin circle')} help={HELP.D} step={1} className={hl('D')} addon={chip('D')} />
         <NumberField label="Eccentricity" symbol="e" quantity="length" value={g.e} onChange={(x) => set({ e: x ?? 0 })}
-          defaultValue={ref.e} error={E('e ', 'K1 ')} warning={W('K1 ')} help={HELP.e} step={0.01} note={k1Note} />
+          defaultValue={ref.e} error={E('e ', 'K1 ')} warning={W('K1 ')} help={HELP.e} step={0.01} note={k1Note} className={hl('e')} addon={chip('e')} />
         <NumberField label="Disc thickness" symbol="L" quantity="length" value={g.L} onChange={(x) => set({ L: x ?? 0 })}
-          defaultValue={ref.L} error={E('L ')} help={HELP.L} step={0.5} />
+          defaultValue={ref.L} error={E('L ')} help={HELP.L} step={0.5} className={hl('L')} addon={chip('L')} />
         <SelectField
           inline
+          className={hl('L')}
           label="Stock thickness"
           help={HELP.stockThickness}
           value={stockMatch != null ? String(stockMatch) : 'custom'}
@@ -297,7 +375,8 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
             { value: 'custom', label: 'Custom', disabled: stockMatch != null },
           ]}
         />
-        <FieldRow label="Discs" help={HELP.discs} message={E('discs ') ?? undefined} messageKind={E('discs ') ? 'error' : undefined}>
+        <FieldRow label="Discs" help={HELP.discs} message={E('discs ') ?? undefined} messageKind={E('discs ') ? 'error' : undefined}
+          className={hl('discs')} addon={chip('discs')}>
           <Segmented label="Number of discs" value={g.discs} onChange={(n) => set({ discs: n })}
             options={[{ value: 1, label: '1' }, { value: 2, label: '2' }]} />
         </FieldRow>
@@ -321,11 +400,13 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         </Advanced>
       </Section>
 
-      <Section title="Materials" summary={MATERIALS.find((m) => matchesMaterial(m, g.discMaterial))?.name ?? 'Custom disc'}>
+      <Section title="Materials" badge={badgeFor('discMaterial', 'rr', 'rw', 'innerPinSupport', 'outerPin.material', 'outerPin.boltYield', 'innerPin.material')}
+        summary={MATERIALS.find((m) => matchesMaterial(m, g.discMaterial))?.name ?? 'Custom disc'}>
         <p className="section-note">{SUPPLIER_DATA_NOTE}</p>
         <h4 className="subgroup-h">Disc</h4>
         <MaterialPicker label="Disc material" value={g.discMaterial} onChange={(m) => set({ discMaterial: m })}
-          reference={ref.discMaterial} errors={v.errors} errPrefix="Disc material" full help={HELP.discMaterial} />
+          reference={ref.discMaterial} errors={v.errors} errPrefix="Disc material" full help={HELP.discMaterial} showForm
+          fixClass={hl('discMaterial')} fixChip={chip('discMaterial')} />
 
         <h4 className="subgroup-h">Outer pins (ring)</h4>
         <FieldRow label="Construction" help={HELP.outerConstruction} stacked>
@@ -336,6 +417,8 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         <SelectField
           label={g.outerPin.construction === 'solid' ? 'Pin size' : 'Bolt and bushing size'}
           help={HELP.outerPinSize}
+          className={hl('rr')}
+          addon={chip('rr')}
           value={outerMatch ? String(outerMatch.od) : 'custom'}
           onChange={(val) => {
             const o = OUTER_PIN_OPTIONS.find((x) => String(x.od) === val);
@@ -358,6 +441,9 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           errPrefix="Outer pin material"
           help={HELP.pinMaterial}
           full={g.outerPin.construction === 'solid'}
+          fixClass={hl('outerPin.material')}
+          fixChip={chip('outerPin.material')}
+          advBadge={insideBadge('outerPin.boltYield')}
           extra={g.outerPin.construction === 'boltBushing' ? (
             <>
               <NumberField label="Bolt shank diameter" quantity="length" value={g.outerPin.shankDia}
@@ -365,7 +451,8 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
                 defaultValue={ref.outerPin.shankDia} error={E('Bolt shank')} help={HELP.shankDia} step={0.5} />
               <NumberField label="Bolt yield strength" quantity="stress" value={g.outerPin.boltYield}
                 onChange={(x) => set({ outerPin: { ...g.outerPin, boltYield: x ?? 0 } })}
-                defaultValue={ref.outerPin.boltYield} error={E('Bolt yield')} help={HELP.boltYield} step={10} />
+                defaultValue={ref.outerPin.boltYield} error={E('Bolt yield')} help={HELP.boltYield} step={10}
+                className={hl('outerPin.boltYield')} addon={chip('outerPin.boltYield')} />
             </>
           ) : undefined}
         />
@@ -379,6 +466,8 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         <SelectField
           label={g.innerPin.construction === 'solid' ? 'Pin size' : 'Standoff size'}
           help={HELP.innerPinSize}
+          className={hl('rw')}
+          addon={chip('rw')}
           value={innerMatch ? String(innerMatch.od) : 'custom'}
           onChange={(val) => {
             const o = INNER_PIN_OPTIONS.find((x) => String(x.od) === val);
@@ -402,6 +491,8 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           options={INNER_PIN_SUPPORTS.map((v) => ({ value: v, label: INNER_PIN_SUPPORT_OPTIONS[v].label, title: INNER_PIN_SUPPORT_OPTIONS[v].tip }))}
           help={HELP.innerPinSupport}
           note={INNER_PIN_SUPPORT_OPTIONS[g.innerPinSupport]?.tip}
+          className={hl('innerPinSupport')}
+          addon={chip('innerPinSupport')}
         />
         <MaterialPicker
           label={g.innerPin.construction === 'solid' ? 'Pin material' : 'Standoff material'}
@@ -412,6 +503,9 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           errPrefix="Inner pin material"
           help={HELP.pinMaterial}
           full={g.innerPin.construction === 'solid'}
+          fixClass={hl('innerPin.material')}
+          fixChip={chip('innerPin.material')}
+          advBadge={g.innerPin.construction === 'standoff' ? insideBadge('innerPin.material') : undefined}
           extra={g.innerPin.construction === 'standoff' ? (
             <>
               <NumberField label="Standoff outside diameter" quantity="length" value={g.innerPin.od}
@@ -428,7 +522,7 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         />
       </Section>
 
-      <Section title={withTorques ? 'Loads and bearing' : 'Bearing and load factors'}
+      <Section title={withTorques ? 'Loads and bearing' : 'Bearing and load factors'} badge={badgeFor('bearing')}
         summary={withTorques ? `T_req ${torqueFixed(eff.Treq)} · T_des ${torqueFixed(eff.Tdes)} ${u.sym('torque')}` : g.bearing.name}>
         {withTorques && loadSwitch}
         {withTorques && torqueFields}
@@ -441,18 +535,15 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         <SelectField
           label="Eccentric bearing"
           help={HELP.bearing}
+          className={hl('bearing')}
+          addon={chip('bearing')}
           value={bearingMatch ? bearingMatch.name : 'custom'}
           onChange={(val) => {
             const b = BEARINGS.find((x) => x.name === val);
             if (b) set({ bearing: { name: b.name, C: b.C, C0: b.C0 }, Db: b.OD });
           }}
           options={[
-            ...BEARINGS.map((b) => ({
-              value: b.name,
-              label: u.prefs.length === 'mm'
-                ? `${b.name}  (${b.bore}×${b.OD}×${b.width} mm)`
-                : `${b.name}  (${b.bore}×${b.OD}×${b.width} mm, OD ${u.fu('length', b.OD)})`,
-            })),
+            ...bearingOptions(u),
             { value: 'custom', label: 'Custom ratings', disabled: !!bearingMatch },
           ]}
           note={`${BEARING_NOTE} Choosing one also sets the centre bore.`}

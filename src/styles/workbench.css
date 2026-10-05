@@ -301,3 +301,40 @@ html, body { height: 100%; overflow: hidden; }
   .hint-wide { display: none; }
   .hint-narrow { display: inline; }
 }
+
+/* ---------------------------------------------------------------- how to fix: highlights, chips, badges */
+.row.has-fix { box-shadow: inset 3px 0 0 var(--accent); padding-left: 10px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.row-addon { grid-column: 1 / -1; min-width: 0; }
+.row-stacked .row-addon { grid-column: 1; }
+.fix-intro { display: flex; gap: 8px; align-items: baseline; margin: 0 0 10px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45; color: var(--ink); border: 1px solid var(--rule); border-left: 3px solid var(--accent); background: var(--surface); }
+.fix-chip-mark { flex: none; font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; padding: 1px 4px; border: 1px solid currentColor; color: var(--accent-ink); line-height: 1.3; }
+.fix-chip, .fix-btn {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 3px 8px; font: inherit; font-size: 12px; line-height: 1.35; text-align: left; cursor: pointer;
+  color: var(--accent-ink); background: var(--surface); border: 1px solid var(--accent-ink); border-radius: var(--radius);
+}
+.fix-chip { margin-top: 2px; }
+.fix-chip:not(.is-pass), .fix-btn:not(.is-pass) { border-style: dashed; color: var(--ink); }
+.fix-chip:not(.is-pass) .fix-chip-mark { color: var(--ink-2); }
+.fix-chip:hover, .fix-btn:hover { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.fix-btn-res { color: var(--ink-2); font-family: var(--font-mono); font-size: 11px; }
+.fix-btn.is-pass .fix-btn-res { color: var(--ok-ink); }
+.fix-chip-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.fix-cost { display: none; font-size: 12px; line-height: 1.45; color: var(--ink-2); max-width: 60ch; }
+.fix-chip-wrap:hover .fix-cost, .fix-chip-wrap:focus-within .fix-cost { display: block; }
+.fix-line-cost { flex-basis: 100%; font-size: 12px; line-height: 1.45; color: var(--ink-2); }
+.fix-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 0 4px; font-size: 12px; }
+.fix-line-h { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+.checks-table .fix-row td { padding-top: 0; }
+.checks-table tr:has(+ .fix-row) th, .checks-table tr:has(+ .fix-row) td { border-bottom: 0; }
+.fix-badge {
+  display: inline-block; flex: none; margin-left: 6px; padding: 0 5px; font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.04em; line-height: 16px; white-space: nowrap; color: var(--ink); border: 1px dashed var(--ink-2); border-radius: var(--radius);
+}
+.fix-badge.is-pass { color: var(--accent-ink); border: 1px solid var(--accent-ink); }
+.fix-badge.is-compact { margin-left: 4px; padding: 0 3px; font-size: 9.5px; line-height: 14px; }
+.fix-badge.is-inside { margin-left: 8px; }
+.rail-fixmark { flex: none; font-family: var(--font-mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em; padding: 0 3px; line-height: 13px; color: var(--accent-ink); border: 1px solid var(--accent-ink); }
+.mr-compare.has-fix, .mr-actions.has-fix { box-shadow: inset 3px 0 0 var(--accent); padding-left: 10px; }
+.toast-act { flex: none; background: none; border: 1px solid var(--ink); padding: 1px 8px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.toast-act:hover { background: var(--hl); }

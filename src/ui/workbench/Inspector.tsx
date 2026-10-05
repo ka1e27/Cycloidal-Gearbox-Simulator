@@ -2,7 +2,9 @@
 // verdict badge and a chip bar that jumps to each section), then collapsible sections that show a one-line summary
 // while closed. Several can be open; the open state is remembered per section.
 import { createContext, Suspense, useContext, useEffect, useId, useMemo, useRef, type ReactNode } from 'react';
-import { MOTION_LABEL, analyzeJointMotor, type ArmJoint, type DriveType, type MotionType } from '../../calc';
+import { MOTION_LABEL, analyzeJointMotor, type ArmJoint, type DriveType, type Fix, type MotionType } from '../../calc';
+import { FixBadge } from '../components/FixChips';
+import { useFixes } from '../fixes';
 import { motorChip } from '../motorUi';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { Icon } from '../components/Icon';
@@ -112,6 +114,10 @@ function InspectorFrame({ ctx, sections, bodies, header, badge }: {
   const scrollRef = useRef<HTMLDivElement>(null);
   const uid = useId().replace(/:/g, '');
   const sumIn = { state, arm, u, advisorRun, solverMemo, discDeg: theta?.deg ?? 0 };
+  // fix counts: Gearbox design holds every field a fix changes; Motor & ratio holds the recommended-ratio fix
+  const fx = useFixes(ctx.slot);
+  const fixList = fx.report?.fixes ?? [];
+  const fixesIn = (id: SectionId): Fix[] => (id === 'design' ? fixList : id === 'motor' ? fixList.filter((f) => f.field === 'Zp') : []);
 
   // bring a requested section into view and focus its header (openSection from a chip, a link or another panel)
   // (module-level, so a request that also changed the selection is handled by the newly mounted inspector)
@@ -148,6 +154,7 @@ function InspectorFrame({ ctx, sections, bodies, header, badge }: {
             <button key={id} type="button" className={`insp-chip${state.wb.open[id] ? ' is-open' : ''}`}
               aria-controls={`${uid}-sec-${id}`} onClick={() => openSection(id)} title={`Open ${SECTION_META[id].title}`}>
               {SECTION_META[id].chip}
+              {fixesIn(id).length > 0 && <FixBadge fixes={fixesIn(id)} compact />}
             </button>
           ))}
         </nav>
@@ -155,16 +162,16 @@ function InspectorFrame({ ctx, sections, bodies, header, badge }: {
       <div className="insp-sections">
         {sections.map((id) => (
           <InspectorSection key={id} id={id} domId={`${uid}-sec-${id}`} open={forceOpen || !!state.wb.open[id]} onToggle={(o) => setSectionOpen(id, o)}
-            summary={sectionSummary(id, ctx, sumIn)} body={bodies[id]} ctx={ctx} />
+            summary={sectionSummary(id, ctx, sumIn)} body={bodies[id]} ctx={ctx} fixes={fixesIn(id)} />
         ))}
       </div>
     </div>
   );
 }
 
-function InspectorSection({ id, domId, open, onToggle, summary, body: Body, ctx }: {
+function InspectorSection({ id, domId, open, onToggle, summary, body: Body, ctx, fixes }: {
   id: SectionId; domId: string; open: boolean; onToggle: (open: boolean) => void; summary: ReactNode;
-  body: SectionBodies[SectionId]; ctx: SectionCtx;
+  body: SectionBodies[SectionId]; ctx: SectionCtx; fixes: Fix[];
 }) {
   const meta = SECTION_META[id];
   const bodyId = `${domId}-body`;
@@ -174,6 +181,7 @@ function InspectorSection({ id, domId, open, onToggle, summary, body: Body, ctx 
         <button type="button" className="insp-sec-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => onToggle(!open)}>
           <Icon name="chevron" size={14} className="insp-sec-chev" />
           <span className="insp-sec-title">{meta.title}</span>
+          {fixes.length > 0 && <FixBadge fixes={fixes} invite={!open} />}
           {!open && summary != null && <span className="insp-sec-sum">{summary}</span>}
         </button>
         <InfoTip help={meta.help} label={meta.title} />

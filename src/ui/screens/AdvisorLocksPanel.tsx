@@ -2,8 +2,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   BEARINGS,
-  DISC_STOCK_METAL,
-  DISC_STOCK_POLYMER,
   INNER_PIN_OPTIONS,
   OUTER_PIN_OPTIONS,
   type AdvisorDesign,
@@ -11,6 +9,8 @@ import {
   type GearboxInputs,
   type InnerPinLock,
   type OuterPinLock,
+  bearingsBySeries,
+  discStockFor,
 } from '../../calc';
 import { LOCK_HELP } from '../help';
 import {
@@ -107,12 +107,20 @@ function BareNumber({ label, value, onChange, quantity, unit, step = 1, nullable
 }
 
 function SelectBox({ label, value, onChange, options, describedBy }: {
-  label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; describedBy?: string;
+  label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string; group?: string }[]; describedBy?: string;
 }) {
+  // consecutive options with the same group become one optgroup
+  const groups: { group: string | null; items: typeof options }[] = [];
+  for (const o of options) {
+    const last = groups[groups.length - 1];
+    if (last && last.group === (o.group ?? null)) last.items.push(o);
+    else groups.push({ group: o.group ?? null, items: [o] });
+  }
+  const opt = (o: { value: string; label: string }) => <option key={o.value} value={o.value}>{o.label}</option>;
   return (
     <div className="sf-box lv-sel">
       <select className="sf-select" aria-label={label} value={value} aria-describedby={describedBy} onChange={(e) => onChange(e.target.value)}>
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {groups.map((g, i) => (g.group == null ? g.items.map(opt) : <optgroup key={`g${i}`} label={g.group}>{g.items.map(opt)}</optgroup>))}
       </select>
       <Icon name="chevron" size={14} className="sf-chevron" />
     </div>
@@ -168,7 +176,7 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
   const r = resolveLockValues(ls, eff);
   const bolt = eff.outerPin.construction === 'boltBushing';
   const standoff = eff.innerPin.construction === 'standoff';
-  const stock = eff.discMaterial.kind === 'polymer' ? DISC_STOCK_POLYMER : DISC_STOCK_METAL;
+  const stock = discStockFor(eff.discMaterial);
   const L = (mm: number, dp = 2) => u.fu('length', mm, { dp });
 
   const mode = plan.mode;
@@ -350,7 +358,10 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
       control: (
         <div className="lv-stack">
           <SelectBox label="Eccentric bearing" value={bearingSel} onChange={setBearing} describedBy="lv-msg-bearing"
-            options={[...BEARINGS.map((_, i) => ({ value: String(i), label: bearingLabel(i) })), { value: 'custom', label: 'Custom…' }]} />
+            options={[
+              ...bearingsBySeries().flatMap((g) => g.indices.map((i) => ({ value: String(i), label: bearingLabel(i), group: g.label }))),
+              { value: 'custom', label: 'Custom…' },
+            ]} />
           {cb && (
             <div className="lv-minis lv-minis-5">
               <Mini label="Name">

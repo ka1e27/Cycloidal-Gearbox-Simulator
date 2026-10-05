@@ -63,15 +63,40 @@ in the check basis, `innerPinSupportOf(inputs)` resolves a missing value to the 
 
 ## 2. Materials (`materials.ts`)
 
-* `MATERIALS: Material[]` – six entries `{id, name, note, kind, E, nu, Sy, sigmaF, density}`
-  (`steel-1018, steel-4140, al-6061, al-7075, petg, pla`). `getMaterial(id)`, `materialProps(id)` (editable copy).
+* `MATERIALS: Material[]` – 15 entries `{id, name, note, kind, family, form, E, nu, Sy, sigmaF, density}`, ordered by family
+  (`MATERIAL_FAMILIES`: Metals; Machined plastics; 3D-printed plastics):
+  metals `steel-1018, steel-4140, al-6061, al-7075`; machined `hdpe, uhmw, pom, pa66`; printed `petg, pla, abs, asa, pc, pa12, pa6cf`.
+  Every plastic is `kind: 'polymer'` (so the polymer warning card applies); machined vs printed is in the name and in `form`.
+  `getMaterial(id)`, `materialProps(id)` (editable copy, includes `form`).
+
+  | id | name | E MPa | ν | Sy MPa | σf 10⁷ MPa | ρ g/cm³ | form |
+  |---|---|---|---|---|---|---|---|
+  | hdpe | HDPE (machined) | 1000 | 0.46 | 25 | 8 | 0.95 | plate |
+  | uhmw | UHMW-PE (machined) | 700 | 0.46 | 20 | 7 | 0.93 | plate |
+  | pom | Acetal / POM / Delrin (machined) | 2900 | 0.35 | 65 | 30 | 1.41 | plate |
+  | pa66 | Nylon PA66 (machined, moisture-conditioned) | 2000 | 0.39 | 55 | 20 | 1.14 | plate |
+  | abs | ABS (3D printed) | 2000 | 0.35 | 35 | 10 | 1.04 | printed |
+  | asa | ASA (3D printed) | 2000 | 0.35 | 38 | 11 | 1.07 | printed |
+  | pc | Polycarbonate (3D printed) | 2300 | 0.37 | 55 | 15 | 1.20 | printed |
+  | pa12 | Nylon PA12 (3D printed, SLS/MJF or FDM) | 1700 | 0.40 | 45 | 14 | 1.01 | printed |
+  | pa6cf | Nylon PA6-CF (3D printed, carbon fiber) | 6000 | 0.35 | 70 | 20 | 1.15 | printed |
+
+* **Stock form.** `MaterialProps.form?: 'plate' | 'printed'` picks the disc thickness list: `materialForm(m)` (missing or unknown
+  = from `kind`: polymer → printed, metal → plate) and `discStockFor(m)` (`DISC_STOCK_PLATE` = 3.175…12.7 mm for metals and
+  machined plastics, `DISC_STOCK_PRINTED` = 4…12 mm). The advisor, the fix engine and the stock-thickness picker all use it
+  (never the name). `normalizeGearboxInputs` keeps a saved form and derives a missing one from the saved kind.
+  `sameMaterialProps(a, b)` compares the numbers, kind and form (the pickers' "is this still the library entry" test).
 * `SPEC_STEEL` – generic steel E 200 GPa, ν 0.30 used as the default bushing/standoff contact material
   (gives E\* = 57,259 MPa on 6061). Not in `MATERIALS`; offer it as the default for pin materials.
 * `effectiveModulus(pin, disc)`, `SUPPLIER_DATA_NOTE`, `POLYMER_WARNING_LINES` (text for the polymer warning card).
 * Bending helpers: `outerPinBendingLimit`, `innerPinBendingLimit`, `outerPinSectionModulus`, `innerPinSectionModulus`.
 
-Catalogs (`catalog.ts`): `BEARINGS` (8 bearings, C/C0, OD, bore, width; flagged approximate via
-`BEARING_NOTE`), `OUTER_PIN_OPTIONS` (od, bolt label, shank), `INNER_PIN_OPTIONS` (od, bore, thread),
+Catalogs (`catalog.ts`): `BEARINGS` (15 bearings `{name, series, bore, OD, width, C, C0}`, flagged approximate via
+`BEARING_NOTE`; the original eight keep indices 0–7 because saved advisor locks store an index, the ultra-thin 67xx are appended:
+6700 10×15×4 C 855 C0 435, 6701 12×18×4 925/530, 6702 15×21×4 940/585, 6703 17×23×4 1000/655, 6704 20×27×4 1040/730,
+6705 25×32×4 1100/840, 6706 30×37×4 1120/900). `BEARING_SERIES` (`'67'` "Ultra-thin 67xx (4 mm wide)", `'618'` "Thin 618xx",
+`'60'` "Standard 60xx") and `bearingsBySeries()` give the display grouping used by the bearing pickers, the advisor lock row
+and nothing else (the advisor searches all 15; the DXF cam looks its bore up by name). `OUTER_PIN_OPTIONS` (od, bolt label, shank), `INNER_PIN_OPTIONS` (od, bore, thread),
 `DISC_STOCK_METAL/POLYMER`, `ZP_OPTIONS`, `ZW_OPTIONS`.
 
 ## 3. The gearbox check
@@ -246,7 +271,7 @@ Options: `target` (default 0.85, clamped 0.7–1.0), `ratioVary` (Zp ∈ 12…26
 `Dmin/Dmax` (30/150), `altWindowMm` (15), `discAltWindowMm` (40), `minPinClearance` (1 mm), resolutions
 `npfCoarse/nthCoarse` (1500/120) and `npfFull/nthFull` (6000/240). Search space exactly as CLAUDE.md Addition 3
 (D 1 mm steps, K1 0.40–0.85/0.025, pin and standoff catalogs, Zw 4–10, 1 or 2 discs, stock thicknesses by disc
-`kind`, 8 bearings). The pin *construction* and materials come from `inputs`. A manual `discShare` is ignored
+`form`, 15 bearings). The pin *construction* and materials come from `inputs`. A manual `discShare` is ignored
 (1.0 / 0.55 used). Objective: smallest housing OD (`D + 2rr + 2wall`), then lower disc mass, fewer discs, lower max
 utilization. Every check (incl. both ligaments, cusp, bearings) must be ≤ `target`. The pick and alternatives are
 re-verified with `checkGearbox` at full resolution. The inner pin bending check uses `inputs.innerPinSupport`; in the
@@ -305,6 +330,53 @@ New result fields: `locked: AdvisorLockKey[]` (explicit locks plus the ratio whe
 answer 1 to 400 ms (ratio free 1.5 s); infeasible with a few locks 20 to 400 ms; an unlocked, hopeless case (loads 66x too high)
 about 4 s in total (2 s for the target and closest passes, about 2 s for the ratio hint).
 
+## 6b. Fix suggestions (`fixes.ts`, "how to fix it")
+
+```ts
+suggestFixes(inputs, opts?: FixOptions, hooks?): FixReport            // sync, never throws
+suggestFixesAsync(inputs, opts?, hooks?): Promise<FixReport>          // yields between variables; cancellable
+applyFix(inputs, fix) = { ...inputs, ...fix.patch }
+motorUtilization(inputs, motor, Zp): number | null                   // max(T_des / peak capacity, T_req / continuous); speed short = 1.0001
+getCalcClient().fixes(inputs, opts, onProgress): CalcJob<FixReport>   // worker message type 'fixes'
+```
+
+`FixOptions`: `target` (0.85, clamped 0.5–1.0), `motor` (a cycloidal joint's `MotorSpec`: adds the motor check and the ratio fix),
+`Dmax` (150), `npfCoarse/nthCoarse` (1500/120), `npfFull/nthFull` (6000/240).
+
+For a design with any check (motor included) above the target it tries ONE variable at a time, everything else unchanged, and
+finds the smallest change that brings every check to ≤ target. Searches run at the coarse resolution; every reported fix is
+re-checked at full resolution and grid searches are walked at full resolution so the reported value passes and the next value
+toward the current one fails. When no value of a variable reaches the target it reports the smallest change that gets every
+check under 1.0, else the smallest one with 75 % of the best improvement ("helps").
+
+| Variable (`field`) | Search |
+|---|---|
+| `D` up | 0.5 mm grid on (D, min(2D, Dmax)] (2D when D ≥ Dmax), scan then bisection; e scales with D to keep the current K1 (clamped 0.40–0.85, e = K1·(D/2)/Zp rounded to 0.0001 mm), so the patch sets D and e |
+| `e` both ways | 0.01 mm grid inside K1 0.40–0.85, K1 scan at 0.025 each way, bisection next to the first pass; the better direction is reported |
+| `L` up | stock list of the disc's form above L (`to` = next stock size that passes) plus `exactMin` on a 0.05 mm grid |
+| `discs` | 1 → 2 |
+| `rr` / `rw` up | outer / inner catalog sizes above the current one; patch sets rr + bolt shank / rw + standoff OD and bore |
+| `Zw` | 4–10, nearest first (up before down); invalid geometry is skipped |
+| `bearing` | all 15 catalog bearings (smallest bore change first); patch sets `bearing` and `Db` |
+| `discMaterial` | library materials with Sy and σf ≥ current and one of them higher; lightest passing first |
+| `innerPinSupport` | cantilever → pinned tie ring → bolted tie ring |
+| `outerPin.boltYield`, `outerPin.material`, `innerPin.material` | only when the governing check is a pin bending or pin contact check: bolt class 10.9 / 12.9; steel bushing / pin materials (plastics too for a plastic disc); a standoff of 1018 / 4140 sets its material and yield |
+| `Zp` | never as a gearbox fix. With a motor whose check is above the target: the recommended ratio (`recommendRatio`), or the smallest higher Zp inside the motor's speed limit that gets the motor under the target; e rescaled to keep K1 (`rescaleEForZp`, now in `motor.ts`) |
+
+`Fix = { field, label, direction ('up'|'down'|'change'), from, to (display text, mm / N / MPa), fromValue, toValue, short ("▲ D → 92 mm"),
+newMaxUtil, governing, governingId, passesTarget, passesLimit, patch (coupled fields included, never torques), sideEffects
+("housing OD 98 → 106 mm", "+42 g disc mass", "K1 0.68 → 0.80", "disc stack 7.35 → 14.2 mm wide"), improves (failing checks it lowers),
+checkUtils, exactMin? (L), cost }`. Ranking: fixes that pass the target first, by cost = relative change + housing OD and stack width
+added (fractions) + half the disc mass added (fraction); then the ones that only help, lowest result first.
+`FixReport = { valid, cancelled, errors, target, needed, maxUtil, governing, governingId, motorUtil, fixes, byCheck, evaluated, elapsedMs }`;
+`byCheck` has one entry per check above the target: `{ id, label, utilization, status, fields (every field that lowered it, even
+partly), fixes (indices into fixes, best first) }`. A PASS design returns `needed: false` and no fixes. Typical time 10–50 ms
+(about 100 coarse and 10–30 full checks).
+
+J2 SPEC case (D 85, e 1.3, 1 disc, 5.85 / 8.8 N·m, max 1.362 on ring contact life): no single change reaches 0.85. L → 12.7 mm gives
+0.963, D → 143 mm with e → 2.187 mm (K1 0.55 kept) 0.998, 7075-T6 1.007 (ring contact strength then governs), 2 discs 1.010;
+e → 1.6 mm 1.282, M5 / 8 mm outer pins 1.195. J2 preset (e 1.6, 2 discs): D → 100.5 mm, e → 1.892 mm (K1 0.68) passes at 0.850.
+
 ## 7. All-joints summary (`summary.ts`)
 
 ```ts
@@ -349,6 +421,12 @@ client; the UI never creates it). Protocol types are in `messages.ts`.
   (1.67·Sy = 460.9, 0.577·σf/0.25 = 240.0, weaker of disc and pin part) instead of the script's rounded 460/240, and an undercut (path curvature > 1/rr) also sets the cusp flag.
   `npm run parity` checks all of this against the Python reference (see `scripts/parity/README.md`).
 * Polymer warning card: show when `result.polymerWarning`, text from `POLYMER_WARNING_LINES`. It is not a failed check.
+* Fix highlights: `src/ui/fixes.tsx` (`FixesProvider` inside the store) runs `client.fixes` for every gearbox slot with a check
+  above 0.85 (debounced 300 ms, one job at a time, the selected slot first, stale jobs cancelled); `useFixes(slot)` returns the
+  report for the slot's current inputs. Gearbox design highlights every field in a fix (accent border + chip, Advanced headers and
+  section titles get a badge), the Checks rows get a "How to fix" line, the verdict's TO FIX text lists the real top fixes, the
+  inspector chip bar and section headers show a count, and the rail marks an amber / red joint with "FIX" when a single change
+  passes. Applying goes through the store's `applyGearboxChange` (one-step Undo in the toast).
 
 ## 10. Session format 2 (`src/ui/session.ts`)
 

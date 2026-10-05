@@ -1,6 +1,7 @@
 // Worker-side request handling, separated from `self` so it can be tested without a real Worker.
 
 import { adviseDesignAsync } from './advisor';
+import { suggestFixesAsync } from './fixes';
 import type { WorkerRequest, WorkerResponse } from './messages';
 import { solveMinimumSizeAsync } from './solver';
 
@@ -33,6 +34,12 @@ export function createWorkerHandler(host: WorkerHost) {
           shouldCancel: () => cancelled.has(id),
         });
         host.post({ type: 'result', id, kind: 'advise', result });
+      } else if (msg.type === 'fixes') {
+        const result = await suggestFixesAsync(msg.inputs, msg.options, {
+          onProgress: (progress) => host.post({ type: 'progress', id, kind: 'fixes', progress }),
+          shouldCancel: () => cancelled.has(id),
+        });
+        host.post({ type: 'result', id, kind: 'fixes', result });
       }
     } catch (err) {
       host.post({ type: 'error', id, message: err instanceof Error ? err.message : String(err) });

@@ -3,6 +3,7 @@
 // Workers are unavailable (tests, old browsers, worker failed to start).
 
 import { adviseDesignAsync, cancelledAdvisorResult, invalidAdvisor, type AdvisorOptions, type AdvisorProgress, type AdvisorResult } from './advisor';
+import { cancelledFixReport, suggestFixesAsync, type FixOptions, type FixProgress, type FixReport } from './fixes';
 import type { WorkerRequest, WorkerResponse } from './messages';
 import { cancelledResult, solveMinimumSizeAsync, type SolverOptions, type SolverProgress, type SolverResult } from './solver';
 import type { GearboxInputs } from './types';
@@ -31,7 +32,7 @@ const defaultFactory: WorkerFactory = () => {
 };
 
 interface Pending {
-  kind: 'solve' | 'advise';
+  kind: 'solve' | 'advise' | 'fixes';
   resolve: (r: never) => void;
   onProgress?: (p: never) => void;
   target: number;
@@ -81,6 +82,8 @@ export class CalcClient {
   private fail(_id: number, p: Pending, message: string) {
     if (p.kind === 'solve') {
       (p.resolve as (r: SolverResult) => void)({ ...cancelledResult(p.Dmax), cancelled: false, errors: [message] });
+    } else if (p.kind === 'fixes') {
+      (p.resolve as (r: FixReport) => void)({ ...cancelledFixReport(p.target), cancelled: false, errors: [message] });
     } else {
       (p.resolve as (r: AdvisorResult) => void)(invalidAdvisor([message], p.target));
     }
@@ -101,7 +104,7 @@ export class CalcClient {
   }
 
   private start<R, P>(
-    kind: 'solve' | 'advise',
+    kind: 'solve' | 'advise' | 'fixes',
     req: (id: number) => WorkerRequest,
     fallback: (hooks: { onProgress?: (p: P) => void; shouldCancel: () => boolean }) => Promise<R>,
     cancelledValue: () => R,
@@ -169,6 +172,18 @@ export class CalcClient {
       (id) => ({ type: 'advise', id, inputs, options }),
       (hooks) => adviseDesignAsync(inputs, options, hooks),
       () => cancelledAdvisorResult(target),
+      onProgress, target, 120,
+    );
+  }
+
+  /** Search single-variable fixes for a design that is not green (src/calc/fixes.ts). */
+  fixes(inputs: GearboxInputs, options?: FixOptions, onProgress?: (p: FixProgress) => void): CalcJob<FixReport> {
+    const target = options?.target ?? 0.85;
+    return this.start<FixReport, FixProgress>(
+      'fixes',
+      (id) => ({ type: 'fixes', id, inputs, options }),
+      (hooks) => suggestFixesAsync(inputs, options, hooks),
+      () => cancelledFixReport(target),
       onProgress, target, 120,
     );
   }

@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   MATERIALS, checkGearbox, defaultGearboxInputs, effectiveModulus, getMaterial, materialProps,
-  outerPinBendingLimit, innerPinBendingLimit, SPEC_STEEL,
+  outerPinBendingLimit, innerPinBendingLimit, SPEC_STEEL, POLYMER_WARNING_LINES, DISC_STOCK_METAL, DISC_STOCK_POLYMER,
+  discStockFor, materialForm, normalizeGearboxInputs, adviseDesign, presetInputs,
 } from '../index';
-import type { GearboxInputs } from '../index';
+import type { GearboxInputs, MaterialId } from '../index';
 
 describe('material library', () => {
-  it('has the six Addition 2 materials with the specified numbers', () => {
-    expect(MATERIALS.map((m) => m.id)).toEqual(['steel-1018', 'steel-4140', 'al-6061', 'al-7075', 'petg', 'pla']);
+  it('has the Addition 2 materials with the specified numbers, then the added plastics, ordered by family', () => {
+    expect(MATERIALS.map((m) => m.id)).toEqual([
+      'steel-1018', 'steel-4140', 'al-6061', 'al-7075',
+      'hdpe', 'uhmw', 'pom', 'pa66',
+      'petg', 'pla', 'abs', 'asa', 'pc', 'pa12', 'pa6cf',
+    ]);
     const al = getMaterial('al-6061');
     expect([al.E, al.nu, al.Sy, al.sigmaF, al.density]).toEqual([69000, 0.33, 276, 104, 2.7]);
     const pla = getMaterial('pla');
@@ -121,5 +126,93 @@ describe('disc mass estimate', () => {
     expect(two.mass.total_g).toBeCloseTo(2 * m.perDisc_g, 9);
     const pla = checkGearbox({ ...defaultGearboxInputs(), discMaterial: materialProps('pla') });
     expect(pla.mass.perDisc_g / m.perDisc_g).toBeCloseTo(1.24 / 2.7, 9);
+  });
+});
+
+describe('added plastics (machined and 3D printed)', () => {
+  const table: [string, number, number, number, number, number, 'plate' | 'printed'][] = [
+    // id, E, nu, Sy, sigmaF, density, form
+    ['hdpe', 1000, 0.46, 25, 8, 0.95, 'plate'],
+    ['uhmw', 700, 0.46, 20, 7, 0.93, 'plate'],
+    ['pom', 2900, 0.35, 65, 30, 1.41, 'plate'],
+    ['pa66', 2000, 0.39, 55, 20, 1.14, 'plate'],
+    ['abs', 2000, 0.35, 35, 10, 1.04, 'printed'],
+    ['asa', 2000, 0.35, 38, 11, 1.07, 'printed'],
+    ['pc', 2300, 0.37, 55, 15, 1.20, 'printed'],
+    ['pa12', 1700, 0.40, 45, 14, 1.01, 'printed'],
+    ['pa6cf', 6000, 0.35, 70, 20, 1.15, 'printed'],
+  ];
+  it('property table: numbers, kind polymer, stock form, family, machined / printed in the name, a note', () => {
+    for (const [id, E, nu, Sy, sf, rho, form] of table) {
+      const m = getMaterial(id as MaterialId);
+      expect([m.E, m.nu, m.Sy, m.sigmaF, m.density], id).toEqual([E, nu, Sy, sf, rho]);
+      expect(m.kind, id).toBe('polymer');
+      expect(m.form, id).toBe(form);
+      expect(m.family, id).toBe(form === 'plate' ? 'machined' : 'printed');
+      expect(m.name, id).toMatch(form === 'plate' ? /machined/ : /3D printed/);
+      expect(m.note.length, id).toBeGreaterThan(5);
+      expect(materialProps(id as MaterialId).form, id).toBe(form);
+    }
+    // metals are plate, the original printed ones printed
+    for (const m of MATERIALS) if (m.kind === 'metal') expect([m.family, m.form]).toEqual(['metal', 'plate']);
+    expect(getMaterial('petg').form).toBe('printed');
+    expect(getMaterial('pla').form).toBe('printed');
+    // families are contiguous, in the order metals, machined, printed
+    const order = ['metal', 'machined', 'printed'];
+    const fams = MATERIALS.map((m) => order.indexOf(m.family));
+    expect(fams).toEqual([...fams].sort((a, b) => a - b));
+  });
+
+  it('E* for steel on POM: hand computed 3,256 MPa, used by the check', () => {
+    const want = 1 / ((1 - 0.3 ** 2) / 200000 + (1 - 0.35 ** 2) / 2900);
+    const e = effectiveModulus(SPEC_STEEL, materialProps('pom'));
+    expect(e).toBeCloseTo(want, 6);
+    expect(e).toBeCloseTo(3255.8, 0);
+    const r = checkGearbox({ ...defaultGearboxInputs(), discMaterial: materialProps('pom') });
+    expect(r.derived.EstarRing).toBeCloseTo(want, 6);
+  });
+
+  it('every added plastic disc (or pin) shows the polymer warning and uses its own limits', () => {
+    for (const [id, , , Sy, sf] of table) {
+      const r = checkGearbox({ ...defaultGearboxInputs(), discMaterial: materialProps(id as MaterialId) });
+      expect(r.valid, id).toBe(true);
+      expect(r.polymerWarning, id).toBe(true);
+      const s = r.checks.find((c) => c.id === 'ringContactStrength')!;
+      const l = r.checks.find((c) => c.id === 'ringContactLife')!;
+      expect(s.limit, id).toBeCloseTo(1.67 * Sy, 9);
+      expect(l.limit, id).toBeCloseTo((0.577 * sf) / 0.25, 9);
+    }
+    const d = defaultGearboxInputs();
+    const pin = checkGearbox({ ...d, outerPin: { ...d.outerPin, construction: 'solid', material: materialProps('hdpe') } });
+    expect(pin.polymerWarning).toBe(true);
+    expect(POLYMER_WARNING_LINES.some((l) => /creep/i.test(l))).toBe(true);
+  });
+
+  it('stock lists by form: plate (metals, machined plastics) and printed', () => {
+    expect(discStockFor(materialProps('al-6061'))).toEqual(DISC_STOCK_METAL);
+    expect(discStockFor(materialProps('pom'))).toEqual(DISC_STOCK_METAL);
+    expect(discStockFor(materialProps('hdpe'))).toEqual([3.175, 4.76, 6.35, 9.525, 12.7]);
+    expect(discStockFor(materialProps('pla'))).toEqual(DISC_STOCK_POLYMER);
+    expect(discStockFor(materialProps('pa6cf'))).toEqual([4, 5, 6, 8, 10, 12]);
+    // a material without a form (older sessions) follows its kind
+    expect(materialForm({ kind: 'polymer' })).toBe('printed');
+    expect(materialForm({ kind: 'metal' })).toBe('plate');
+    expect(materialForm({ kind: 'polymer', form: 'plate' })).toBe('plate');
+    // normalize: a saved PLA disc without a form stays printed (it does not inherit the default 6061's plate)
+    const plaNoForm: Record<string, unknown> = { ...materialProps('pla') };
+    delete plaNoForm.form;
+    expect(normalizeGearboxInputs({ ...defaultGearboxInputs(), discMaterial: plaNoForm }).discMaterial.form).toBe('printed');
+    expect(normalizeGearboxInputs({ ...defaultGearboxInputs(), discMaterial: materialProps('hdpe') }).discMaterial.form).toBe('plate');
+    expect(normalizeGearboxInputs({ ...defaultGearboxInputs(), discMaterial: { ...materialProps('pom'), form: 'bogus' } }).discMaterial.form).toBe('printed');
+  });
+
+  it('the advisor searches the stock list of the disc form: machined POM gets plate sizes, printed PLA print sizes', () => {
+    const base = { ...presetInputs('J3'), Treq: 0.3, Tdes: 0.5 };
+    const pom = adviseDesign({ ...base, discMaterial: materialProps('pom') });
+    const pla = adviseDesign({ ...base, discMaterial: materialProps('pla') });
+    expect(pom.best).not.toBeNull();
+    expect(pla.best).not.toBeNull();
+    expect(DISC_STOCK_METAL).toContain(pom.best!.L);
+    expect(DISC_STOCK_POLYMER).toContain(pla.best!.L);
   });
 });

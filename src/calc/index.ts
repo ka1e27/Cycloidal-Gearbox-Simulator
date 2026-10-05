@@ -12,6 +12,7 @@ export * from './pose';
 export * from './motor';
 export * from './solver';
 export * from './advisor';
+export * from './fixes';
 export { SLICE_MS } from './runner';
 export type { RunHooks } from './runner';
 export * from './summary';

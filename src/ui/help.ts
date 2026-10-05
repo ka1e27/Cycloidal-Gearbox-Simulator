@@ -116,7 +116,7 @@ export const HELP: Record<string, HelpEntry> = {
   },
   stockThickness: {
     what: 'Picks a disc thickness from standard plate (or print) sizes, so the design matches material you can buy.',
-    why: 'Plate only comes in fixed thicknesses; an in-between value means machining or a different stock.',
+    why: 'Plate only comes in fixed thicknesses; an in-between value means machining or a different stock. Metals and machined plastics use plate sizes (1/8 to 1/2 in); 3D-printed discs use round print sizes.',
     up: 'Thicker stock lowers contact stress but makes the gearbox wider and heavier.',
     down: 'Thinner stock is lighter but raises contact stress.',
     typical: '1/4 in (6.35 mm) aluminum plate.',
@@ -124,10 +124,10 @@ export const HELP: Record<string, HelpEntry> = {
 
   // ------------------------------------------------------------------ Materials
   discMaterial: {
-    what: 'Material of the cycloidal disc. Picking one fills in its properties, which you can still edit.',
+    what: 'Material of the cycloidal disc. Picking one fills in its properties, which you can still edit. The list has three families: metals, machined plastics (HDPE, UHMW-PE, acetal, nylon PA66; cut from plate) and 3D-printed plastics (PETG, PLA, ABS, ASA, PC, nylon PA12, PA6-CF).',
     why: 'The disc lobes take the highest contact stress in the gearbox, so the material sets most of the limits.',
     up: 'Stronger choices (7075, steel) allow higher loads; steel is much heavier.',
-    down: 'PETG and PLA are light and easy to print, but their limits are a small fraction of aluminum’s and they creep under constant load.',
+    down: 'Plastics are light and quiet, but their limits are a small fraction of aluminum’s and they creep under constant load. Acetal (POM) is the best plastic for a disc; HDPE and UHMW-PE suit bushings and light joints.',
     typical: 'Aluminum 6061-T6.',
   },
   E: {
@@ -164,9 +164,14 @@ export const HELP: Record<string, HelpEntry> = {
     typical: 'Aluminum 2.70, steel 7.85, PETG 1.27 g/cm³.',
   },
   materialKind: {
-    what: 'Whether the material counts as a metal or a polymer (3D print). Picking a material sets it.',
-    why: 'Any polymer part brings up the creep and heat warning card, and a polymer disc is offered print thicknesses instead of plate stock.',
+    what: 'Whether the material counts as a metal or a polymer (machined or 3D-printed plastic). Picking a material sets it.',
+    why: 'Any polymer part brings up the creep and heat warning card.',
     typical: 'Set by the material you pick.',
+  },
+  materialForm: {
+    what: 'How the disc stock comes: plate (metal plate or machined plastic sheet) or printed (3D print). Picking a material sets it.',
+    why: 'It picks the thickness list: plate sizes 1/8 to 1/2 in (3.175 to 12.7 mm), or print sizes 4 to 12 mm. The Design Advisor and the fix suggestions use the same list.',
+    typical: 'Plate for metals and machined plastics, printed for PETG, PLA and the other printed plastics.',
   },
   outerConstruction: {
     what: 'How the outer pins are built: a bolt with a free-spinning bushing, or one solid pin.',
@@ -247,8 +252,8 @@ export const HELP: Record<string, HelpEntry> = {
     what: 'The eccentric bearing that sits in the centre of the disc and drives it around.',
     why: 'It carries the full combined pin load every revolution, so it is often the part that wears out first.',
     up: 'A bigger bearing lasts much longer and takes higher peaks, but needs a bigger centre hole.',
-    down: 'A smaller bearing frees room in the disc but can fail the life or static check.',
-    typical: '61800: 10 mm bore, 19 mm outside, 5 mm wide. Verify ratings on the datasheet.',
+    down: 'A smaller bearing frees room in the disc but can fail the life or static check. The ultra-thin 67xx series (4 mm wide) has the smallest outside diameter for its bore, and the lowest ratings.',
+    typical: '61800: 10 mm bore, 19 mm outside, 5 mm wide. Grouped as ultra-thin 67xx, thin 618xx and standard 60xx. Verify ratings on the datasheet.',
   },
 
   // ------------------------------------------------------------------ Loads & factors
@@ -593,7 +598,7 @@ export const LOCK_HELP: Record<string, HelpEntry> = {
     typical: 'Free.',
   },
   bearing: {
-    what: 'Eccentric bearing. Lock it to a bearing you already have; free tries the 618xx and 600x sizes. Ratings are approximate.',
+    what: 'Eccentric bearing. Lock it to a bearing you already have; free tries the ultra-thin 67xx, thin 618xx and standard 60xx sizes. Ratings are approximate.',
     typical: 'Free.',
   },
   maxHousingOD: {

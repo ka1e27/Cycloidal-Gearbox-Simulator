@@ -1,4 +1,7 @@
-import { POLYMER_WARNING_LINES, type Check, type GearboxResult, type InnerPinSupport } from '../../calc';
+import { Fragment } from 'react';
+import { GREEN_LIMIT, POLYMER_WARNING_LINES, type Check, type Fix, type FixReport, type GearboxResult, type InnerPinSupport } from '../../calc';
+import { FixLine } from '../components/FixChips';
+import { fixResultText } from '../fixes';
 import { Card, DataTable, Notice, ResponsiveTable, STATUS_WORD, StatusChip, UtilBar, verdictKind, type StatusKind } from '../components/primitives';
 import { checkLimit, checkValue, fixed, hours, num, util, DASH } from '../format';
 import { PLAIN, verdictHeadline } from '../plain';
@@ -8,7 +11,33 @@ import { useStore } from '../store';
 // Verdict block
 // ---------------------------------------------------------------------------
 
-export function VerdictBanner({ r }: { r: GearboxResult }) {
+/** Fix search state for the banner and the checks table (see src/ui/fixes.tsx). */
+export interface FixesView {
+  report: FixReport | null;
+  pending: boolean;
+  onApply?: (f: Fix) => void;
+}
+
+/** The TO FIX sentence: the real top fixes when the search has run, else the generic advice. */
+export function toFixText(r: GearboxResult, fx: FixesView | undefined, text: (s: string) => string): string {
+  const generic = r.governing ? PLAIN[r.governing.id].fix : '';
+  const rep = fx?.report;
+  if (!rep) return fx?.pending ? `${generic} Looking for the smallest single changes that fix it…` : generic;
+  const pass = rep.fixes.filter((f) => f.passesTarget).slice(0, 3);
+  if (pass.length) {
+    const list = pass.map((f) => text(f.short) + (f.sideEffects[0] ? ` (${text(f.sideEffects[0])})` : '')).join('; ');
+    return `Any one of these fixes it on its own: ${list}. The fields are highlighted under Gearbox design.`;
+  }
+  const help = rep.fixes.slice(0, 3);
+  if (help.length) {
+    const list = help.map((f) => `${text(f.short)} (${fixResultText(f)})`).join('; ');
+    return `No single change gets every check to ${GREEN_LIMIT.toFixed(2)}. The ones that help most: ${list}. Combine two of them, or run the Design Advisor.`;
+  }
+  return `${generic} No single change helps; try the Design Advisor.`;
+}
+
+export function VerdictBanner({ r, fixes }: { r: GearboxResult; fixes?: FixesView }) {
+  const { u } = useStore();
   const kind: StatusKind = verdictKind(r.verdict);
   const head = verdictHeadline(r);
   return (
@@ -23,7 +52,7 @@ export function VerdictBanner({ r }: { r: GearboxResult }) {
       </div>
       <p className="verdict-text">{head.text}</p>
       {r.governing && r.verdict !== 'pass' && (
-        <p className="verdict-fix"><span className="verdict-fix-tag">TO FIX</span> {PLAIN[r.governing.id].fix}</p>
+        <p className="verdict-fix"><span className="verdict-fix-tag">TO FIX</span> {toFixText(r, fixes, u.text)}</p>
       )}
     </div>
   );
@@ -110,7 +139,7 @@ export function standoffNote(c: Check, used: InnerPinSupport, u: ReturnType<type
 }
 
 /** `compact`: the narrow inspector column keeps it a table (smaller type, no bar) instead of stacking cards. */
-export function CheckCards({ r, compact }: { r: GearboxResult; compact?: boolean }) {
+export function CheckCards({ r, compact, fixes }: { r: GearboxResult; compact?: boolean; fixes?: FixesView }) {
   const { u } = useStore();
   return (
     <Card title="Checks">
@@ -131,8 +160,19 @@ export function CheckCards({ r, compact }: { r: GearboxResult; compact?: boolean
             const gov = r.governing?.id === c.id;
             const valueText = c.id === 'cusp' && !Number.isFinite(c.value) ? DASH : checkValue(c.id, c.value, c.unit, u);
             const note = checkNote(c, u, r.innerPinSupport) ?? (c.id === 'cusp' && !Number.isFinite(c.value) ? 'no convex lobe to measure' : c.basis);
+            const entry = c.utilization > GREEN_LIMIT + 1e-9 ? fixes?.report?.byCheck.find((b) => b.id === c.id) : undefined;
+            const fixRow = c.utilization > GREEN_LIMIT + 1e-9 && fixes && (entry || fixes.pending) ? (
+              <tr className="fix-row">
+                <td colSpan={5}>
+                  {entry && fixes.report && fixes.onApply
+                    ? <FixLine entry={entry} report={fixes.report} onApply={fixes.onApply} />
+                    : <div className="fix-line"><span className="fix-line-h">How to fix</span> <span className="muted">looking for the smallest change…</span></div>}
+                </td>
+              </tr>
+            ) : null;
             return (
-              <tr key={c.id} className={gov ? 'is-gov' : undefined}>
+              <Fragment key={c.id}>
+              <tr className={gov ? 'is-gov' : undefined}>
                 <th scope="row" data-label="Check">
                   <span className="check-name">{c.label}{gov && <span className="gov-tag">GOVERNING</span>}</span>
                   <span className="check-basis">{u.text(note)}</span>
@@ -147,6 +187,8 @@ export function CheckCards({ r, compact }: { r: GearboxResult; compact?: boolean
                 </td>
                 <td data-label="Status"><StatusChip kind={kind}>{STATUS_WORD[kind]}</StatusChip></td>
               </tr>
+              {fixRow}
+              </Fragment>
             );
           })}
         </tbody>

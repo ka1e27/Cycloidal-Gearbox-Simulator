@@ -1,7 +1,8 @@
 // Inspector section bodies and their one-line summaries (CLAUDE.md Addition 10). The light sections live in the main
 // chunk; the heavy ones (Disc, Solver, Advisor, DXF) load on demand, with a skeleton while they load.
 import { lazy, type ComponentType, type ReactNode } from 'react';
-import { MOTION_LABEL, analyzeJointMotor, type ArmJoint } from '../../calc';
+import { MOTION_LABEL, analyzeJointMotor, type ArmJoint, type Fix } from '../../calc';
+import { useApplyFix, useFixes } from '../fixes';
 import { MotorFields } from '../components/MotorFields';
 import { num, util } from '../format';
 import { plainName } from '../plain';
@@ -74,17 +75,20 @@ function DesignBody({ slot, sm }: SectionCtx) {
   return <GearboxInputsPanel slot={slot} eff={sm.eff} result={sm.model.result} part="design" />;
 }
 
-function ChecksBody({ sm }: SectionCtx) {
+function ChecksBody({ slot, sm }: SectionCtx) {
+  const fx = useFixes(slot);
+  const apply = useApplyFix();
   if (!sm) return null;
   const r = sm.model.result;
+  const view = { report: fx.report, pending: fx.pending, onApply: slot ? (f: Fix) => apply(slot, f) : undefined };
   return (
     <div className={`checks-body${sm.pending ? ' is-pending' : ''}`}>
-      <VerdictBanner r={r} />
+      <VerdictBanner r={r} fixes={view} />
       {!r.valid ? <InvalidCard r={r} /> : (
         <>
           {r.polymerWarning && <PolymerCard />}
           <KeyData r={r} discs={sm.deferred.discs} />
-          <CheckCards r={r} compact />
+          <CheckCards r={r} compact fixes={view} />
         </>
       )}
     </div>

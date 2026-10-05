@@ -9,10 +9,14 @@ import { motorChip, rescaleEForZp } from '../motorUi';
 import type { AdvisorLockState } from '../advisorLocks';
 import type { Slot } from '../session';
 import { useStore } from '../store';
+import { FixChip } from '../components/FixChips';
+import { useApplyFix, useFixes } from '../fixes';
 
 /** `inline`: shown under the motor fields in the inspector, so the "enter / edit motor" links are left out. */
 export function MotorCard({ slot, eff, inline }: { slot: Slot; eff: GearboxInputs; inline?: boolean }) {
-  const { state, updateGearbox, openSection, notify, runAdvisor, u } = useStore();
+  const { state, applyGearboxChange, openSection, runAdvisor, u } = useStore();
+  const fx = useFixes(slot);
+  const applyFix = useApplyFix();
   const joint = state.arm.joints.find((j) => j.id === slot);
   if (!joint || joint.drive !== 'cycloidal') return null; // Custom has no joint, so no motor
 
@@ -54,12 +58,15 @@ export function MotorCard({ slot, eff, inline }: { slot: Slot; eff: GearboxInput
   const apply = () => {
     if (recZp == null) return;
     const r = rescaleEForZp(eff, recZp);
-    updateGearbox(slot, (g) => ({ ...g, Zp: recZp, ...(r && !r.unchanged ? { e: r.e } : {}) }));
     const what = r && !r.unchanged
       ? `Zp ${eff.Zp} → ${recZp} (${recZp - 1}:1) and e ${eText(eff.e)} → ${eText(r.e)}, K1 ${fixed(r.k1Before, 3)} → ${fixed(r.k1After, 3)}`
       : `Zp ${eff.Zp} → ${recZp} (${recZp - 1}:1)`;
-    notify('success', u.text(`${joint.name.trim() || slot}: ${what}. D and everything else are unchanged; the checks recompute.`));
+    applyGearboxChange(slot, (g) => ({ ...g, Zp: recZp, ...(r && !r.unchanged ? { e: r.e } : {}) }),
+      u.text(`${joint.name.trim() || slot}: ${what}. D and everything else are unchanged; the checks recompute.`));
   };
+
+  // the motor is too weak for this ratio: the fix engine's "use the recommended ratio" fix highlights the button
+  const zpFix = fx.report?.fixes.find((f) => f.field === 'Zp') ?? null;
 
   const designHere = () => {
     if (recZp == null) return;
@@ -112,7 +119,7 @@ export function MotorCard({ slot, eff, inline }: { slot: Slot; eff: GearboxInput
       )}
 
       {rec && (rec.status === 'ok' || rec.status === 'warning') && (
-        <div className="mr-compare">
+        <div className={`mr-compare${zpFix ? ' has-fix' : ''}`}>
           <div className="mr-cell">
             <div className="mr-label">Recommended <InfoTip help={HELP.recRatio} label="Recommended ratio" /></div>
             <div className="mr-big" data-testid="rec-ratio">{rec.ratio}:1</div>
@@ -144,10 +151,11 @@ export function MotorCard({ slot, eff, inline }: { slot: Slot; eff: GearboxInput
       )}
 
       {rec && rec.Zp != null && (
-        <div className="mr-actions">
+        <div className={`mr-actions${zpFix ? ' has-fix' : ''}`}>
           <Button variant="primary" disabled={same} onClick={apply} title={same ? 'The gearbox already uses this ratio' : `Set Zp to ${rec.Zp}`}>
             Use recommended ratio (Zp {rec.Zp})
           </Button>
+          {zpFix && <FixChip fix={zpFix} onApply={(f) => applyFix(slot, f)} />}
           <Button variant="secondary" onClick={designHere} title={`Open the Design Advisor with the ratio locked to Zp ${rec.Zp} and run it`}>
             Design this ratio in the Advisor
           </Button>

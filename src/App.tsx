@@ -3,6 +3,7 @@ import { ErrorBoundary } from './ui/components/ErrorBoundary';
 import { Header } from './ui/components/Header';
 import { Toasts } from './ui/components/Toasts';
 import { StoreProvider } from './ui/store';
+import { FixesProvider } from './ui/fixes';
 import { Workbench } from './ui/workbench/Workbench';
 import './styles/workbench.css';
 
@@ -20,6 +21,7 @@ export function ScreenLoading() {
 export default function App() {
   return (
     <StoreProvider>
+      <FixesProvider>
       <div className="app-shell">
         <a className="skip-link" href="#main">Skip to the stage</a>
         <Header />
@@ -29,6 +31,7 @@ export default function App() {
       </div>
       <AssumptionsPanel />
       <Toasts />
+      </FixesProvider>
     </StoreProvider>
   );
 }

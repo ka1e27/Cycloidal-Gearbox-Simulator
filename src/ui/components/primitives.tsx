@@ -78,12 +78,15 @@ export function Section({
   defaultOpen = true,
   children,
   help,
+  badge,
 }: {
   title: string;
   summary?: ReactNode;
   defaultOpen?: boolean;
   children: ReactNode;
   help?: HelpEntry;
+  /** Small marker next to the title (e.g. the fix count), shown open or closed */
+  badge?: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const id = useId();
@@ -92,6 +95,7 @@ export function Section({
       <h3 className="section-h">
         <button type="button" className="section-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
           <span className="section-title">{title}</span>
+          {badge}
           {summary && <span className="section-summary">{summary}</span>}
           <Icon name="chevron" size={14} className="section-chevron" />
         </button>
@@ -105,7 +109,11 @@ export function Section({
 }
 
 /** Secondary, collapsed-by-default group inside a section. */
-export function Advanced({ children, label = 'Advanced', defaultOpen = false }: { children: ReactNode; label?: string; defaultOpen?: boolean }) {
+export function Advanced({ children, label = 'Advanced', defaultOpen = false, badge }: {
+  children: ReactNode; label?: string; defaultOpen?: boolean;
+  /** Marker on the header (e.g. "fix inside"), so a collapsed group still shows what it holds */
+  badge?: ReactNode;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const id = useId();
   return (
@@ -113,6 +121,7 @@ export function Advanced({ children, label = 'Advanced', defaultOpen = false }: 
       <button type="button" className="adv-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
         <Icon name="chevron" size={12} className="adv-chevron" />
         {label}
+        {badge}
       </button>
       <div className="adv-body" id={id} inert={!open}>
         <div className="adv-inner">{children}</div>
@@ -137,6 +146,7 @@ export function FieldRow({
   stacked,
   modifiedDot,
   className,
+  addon,
 }: {
   label: ReactNode;
   symbol?: string;
@@ -149,6 +159,8 @@ export function FieldRow({
   stacked?: boolean;
   modifiedDot?: ReactNode;
   className?: string;
+  /** Extra line under the control (e.g. a "fixes it" chip) */
+  addon?: ReactNode;
 }) {
   const u = useU();
   const labelText = typeof label === 'string' ? label : 'field';
@@ -166,6 +178,7 @@ export function FieldRow({
           {typeof message === 'string' ? u.text(message) : message}
         </div>
       )}
+      {addon && <div className="row-addon">{addon}</div>}
     </div>
   );
 }
@@ -285,13 +298,15 @@ export function SelectField({
   note,
   inline,
   className,
+  addon,
 }: {
   label: string;
   symbol?: string;
   value: string;
   onChange: (v: string) => void;
-  /** `title`: optional one-line hover text for the option */
-  options: { value: string; label: string; disabled?: boolean; title?: string }[];
+  /** `title`: optional one-line hover text for the option. `group`: consecutive options with the same group form an optgroup. */
+  options: { value: string; label: string; disabled?: boolean; title?: string; group?: string }[];
+  addon?: ReactNode;
   help?: HelpEntry;
   note?: ReactNode;
   /** Label on the left, select on the right (short lists). Default is stacked: label above a full-width select. */
@@ -300,17 +315,34 @@ export function SelectField({
 }) {
   const id = useId();
   return (
-    <FieldRow label={label} symbol={symbol} help={help} htmlFor={id} stacked={!inline} message={note} className={className}>
+    <FieldRow label={label} symbol={symbol} help={help} htmlFor={id} stacked={!inline} message={note} className={className} addon={addon}>
       <div className="sf-box">
         <select id={id} className="sf-select" value={value} onChange={(e) => onChange(e.target.value)}>
-          {options.map((o) => (
-            <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>
-          ))}
+          {groupOptions(options).map((g, gi) => (g.group == null
+            ? g.items.map((o) => <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>)
+            : (
+              <optgroup key={`g${gi}`} label={g.group}>
+                {g.items.map((o) => <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>)}
+              </optgroup>
+            )))}
         </select>
         <Icon name="chevron" size={14} className="sf-chevron" />
       </div>
     </FieldRow>
   );
+}
+
+type SelOpt = { value: string; label: string; disabled?: boolean; title?: string; group?: string };
+/** Consecutive options with the same `group` become one optgroup; options without a group stay loose. */
+function groupOptions(options: SelOpt[]): { group: string | null; items: SelOpt[] }[] {
+  const out: { group: string | null; items: SelOpt[] }[] = [];
+  for (const o of options) {
+    const g = o.group ?? null;
+    const last = out[out.length - 1];
+    if (last && last.group === g) last.items.push(o);
+    else out.push({ group: g, items: [o] });
+  }
+  return out;
 }
 
 export function Switch({

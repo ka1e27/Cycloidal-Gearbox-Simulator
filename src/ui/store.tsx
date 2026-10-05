@@ -125,7 +125,9 @@ export interface AdvisorRun {
 const idleRun: AdvisorRun = { status: 'idle', slot: null, progress: null, result: null, key: '', usedTarget: 0.85 };
 
 export type ToastKind = 'info' | 'success' | 'error';
-export interface Toast { id: number; kind: ToastKind; text: string }
+/** A button on a toast (e.g. "Undo"). */
+export interface ToastAction { label: string; run: () => void }
+export interface Toast { id: number; kind: ToastKind; text: string; action?: ToastAction }
 
 export function advisorKey(inputs: GearboxInputs, opts: AdvisorUiOptions, locks?: unknown): string {
   // discShare is ignored by the advisor; Treq/Tdes matter. `locks` is what the advisor was given (toEngineLocks).
@@ -173,7 +175,14 @@ interface StoreValue {
   runAdvisor: (slot: Slot, change?: (l: AdvisorLockState) => AdvisorLockState) => void;
   cancelAdvisor: () => void;
   toasts: Toast[];
-  notify: (kind: ToastKind, text: string) => void;
+  notify: (kind: ToastKind, text: string, action?: ToastAction) => void;
+  /**
+   * Change a slot's gearbox inputs as one undoable step (applying a fix, the recommended ratio): shows `message` in a
+   * toast with an Undo button. Only the last change can be undone.
+   */
+  applyGearboxChange: (slot: Slot, fn: (g: GearboxInputs) => GearboxInputs, message: string) => void;
+  /** Undo the last applyGearboxChange (no-op when there is none). */
+  undoLast: () => void;
   dismissToast: (id: number) => void;
   exportJson: () => void;
   importJson: (text: string) => void;
@@ -239,11 +248,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const fromArm = useCallback((slot: Slot) => loadsFromArm(state, slot, arm), [arm, state]);
 
   const dismissToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
-  const notify = useCallback((kind: ToastKind, text: string) => {
+  const notify = useCallback((kind: ToastKind, text: string, action?: ToastAction) => {
     const id = toastId.current++;
-    setToasts((t) => [...t.slice(-2), { id, kind, text }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' ? 9000 : 4500);
+    setToasts((t) => [...t.slice(-2), { id, kind, text, ...(action ? { action } : {}) }]);
+    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' || action ? 9000 : 4500);
   }, []);
+
+  // one-step undo for applied fixes and the recommended ratio
+  const undoRef = useRef<{ slot: Slot; before: GearboxInputs; n: number } | null>(null);
+  const undoN = useRef(0);
+  const undoLast = useCallback(() => {
+    const u = undoRef.current;
+    if (!u) return;
+    undoRef.current = null;
+    dispatch({ type: 'gearbox', slot: u.slot, fn: () => u.before });
+    setToasts((t) => t.filter((x) => !x.action));
+    notify('info', 'Undone: the previous values are back.');
+  }, [notify]);
+  const applyGearboxChange = useCallback((slot: Slot, fn: (g: GearboxInputs) => GearboxInputs, message: string) => {
+    const before = gearboxOf(stateRef.current, slot);
+    const n = ++undoN.current;
+    undoRef.current = { slot, before, n };
+    dispatch({ type: 'gearbox', slot, fn });
+    notify('success', message, {
+      label: 'Undo',
+      run: () => { if (undoRef.current?.n === n) undoLast(); },
+    });
+  }, [notify, undoLast]);
 
   const [jump, setJump] = useState<{ id: SectionId; n: number } | null>(null);
   const [solverMemo, setSolverMemo] = useState<Record<Slot, { res: SolverResult; key: string }>>({});
@@ -349,8 +380,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state, dispatch, u, arm, effective, fromArm, select, selectItem, setStage, patchWb, setSectionOpen, openSection, jump, solverMemo, rememberSolver,
     updateArm, updateGearbox, updateLocks, storageOk,
     resolvedTheme, advisorRun, runAdvisor, cancelAdvisor, toasts, notify, dismissToast, exportJson,
-    importJson, resetAll,
-  }), [state, u, arm, effective, fromArm, select, selectItem, setStage, patchWb, setSectionOpen, openSection, jump, solverMemo, rememberSolver,
+    importJson, resetAll, applyGearboxChange, undoLast,
+  }), [applyGearboxChange, undoLast, state, u, arm, effective, fromArm, select, selectItem, setStage, patchWb, setSectionOpen, openSection, jump, solverMemo, rememberSolver,
     updateArm, updateGearbox, updateLocks, storageOk, resolvedTheme,
     advisorRun, runAdvisor, cancelAdvisor, toasts, notify, dismissToast, exportJson, importJson, resetAll]);
 

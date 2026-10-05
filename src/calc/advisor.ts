@@ -19,8 +19,6 @@ import {
   ADVISOR_K1_MAX,
   ADVISOR_K1_MIN,
   ADVISOR_K1_STEP,
-  DISC_STOCK_METAL,
-  DISC_STOCK_POLYMER,
   INNER_PIN_OPTIONS,
   OUTER_PIN_OPTIONS,
   ZP_OPTIONS,
@@ -38,6 +36,7 @@ import {
   UTIL_CAP,
 } from './gearbox';
 import {
+  discStockFor,
   effectiveModulus,
   innerPinBendingLimit,
   innerPinSectionModulus,
@@ -595,7 +594,7 @@ function* searchGen(
   };
   const stock = sp.Lfixed !== null
     ? [sp.Lfixed]
-    : disc.kind === 'polymer' ? DISC_STOCK_POLYMER : DISC_STOCK_METAL;
+    : discStockFor(disc);
   const tMin = base.tMin, gap = base.gap, wall = base.wall;
   const rho = disc.density;
   let ligReq = tMin / thr;

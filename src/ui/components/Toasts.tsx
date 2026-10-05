@@ -17,6 +17,9 @@ export function Toasts() {
         <div key={t.id} className={`toast toast-${t.kind}`} role={t.kind === 'error' ? 'alert' : 'status'}>
           <span className="toast-tag">{WORD[t.kind]}</span>
           <span>{t.text}</span>
+          {t.action && (
+            <button type="button" className="toast-act" onClick={() => { t.action!.run(); dismissToast(t.id); }}>{t.action.label}</button>
+          )}
           <button type="button" className="toast-x" onClick={() => dismissToast(t.id)} aria-label="Dismiss message">
             <Icon name="x" size={14} />
           </button>
