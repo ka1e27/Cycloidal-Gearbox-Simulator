@@ -1,0 +1,38 @@
+name: Retry deploy after a runner outage
+
+# GitHub sometimes fails a job before any runner picks it up ("The job was not acquired by Runner").
+# That is an infrastructure hiccup, not a code problem, so re-run the deploy automatically (up to two
+# extra attempts). Real failures (a test or build step that ran and failed) are left alone.
+
+on:
+  workflow_run:
+    workflows: ["Deploy to GitHub Pages"]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run only if a job never got a runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" \
+            --jq '[.jobs[] | select(.conclusion == "failure")]')
+          echo "Failed jobs: $(echo "$jobs" | jq -r 'map(.name) | join(", ")')"
+          # A job that never got a runner has no runner name and ran no steps.
+          unacquired=$(echo "$jobs" | jq '[.[] | select((.runner_name // "") == "" and ((.steps // []) | length) == 0)] | length')
+          if [ "$unacquired" -gt 0 ]; then
+            echo "A job never got a runner: re-running the failed jobs."
+            gh run rerun "$RUN_ID" --failed -R "$REPO"
+          else
+            echo "The failure came from a step that ran. Not retrying."
+          fi

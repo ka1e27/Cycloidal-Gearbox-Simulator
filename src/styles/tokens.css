@@ -30,6 +30,7 @@
 
   --hl: #f1efe7; /* highlighted table row */
   --fig-fill: #ecebe3;
+  --housing-fill: #c9c5b9; /* machined ring housing: clearly darker than the disc fill */
   --force-0: #f8e3a3;
   --force-1: #f08a24;
   --force-2: #b3241c;
@@ -68,6 +69,7 @@
     --bad-ink: #ff6b6b;
     --hl: #22262b;
     --fig-fill: #262a30;
+    --housing-fill: #4b525c; /* clearly lighter than the disc fill */
     --force-0: #6b5a1c;
     --force-1: #e58a25;
     --force-2: #ff5b4d;
@@ -95,6 +97,7 @@
   --bad-ink: #ff6b6b;
   --hl: #22262b;
   --fig-fill: #262a30;
+  --housing-fill: #4b525c;
   --force-0: #6b5a1c;
   --force-1: #e58a25;
   --force-2: #ff5b4d;
