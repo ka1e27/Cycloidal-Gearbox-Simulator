@@ -3,7 +3,9 @@
 // Parts (each drawn about its own origin, one DXF layer per part, labels on NOTES):
 //   DISC          profile polyline (SPEC "actual profile" = pin-centre path offset inward by rr + clearance),
 //                 centre bore circle, Zw inner holes (dh = 2*rw + 2*e) on radius Rw
-//   HOUSING       outline circle at the housing OD, Zp pin holes on the pin circle, optional centre hole
+//   HOUSING       outline circle at the housing OD, Zp pin holes on the pin circle, optional centre hole; for an integral
+//                 (machined) ring: the internal tooth profile with tool fillets as one closed polyline, the outline and
+//                 optional mounting holes on a bolt circle in the middle of the wall
 //   OUTPUT_PLATE  Zw holes on radius Rw, outline circle, optional centre hole (output plate and tie plate share it)
 //   CAM           bearing-ID circle offset by e from the input-shaft hole (second cam at 180 deg for two discs)
 //   PINS          cross-sections: outer bushing (or solid pin), bolt shank, inner standoff (or solid pin)
@@ -13,6 +15,7 @@ import {
   INNER_PIN_OPTIONS,
   MATERIALS,
   createGearboxModel,
+  ringProfile,
   type GearboxInputs,
   type GearboxModel,
   type MaterialProps,
@@ -61,6 +64,10 @@ export interface ExportOptions {
   plateOutlineDia: number | null;
   outputCentreHole: boolean;
   outputCentreDia: number;
+  /** Integral ring housing: mounting holes on a bolt circle in the middle of the wall (0 = none). Default 6. */
+  housingHoleCount: number;
+  /** Integral ring housing: mounting hole diameter, mm. Default 3.4 (M3 clearance). */
+  housingHoleDia: number;
 }
 
 export const DEFAULT_EXPORT_OPTIONS: Readonly<ExportOptions> = Object.freeze({
@@ -77,6 +84,8 @@ export const DEFAULT_EXPORT_OPTIONS: Readonly<ExportOptions> = Object.freeze({
   plateOutlineDia: null,
   outputCentreHole: false,
   outputCentreDia: 10,
+  housingHoleCount: 6,
+  housingHoleDia: 3.4,
 });
 
 /** Margin of plate material around the inner pin holes for the default output plate outline, mm (each side). */
@@ -94,7 +103,7 @@ export function normalizeExportOptions(raw: unknown): ExportOptions {
   const num = <K extends keyof ExportOptions>(k: K) => { if (isNum(r[k])) (d as unknown as Record<string, unknown>)[k] = r[k]; };
   const bool = <K extends keyof ExportOptions>(k: K) => { if (typeof r[k] === 'boolean') (d as unknown as Record<string, unknown>)[k] = r[k]; };
   if (r.units === 'mm' || r.units === 'in') d.units = r.units;
-  for (const k of ['profileClearance', 'maxChordError', 'discHoleClearance', 'pinHoleClearance', 'shaftDia', 'housingCentreDia', 'outputCentreDia'] as const) num(k);
+  for (const k of ['profileClearance', 'maxChordError', 'discHoleClearance', 'pinHoleClearance', 'shaftDia', 'housingCentreDia', 'outputCentreDia', 'housingHoleCount', 'housingHoleDia'] as const) num(k);
   if (r.pointsPerLobe === null || isNum(r.pointsPerLobe)) d.pointsPerLobe = r.pointsPerLobe as number | null;
   if (r.bearingBore === null || isNum(r.bearingBore)) d.bearingBore = r.bearingBore as number | null;
   if (r.plateOutlineDia === null || isNum(r.plateOutlineDia)) d.plateOutlineDia = r.plateOutlineDia as number | null;
@@ -121,6 +130,8 @@ export function validateExportOptions(o: ExportOptions): Partial<Record<keyof Ex
   if (o.plateOutlineDia !== null && (!isNum(o.plateOutlineDia) || o.plateOutlineDia <= 0 || o.plateOutlineDia > L.maxDia)) e.plateOutlineDia = 'Outline diameter must be greater than 0';
   if (o.housingCentreHole && (!isNum(o.housingCentreDia) || o.housingCentreDia <= 0 || o.housingCentreDia > L.maxDia)) e.housingCentreDia = 'Centre hole diameter must be greater than 0';
   if (o.outputCentreHole && (!isNum(o.outputCentreDia) || o.outputCentreDia <= 0 || o.outputCentreDia > L.maxDia)) e.outputCentreDia = 'Centre hole diameter must be greater than 0';
+  if (!isNum(o.housingHoleCount) || !Number.isInteger(o.housingHoleCount) || o.housingHoleCount < 0 || o.housingHoleCount > 64) e.housingHoleCount = 'Mounting holes must be a whole number from 0 to 64';
+  if (!isNum(o.housingHoleDia) || o.housingHoleDia <= 0 || o.housingHoleDia > L.maxDia) e.housingHoleDia = 'Mounting hole diameter must be greater than 0';
   return e;
 }
 
@@ -314,6 +325,9 @@ export interface ExportInfo {
   dh: number;
   housingOD: number;
   discs: number;
+  /** Integral ring: root circle radius R_h and the ring plate's profile point count (null for pins) */
+  ringRoot: number | null;
+  ringPointCount: number | null;
   /** Radius offset used for the disc profile, mm (rr + clearance) */
   profileOffset: number;
   pointsPerLobe: number;
@@ -483,7 +497,37 @@ export function buildParts(
     }
 
     // ---- housing plate
-    {
+    const ig = inputs.outerPin.construction === 'integral' ? d.integral : null;
+    let ringPts = 0;
+    if (ig) {
+      // one ring housing with the teeth machined in (Addition 12)
+      const b = new PartBuilder('HOUSING');
+      const pts = ringProfile(Zp, Rp, rr, ig.Rh, ig.toolRadius, o.maxChordError);
+      if (!pts.length) return fail(['The machined ring profile cannot be built: the tool radius does not fit between the teeth.']);
+      ringPts = pts.length;
+      b.poly(pts, true);
+      const R = d.housingOD / 2;
+      b.circle(0, 0, R);
+      const nH = Math.round(o.housingHoleCount);
+      const bcR = (ig.Rh + R) / 2;
+      if (nH > 0) ringOfCircles(b, nH, bcR, o.housingHoleDia, 180 / nH);
+      const thick = ig.toothLength + 2 * inputs.gap;
+      b.summary.push(`Internal tooth profile: closed polyline, ${pts.length} points (${Zp} teeth radius ${fix(rr, 3)} on dia ${fix(inputs.D)}, root dia ${fix(2 * ig.Rh, 3)}, tool fillets r ${fix(ig.toolRadius, 2)})`);
+      b.summary.push(`Outline: circle dia ${fix(d.housingOD)} mm (2*R_h + 2*wall)`);
+      if (nH > 0) b.summary.push(`${nH} mounting holes: dia ${fix(o.housingHoleDia)} mm on dia ${fix(2 * bcR)} mm (middle of the wall)`);
+      b.summary.push(`Thickness ${fix(thick, 2)} mm = tooth length ${fix(ig.toothLength, 2)} + 2*gap ${fix(inputs.gap, 2)}`);
+      if (nH > 0 && o.housingHoleDia / 2 > (R - ig.Rh) / 2 - 0.5) b.warnings.push('Ring housing: the mounting holes leave under 0.5 mm of wall on one side. Use smaller holes or a thicker wall.');
+      if (ig.filletClearance < 0.05) b.warnings.push('Ring housing: the tool fillets reach into the disc path (see the tool fillet clearance check). Use a smaller end mill.');
+      b.notes([
+        `RING HOUSING (INTEGRAL TEETH)  ${label}  make 1`,
+        `Material ${materialLabel(inputs.outerPin.housingMaterial ?? inputs.outerPin.material)}  thickness ${fix(thick, 2)} (tooth length ${fix(ig.toothLength, 2)} + 2*gap ${fix(inputs.gap, 2)})`,
+        `${Zp} teeth r ${fix(rr, 3)} on D ${fix(inputs.D)}  tip R ${fix(Rp - rr, 3)}  root R ${fix(ig.Rh, 3)} (clearance ${fix(ig.rootClearance, 2)})`,
+        `Cut with an end mill of radius <= ${fix(ig.toolRadius, 2)} (fillets r ${fix(ig.toolRadius, 2)} drawn; largest that clears the disc ${fix(ig.maxToolRadius, 2)})`,
+        `Outline dia ${fix(d.housingOD)} = 2*R_h + 2*wall ${fix(inputs.wall)}${nH > 0 ? `  ${nH} holes dia ${fix(o.housingHoleDia)} on dia ${fix(2 * bcR)}` : ''}`,
+        'End covers: plain plates with the same outline and holes (not drawn). Grease the teeth.',
+      ]);
+      parts.push(b.finish('housing', 1));
+    } else {
       const b = new PartBuilder('HOUSING');
       const outer = inputs.outerPin.construction === 'boltBushing';
       const holeD = (outer ? inputs.outerPin.shankDia : 2 * rr) + o.pinHoleClearance;
@@ -505,6 +549,7 @@ export function buildParts(
       ]);
       parts.push(b.finish('housing', 2));
     }
+    if (ig) parts[parts.length - 1].title = 'Ring housing (integral teeth)';
 
     // ---- output / tie plate
     {
@@ -574,7 +619,9 @@ export function buildParts(
       const standoff = inputs.innerPin.construction === 'standoff';
       const thread = standoffThread(inputs.innerPin.bore, inputs.innerPin.od);
       const items: { tag: string; od: number; id: number | null; text: string }[] = [];
-      if (boltBushing) {
+      if (inputs.outerPin.construction === 'integral') {
+        // no outer pins: the teeth are part of the housing
+      } else if (boltBushing) {
         const bushId = inputs.outerPin.shankDia + o.pinHoleClearance;
         items.push({ tag: '1', od: 2 * rr, id: bushId, text: `1  Outer bushing: OD ${fix(2 * rr)}  ID ${fix(bushId)} (shank + ${fix(o.pinHoleClearance)})  disc stack ${fix(inputs.discs * inputs.L + (inputs.discs - 1) * inputs.gap, 2)}  make ${Zp}` });
         items.push({ tag: '2', od: inputs.outerPin.shankDia, id: null, text: `2  Bolt shank (section): dia ${fix(inputs.outerPin.shankDia)}  span ${fix(d.span, 3)} between plates  make ${Zp}` });
@@ -601,7 +648,7 @@ export function buildParts(
       }
       // the legend sits one text row below the number tags
       b.notes([`${PART_META.pins.title.toUpperCase()}  ${label}  cross-sections (the pins are bought or turned, these are for reference)`, ...items.map((it) => it.text)], NOTE_LINE);
-      parts.push(b.finish('pins', Zp + Zw));
+      parts.push(b.finish('pins', (inputs.outerPin.construction === 'integral' ? 0 : Zp) + Zw));
     }
 
     const warnings: string[] = [];
@@ -617,6 +664,7 @@ export function buildParts(
       parts,
       info: {
         Zp, Zc, D: inputs.D, e, rr, Rp, Rw: d.Rw, dh: d.dh, housingOD: d.housingOD, discs: inputs.discs,
+        ringRoot: ig ? ig.Rh : null, ringPointCount: ig ? ringPts : null,
         profileOffset: off, pointsPerLobe: ppl, pointCount: prof.points.length, chordError: prof.chordError, minLobeRadius: prof.minLobeRadius,
       },
       tag,

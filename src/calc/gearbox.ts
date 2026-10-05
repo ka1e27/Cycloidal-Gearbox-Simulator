@@ -18,6 +18,18 @@ import {
   ringSweep,
   standoffRingUnit,
 } from './kernel';
+import {
+  discEnvelope,
+  filletAnalysis,
+  FILLET_CLEARANCE_MIN,
+  integralGeometry,
+  integralGeometryErrors,
+  integralSpecOf,
+  ringContactMaterial,
+  ringProfile,
+  toothLength,
+  toothRootStress,
+} from './integral';
 import { DEFAULT_INNER_PIN_SUPPORT, INNER_PIN_SUPPORTS } from './types';
 import type {
   Check,
@@ -137,11 +149,19 @@ export function validateGearboxInputs(inp: GearboxInputs): { errors: string[]; w
     checkMaterial('Disc material', inp.discMaterial, errors);
     if (!inp.outerPin) errors.push('Outer pin spec missing');
     else {
-      checkMaterial('Outer pin material', inp.outerPin.material, errors);
+      if (inp.outerPin.construction === 'integral') {
+        // the pin / bushing material is not used: the housing is the contact partner
+        const ig = integralSpecOf(inp.outerPin);
+        checkMaterial('Housing material', ig.housingMaterial, errors);
+        num(ig.rootClearance, 'Root clearance', (x) => x >= 0, 'must be >= 0 mm', M.gap, 'mm');
+        num(ig.toolRadius, 'Tool radius', (x) => x > 0, 'must be > 0 mm', M.rr, 'mm');
+      } else checkMaterial('Outer pin material', inp.outerPin.material, errors);
       if (inp.outerPin.construction === 'boltBushing') {
         num(inp.outerPin.shankDia, 'Bolt shank diameter', (x) => x > 0, 'must be > 0 mm', M.pinDia, 'mm');
         num(inp.outerPin.boltYield, 'Bolt yield', (x) => x > 0, 'must be > 0 MPa', M.strengthMPa, 'MPa');
-      } else if (inp.outerPin.construction !== 'solid') errors.push('Outer pin construction must be boltBushing or solid');
+      } else if (inp.outerPin.construction !== 'solid' && inp.outerPin.construction !== 'integral') {
+        errors.push('Outer pin construction must be boltBushing, solid or integral');
+      }
     }
     if (!inp.innerPin) errors.push('Inner pin spec missing');
     else {
@@ -168,12 +188,16 @@ export function validateGearboxInputs(inp: GearboxInputs): { errors: string[]; w
     if (!(Rroot > 0)) errors.push('Outer pin circle is too small: lobe root radius <= 0');
     const Rw = inp.RwOverride ?? Rroot - dh / 2 - inp.tMin;
     if (!(Rw > 0)) errors.push('Inner pin circle radius Rw <= 0: geometry infeasible (pins too large for this D)');
+    if (inp.outerPin.construction === 'integral' && K1 < 1) {
+      const ig = integralSpecOf(inp.outerPin);
+      errors.push(...integralGeometryErrors(inp.Zp, Rp, inp.e, inp.rr, ig.rootClearance, ig.toolRadius));
+    }
     if (errors.length) return { errors, warnings };
 
     if (K1 < 0.4 || K1 > 0.85) warnings.push(`K1 = ${K1.toFixed(2)} is outside the usual 0.40 to 0.85 range.`);
     if (inp.Tdes < inp.Treq) warnings.push('T_des is below T_req.');
     if (inp.Kc < 1 || inp.KcLife < 1) warnings.push('Kc below 1 assumes better than perfect load sharing.');
-    if (2 * inp.rr > 2 * Rp * Math.sin(Math.PI / inp.Zp) - 1) {
+    if (inp.outerPin.construction !== 'integral' && 2 * inp.rr > 2 * Rp * Math.sin(Math.PI / inp.Zp) - 1) {
       warnings.push('Neighbouring outer pins are less than 1 mm apart edge to edge.');
     }
   } catch (err) {
@@ -186,7 +210,11 @@ export function validateGearboxInputs(inp: GearboxInputs): { errors: string[]; w
 // Derived geometry
 // ---------------------------------------------------------------------------
 
-export function deriveGeometry(inp: GearboxInputs): DerivedGeometry {
+/**
+ * Derived geometry. `reach` (integral ring only) is the disc's farthest reach in the ring frame from the sampled actual
+ * profile (max radius + e); without it the exact analytic value Rp + 2e - rr is used.
+ */
+export function deriveGeometry(inp: GearboxInputs, reach?: number): DerivedGeometry {
   const Zc = inp.Zp - 1;
   const Rp = inp.D / 2;
   const dh = 2 * inp.rw + 2 * inp.e;
@@ -194,6 +222,16 @@ export function deriveGeometry(inp: GearboxInputs): DerivedGeometry {
   const RwAuto = Rroot - dh / 2 - inp.tMin;
   const Rw = inp.RwOverride != null ? inp.RwOverride : RwAuto;
   const share = discShareOf(inp.discs, inp.discShare);
+  let integral: DerivedGeometry['integral'] = null;
+  if (inp.outerPin.construction === 'integral') {
+    const spec = integralSpecOf(inp.outerPin);
+    const ig = integralGeometry(inp.Zp, Rp, inp.e, inp.rr, spec.rootClearance, spec.toolRadius, reach);
+    integral = {
+      Rh: ig.Rh, reach: ig.reach, rootClearance: spec.rootClearance, toolRadius: spec.toolRadius,
+      toothHeight: ig.toothHeight, baseChord: ig.baseChord, pitchChord: ig.pitchChord,
+      toothLength: toothLength(inp.discs, inp.L, inp.gap), filletClearance: NaN, maxToolRadius: NaN,
+    };
+  }
   return {
     Zc,
     ratio: Zc,
@@ -207,11 +245,12 @@ export function deriveGeometry(inp: GearboxInputs): DerivedGeometry {
     ligHoles: 2 * Rw * Math.sin(Math.PI / inp.Zw) - dh,
     ligRoot: Rroot - (Rw + dh / 2),
     pinClearance: 2 * Rp * Math.sin(Math.PI / inp.Zp) - 2 * inp.rr,
-    EstarRing: effectiveModulus(inp.outerPin.material, inp.discMaterial),
+    EstarRing: effectiveModulus(ringContactMaterial(inp.outerPin), inp.discMaterial),
     EstarInner: effectiveModulus(inp.innerPin.material, inp.discMaterial),
     share,
     span: inp.discs * inp.L + (inp.discs + 1) * inp.gap,
-    housingOD: inp.D + 2 * inp.rr + 2 * inp.wall,
+    housingOD: integral ? 2 * integral.Rh + 2 * inp.wall : inp.D + 2 * inp.rr + 2 * inp.wall,
+    integral,
   };
 }
 
@@ -277,6 +316,11 @@ export function scaleLoads(inp: GearboxInputs, g: DerivedGeometry, u: UnitInputs
   const used = model === 'ringClamped' ? ringC : model === 'ringPinned' ? ringP : so;
   const bearingPeak = u.FbUnit * inp.Tdes * s;
   const bearingWorking = u.FbUnit * inp.Treq * s;
+  const ig = inp.outerPin.construction === 'integral' ? g.integral : null;
+  const tooth = ig
+    // each disc presses on its own L-long stretch of the tooth, so the peak (per-disc) force acts over one disc thickness
+    ? toothRootStress(FRingPeak, inp.L, ig.baseChord, ig.toothHeight, integralSpecOf(inp.outerPin).housingMaterial)
+    : null;
   const L10h = bearingWorking > 0
     ? (Math.pow(inp.bearing.C / bearingWorking, 3) * 1e6) / (60 * inp.rpm)
     : Infinity;
@@ -287,8 +331,12 @@ export function scaleLoads(inp: GearboxInputs, g: DerivedGeometry, u: UnitInputs
     p0InnerLife: u.p0InnerUnit * sLife,
     FRingPeak,
     FInnerPeak,
-    boltBendingFixed: (FRingPeak * g.span) / 8 / Zo,
-    boltBendingSimple: (FRingPeak * g.span) / 4 / Zo,
+    // no bolt in an integral ring: reported as 0, and the check is replaced by the tooth root check
+    boltBendingFixed: tooth ? 0 : (FRingPeak * g.span) / 8 / Zo,
+    boltBendingSimple: tooth ? 0 : (FRingPeak * g.span) / 4 / Zo,
+    toothBending: tooth ? tooth.bending : 0,
+    toothShear: tooth ? tooth.shear : 0,
+    toothStress: tooth ? tooth.vonMises : 0,
     standoffBendingTie: so / 2,
     standoffBendingCantilever: so,
     standoffArm,
@@ -304,15 +352,17 @@ export function scaleLoads(inp: GearboxInputs, g: DerivedGeometry, u: UnitInputs
 export function buildChecks(
   inp: GearboxInputs, g: DerivedGeometry, u: UnitInputs, l: ScaledLoads,
 ): Check[] {
-  const ringLim = contactLimits(inp.discMaterial, inp.outerPin.material);
+  const integral = inp.outerPin.construction === 'integral' && g.integral ? g.integral : null;
+  const ringLim = contactLimits(inp.discMaterial, ringContactMaterial(inp.outerPin));
   const inLim = contactLimits(inp.discMaterial, inp.innerPin.material);
   const boltLim = outerPinBendingLimit(inp.outerPin);
+  const ringPart = integral ? 'disc and housing' : 'disc and pin part';
   const soLim = innerPinBendingLimit(inp.innerPin);
   const checks: Check[] = [
     mkCheck('ringContactStrength', 'Ring contact, strength', l.p0RingStrength, ringLim.strength, 'MPa', 'max',
-      '1.67 x Sy of the weaker of disc and pin part: line-contact yield onset'),
+      `1.67 x Sy of the weaker of ${ringPart}: line-contact yield onset`),
     mkCheck('ringContactLife', 'Ring contact, life', l.p0RingLife, ringLim.life, 'MPa', 'max',
-      '0.577 x sigma_f / 0.25 (weaker of disc and pin part): subsurface shear (0.25 p0) vs shear fatigue'),
+      `0.577 x sigma_f / 0.25 (weaker of ${ringPart}): subsurface shear (0.25 p0) vs shear fatigue`),
     mkCheck('innerContactStrength', 'Inner hole contact, strength', l.p0InnerStrength, inLim.strength, 'MPa', 'max',
       '1.67 x Sy of the weaker of disc and pin part: line-contact yield onset'),
     mkCheck('innerContactLife', 'Inner hole contact, life', l.p0InnerLife, inLim.life, 'MPa', 'max',
@@ -334,13 +384,31 @@ export function buildChecks(
     else if (u.cusp && base.status !== 'fail') { base.utilization = 1.0001; base.status = 'fail'; }
     checks.push(base);
   }
+  if (integral) {
+    // no pins or bolts: the tooth root and the tool fillets are checked instead (CLAUDE.md Addition 12)
+    const housing = integralSpecOf(inp.outerPin).housingMaterial;
+    checks.push(
+      mkCheck('toothRoot', 'Ring tooth root (integral)', l.toothStress, Math.min(0.4 * housing.Sy, housing.sigmaF), 'MPa', 'max',
+        'Peak ring force on one tooth as a short cantilever (working length x base chord, tooth height as the lever): von Mises of bending and shear vs min(0.4 Sy, sigma_f) of the housing',
+        {
+          bending: l.toothBending, shear: l.toothShear, combined: l.toothStress,
+          baseChord: integral.baseChord, toothHeight: integral.toothHeight, toothLength: integral.toothLength,
+        }),
+      mkCheck('toolFillet', 'Tool fillet clearance', integral.filletClearance, FILLET_CLEARANCE_MIN, 'mm', 'min',
+        'Smallest gap between the swept disc and the end-mill fillets at the tooth roots (negative = the fillet cuts into the disc path)',
+        { toolRadius: integral.toolRadius, maxToolRadius: integral.maxToolRadius }),
+    );
+  } else {
+    checks.push(
+      mkCheck('boltBending', inp.outerPin.construction === 'solid' ? 'Outer pin bending' : 'Outer bolt bending',
+        l.boltBendingSimple, boltLim, 'MPa', 'max',
+        inp.outerPin.construction === 'solid'
+          ? 'Simply-supported value vs min(0.4 Sy, sigma_f) of the pin material'
+          : 'Simply-supported value vs 0.4 x bolt yield (fatigue)',
+        { fixedFixed: l.boltBendingFixed, simplySupported: l.boltBendingSimple }),
+    );
+  }
   checks.push(
-    mkCheck('boltBending', inp.outerPin.construction === 'solid' ? 'Outer pin bending' : 'Outer bolt bending',
-      l.boltBendingSimple, boltLim, 'MPa', 'max',
-      inp.outerPin.construction === 'solid'
-        ? 'Simply-supported value vs min(0.4 Sy, sigma_f) of the pin material'
-        : 'Simply-supported value vs 0.4 x bolt yield (fatigue)',
-      { fixedFixed: l.boltBendingFixed, simplySupported: l.boltBendingSimple }),
     mkCheck('standoffBending', inp.innerPin.construction === 'solid' ? 'Inner pin bending' : 'Inner standoff bending',
       l.standoffBending, soLim, 'MPa', 'max',
       `${INNER_PIN_SUPPORT_TEXT[innerPinSupportOf(inp)]}. Peak bending vs ${inp.innerPin.construction === 'solid'
@@ -376,7 +444,7 @@ function nanGeometry(): DerivedGeometry {
   const n = NaN;
   return {
     Zc: n, ratio: n, Rp: n, K1: n, dh: n, Rroot: n, Rw: n, RwIsOverride: false, ligBore: n, ligHoles: n,
-    ligRoot: n, pinClearance: n, EstarRing: n, EstarInner: n, share: n, span: n, housingOD: n,
+    ligRoot: n, pinClearance: n, EstarRing: n, EstarInner: n, share: n, span: n, housingOD: n, integral: null,
   };
 }
 
@@ -391,7 +459,7 @@ function invalidResult(errors: string[], warnings: string[], derived?: DerivedGe
     unit: { p0Ring: n, FRing: n, p0Inner: n, FInner: n, Fb: n, rhoMinConvex: n, MRingClamped: n, MRingPinned: n },
     loads: {
       p0RingStrength: n, p0RingLife: n, p0InnerStrength: n, p0InnerLife: n, FRingPeak: n, FInnerPeak: n,
-      boltBendingFixed: n, boltBendingSimple: n, standoffBendingTie: n, standoffBendingCantilever: n,
+      boltBendingFixed: n, boltBendingSimple: n, toothBending: n, toothShear: n, toothStress: n, standoffBendingTie: n, standoffBendingCantilever: n,
       standoffArm: n, standoffBendingRingClamped: n, standoffBendingRingPinned: n, standoffBending: n,
       bearingPeak: n, bearingWorking: n, L10h: n,
     },
@@ -410,7 +478,7 @@ function invalidResult(errors: string[], warnings: string[], derived?: DerivedGe
 
 function isPolymer(inp: GearboxInputs): boolean {
   return inp.discMaterial.kind === 'polymer' ||
-    inp.outerPin.material.kind === 'polymer' ||
+    ringContactMaterial(inp.outerPin).kind === 'polymer' ||
     inp.innerPin.material.kind === 'polymer';
 }
 
@@ -464,7 +532,17 @@ interface Analysis {
 
 function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings: string[]): Analysis {
   const { npf, nth } = res;
-  const g = deriveGeometry(inp);
+  const integralRing = inp.outerPin.construction === 'integral';
+  // integral ring: the disc's swept envelope (reference theta sweep) gives the exact reach and the fillet clearance
+  const env = integralRing
+    ? discEnvelope(inp.Zp, inp.D / 2, inp.e, inp.rr, nth, Math.max(32, Math.min(128, Math.round((128 * npf) / DEFAULT_NPF))))
+    : null;
+  const g = deriveGeometry(inp, env ? env.profileMaxR + inp.e : undefined);
+  if (env && g.integral) {
+    const fa = filletAnalysis(env, inp.Zp, g.Rp, inp.rr, g.integral.Rh, g.integral.toolRadius);
+    g.integral.filletClearance = fa.clearance;
+    g.integral.maxToolRadius = fa.maxToolRadius;
+  }
   const prof = computeProfile(inp.Zp, g.Rp, inp.e, inp.rr, npf);
   const sw = ringSweep(inp.Zp, g.Rp, inp.e, inp.rr, prof.kappaA, npf, nth);
   const gt = innerForceTable(inp.Zw, inp.Zp, nth);
@@ -499,7 +577,12 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
   if (g.RwIsOverride && g.ligRoot < inp.tMin - EPS) {
     allWarn.push(`Rw override leaves only ${g.ligRoot.toFixed(2)} mm between the holes and the lobe root.`);
   }
-  if (g.pinClearance < 1) allWarn.push('Outer pins nearly touch: edge clearance below 1 mm.');
+  if (!integralRing && g.pinClearance < 1) allWarn.push('Outer pins nearly touch: edge clearance below 1 mm.');
+  if (integralRing && g.integral && g.integral.filletClearance < FILLET_CLEARANCE_MIN) {
+    allWarn.push(g.integral.maxToolRadius > 0
+      ? `The tool fillets reach into the disc path: use an end mill of radius at most ${g.integral.maxToolRadius.toFixed(2)} mm, or more root clearance.`
+      : 'The tool fillets reach into the disc path even with a very small end mill: increase the root clearance.');
+  }
   const polymer = isPolymer(inp);
   const mass = estimateMass(inp, g, prof.area);
   if (mass.netAreaMm2 < 0) allWarn.push('Disc net area is negative: holes and bore exceed the profile area.');
@@ -507,7 +590,7 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
   const sStr = Math.sqrt(inp.Kc * inp.Tdes * g.share);
   const sLife = Math.sqrt(inp.KcLife * inp.Treq * g.share);
   const kE = Math.sqrt(g.EstarRing / inp.L);
-  const ringLim = contactLimits(inp.discMaterial, inp.outerPin.material);
+  const ringLim = contactLimits(inp.discMaterial, ringContactMaterial(inp.outerPin));
   const sweep: SweepData = {
     thetaDeg: [], p0Strength: [], p0Life: [], FPeak: [], bearingLoad: [],
     limitStrength: ringLim.strength, limitLife: ringLim.life,
@@ -524,7 +607,8 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
   const errors: string[] = [];
   const probe: [string, number][] = [
     ['ring contact', p0RingUnit], ['inner contact', p0InnerUnit], ['bearing load', FbUnit],
-    ['bolt bending', loads.boltBendingSimple], ['standoff bending', loads.standoffBending],
+    integralRing ? ['tooth root stress', loads.toothStress] : ['bolt bending', loads.boltBendingSimple],
+    ['standoff bending', loads.standoffBending],
     ['ring pin force', loads.FRingPeak], ['inner pin force', loads.FInnerPeak],
     ['ring contact stress', loads.p0RingStrength], ['inner contact stress', loads.p0InnerStrength],
     ['bearing peak load', loads.bearingPeak], ['disc area', prof.area],
@@ -602,6 +686,19 @@ export function createGearboxModel(inputs: GearboxInputs, opts?: ResolutionOptio
     return pts;
   }
 
+  const ringCache = new Map<number, { x: number; y: number }[]>();
+  function ringProfileOf(tol = 0.01): { x: number; y: number }[] | null {
+    const ig = result.valid ? result.derived.integral : null;
+    if (!ig) return null;
+    const key = Math.max(1e-4, tol);
+    let pts = ringCache.get(key);
+    if (!pts) {
+      pts = ringProfile(inputs.Zp, result.derived.Rp, inputs.rr, ig.Rh, ig.toolRadius, key);
+      ringCache.set(key, pts);
+    }
+    return pts.length ? pts : null;
+  }
+
   function pinsAt(theta: number): DiscPin[] | null {
     if (!analysis || !result.valid || !Number.isFinite(theta)) return null;
     try {
@@ -651,6 +748,7 @@ export function createGearboxModel(inputs: GearboxInputs, opts?: ResolutionOptio
     return {
       theta, center: { x: cx, y: cy }, profile, outerPins: pins, innerHoles, innerPins,
       bore: { x: cx, y: cy, r: inputs.Db / 2 }, maxForce,
+      ring: d.integral ? { profile: ringProfileOf() ?? [], Rh: d.integral.Rh } : null,
     };
   }
 
@@ -660,5 +758,6 @@ export function createGearboxModel(inputs: GearboxInputs, opts?: ResolutionOptio
     pinsAt,
     drawingAt,
     profilePoints: (n = 720) => discFramePoints(Math.max(60, Math.floor(n))),
+    ringProfile: ringProfileOf,
   };
 }

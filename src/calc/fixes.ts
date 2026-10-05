@@ -16,6 +16,9 @@
 //   inner pin support cantilever -> pinned tie ring -> bolted tie ring
 //   pin / standoff material, bolt grade: only when the governing check is a pin bending or a pin contact check
 //                   (steel pins only, plus plastics for a plastic disc)
+//   integral ring   tooth radius rr up and down (0.25 mm grid), housing material (stronger library materials, when a
+//                   ring contact or the tooth root governs), tool radius (standard end mills below the current one, when the
+//                   tool fillet check fails)
 //   ratio           never as a gearbox fix; only "use the recommended ratio" (e rescaled to keep K1) when a motor is
 //                   given and the motor check is above the target
 // Searches run at the coarse resolution; every reported fix is re-checked at full SPEC resolution (newMaxUtil,
@@ -26,6 +29,7 @@ import { checkGearbox, GREEN_LIMIT, innerPinSupportOf, UTIL_CAP } from './gearbo
 import {
   MATERIALS, SPEC_STEEL, discStockFor, materialProps, sameMaterialProps, type MaterialProps,
 } from './materials';
+import { END_MILL_RADII, integralSpecOf } from './integral';
 import { checkMotor, K1_MAX, K1_MIN, recommendRatio, rescaleEForZp, type MotorSpec } from './motor';
 import { now, runAsync, runSync, type RunHooks } from './runner';
 import type { CheckId, CheckStatus, GearboxInputs, GearboxResult, InnerPinSupport } from './types';
@@ -37,11 +41,13 @@ import type { CheckId, CheckStatus, GearboxInputs, GearboxResult, InnerPinSuppor
 /** Input paths a fix can change (the UI highlights the matching field). */
 export type FixField =
   | 'D' | 'e' | 'L' | 'discs' | 'rr' | 'rw' | 'Zw' | 'bearing' | 'discMaterial' | 'innerPinSupport'
-  | 'outerPin.material' | 'outerPin.boltYield' | 'innerPin.material' | 'Zp';
+  | 'outerPin.material' | 'outerPin.boltYield' | 'innerPin.material' | 'Zp'
+  | 'outerPin.housingMaterial' | 'outerPin.toolRadius';
 
 export const FIX_FIELDS: readonly FixField[] = [
   'D', 'e', 'L', 'discs', 'rr', 'rw', 'Zw', 'bearing', 'discMaterial', 'innerPinSupport',
   'outerPin.material', 'outerPin.boltYield', 'innerPin.material', 'Zp',
+  'outerPin.housingMaterial', 'outerPin.toolRadius',
 ];
 
 /** A gearbox check, or 'motor' (the motor torque / speed through the gearbox ratio). */
@@ -541,8 +547,33 @@ function* fixGen(inputs: GearboxInputs, o: Resolved): Generator<FixProgress, Fix
     }
     yield progress('discs');
 
+    // ---------------------------------------------------------------- integral ring: tooth radius both ways (0.25 mm grid)
+    const integral = inputs.outerPin.construction === 'integral';
+    if (integral) {
+      const rr = inputs.rr;
+      const found: Fix[] = [];
+      for (const dir of [1, -1] as const) {
+        const lo = 1, hi = Math.max(8, rr);
+        const k0 = dir === 1 ? Math.floor(rr / 0.25 + 1e-9) + 1 : Math.ceil(rr / 0.25 - 1e-9) - 1;
+        const n = dir === 1 ? Math.max(0, Math.floor(hi / 0.25 + 1e-9) - k0 + 1) : Math.max(0, k0 - Math.ceil(lo / 0.25 - 1e-9) + 1);
+        const val = (k: number) => Math.round((k0 + dir * k) * 0.25 * 100) / 100;
+        const at = (k: number) => ({ ...inputs, rr: val(k) });
+        const r = gridSearch(n, at, 'rr', 2);
+        if (!r) continue;
+        const v = val(r.k);
+        const f = finish({
+          field: 'rr', label: 'Tooth radius rr', direction: dir === 1 ? 'up' : 'down', from: mm(rr, 2), to: mm(v, 2),
+          fromValue: rr, toValue: v, short: `${dir === 1 ? '▲' : '▼'} teeth rr → ${mm(v, 2)}`, patch: { rr: v },
+          changeCost: 0.25 * Math.abs(v - rr) / rr,
+        }, at(r.k));
+        if (f) found.push(f);
+      }
+      found.sort((a, b) => Number(b.passesTarget) - Number(a.passesTarget) || (a.passesTarget ? a.cost - b.cost : a.newMaxUtil - b.newMaxUtil));
+      if (found.length) push(found[0]);
+    }
+
     // ---------------------------------------------------------------- outer pin size up (catalog)
-    {
+    if (!integral) {
       const opts = OUTER_PIN_OPTIONS.filter((p) => p.od > 2 * inputs.rr + 1e-9);
       const bolt = inputs.outerPin.construction === 'boltBushing';
       const patchOf = (p: (typeof OUTER_PIN_OPTIONS)[number]): Partial<GearboxInputs> => ({
@@ -660,7 +691,44 @@ function* fixGen(inputs: GearboxInputs, o: Resolved): Generator<FixProgress, Fix
     const gov = r0.governing?.id;
     const outerGov = gov === 'boltBending' || gov === 'ringContactStrength' || gov === 'ringContactLife';
     const innerGov = gov === 'standoffBending' || gov === 'innerContactStrength' || gov === 'innerContactLife';
-    if (outerGov) {
+    const toothGov = gov === 'toothRoot' || gov === 'ringContactStrength' || gov === 'ringContactLife';
+    if (integral && toothGov) {
+      // a stronger housing (contact limits and the tooth root)
+      const op = inputs.outerPin;
+      const cur = integralSpecOf(op).housingMaterial;
+      const lib = MATERIALS.filter((x) => !sameMaterialProps(materialProps(x.id), cur) &&
+        x.Sy >= cur.Sy && x.sigmaF >= cur.sigmaF && (x.Sy > cur.Sy || x.sigmaF > cur.sigmaF));
+      const cands = lib.map((x) => ({ ...inputs, outerPin: { ...op, housingMaterial: materialProps(x.id) } }));
+      const r = pickSearch(cands, 'outerPin.housingMaterial', (k) => lib[k].density * 10 + lib[k].Sy / 1000);
+      if (r) {
+        const x = lib[r.k];
+        push(finish({
+          field: 'outerPin.housingMaterial', label: 'Housing material', direction: 'change', from: materialName(cur), to: x.name,
+          fromValue: null, toValue: null, short: `Housing → ${x.name}`, patch: { outerPin: { ...op, housingMaterial: materialProps(x.id) } },
+          changeCost: 0.4,
+        }, cands[r.k]));
+      }
+    }
+    if (integral && failing.includes('toolFillet')) {
+      // a smaller end mill: standard radii below the current one (largest first), plus the largest radius that fits
+      const op = inputs.outerPin;
+      const rt = integralSpecOf(op).toolRadius;
+      const maxFit = r0.derived.integral?.maxToolRadius;
+      const radii = [...END_MILL_RADII, ...(maxFit != null && Number.isFinite(maxFit) && maxFit > 0.05 ? [maxFit] : [])]
+        .filter((x) => x < rt - 1e-9).sort((a, b) => b - a);
+      const cands = radii.map((x) => ({ ...inputs, outerPin: { ...op, toolRadius: x } }));
+      const r = listSearch(cands, 'outerPin.toolRadius');
+      if (r) {
+        const x = radii[r.k];
+        const std = END_MILL_RADII.some((s) => Math.abs(s - x) < 1e-9);
+        push(finish({
+          field: 'outerPin.toolRadius', label: 'Tool radius', direction: 'down', from: mm(rt, 3), to: `${mm(x, 3)}${std ? ` (${trim(2 * x, 2)} mm end mill)` : ''}`,
+          fromValue: rt, toValue: x, short: `▼ tool → ${mm(x, 2)}`, patch: { outerPin: { ...op, toolRadius: x } },
+          changeCost: 0.1,
+        }, cands[r.k]));
+      }
+    }
+    if (outerGov && !integral) {
       const op = inputs.outerPin;
       if (op.construction === 'boltBushing') {
         const grades = BOLT_GRADES.filter((g) => g.yield > op.boltYield + 1e-9);

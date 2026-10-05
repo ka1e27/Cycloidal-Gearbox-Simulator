@@ -10,7 +10,7 @@ import { gearboxOf, slotLabel, slotShort, CUSTOM, type Session, type Slot } from
 import { useStore, type AdvisorRun } from '../store';
 import type { U } from '../units';
 import { GearboxInputsPanel } from '../screens/GearboxInputsPanel';
-import { CheckCards, InvalidCard, KeyData, PolymerCard, VerdictBanner } from '../screens/GearboxResults';
+import { CheckCards, IntegralCard, InvalidCard, KeyData, PolymerCard, VerdictBanner } from '../screens/GearboxResults';
 import { MotorCard } from '../screens/MotorCard';
 import type { SlotModel } from '../screens/GearboxScreen';
 import { ArmSettings, JointArmLoads, JointLinkFields, ServoRequirement, TorqueTable } from '../screens/ArmScreen';
@@ -87,6 +87,7 @@ function ChecksBody({ slot, sm }: SectionCtx) {
       {!r.valid ? <InvalidCard r={r} /> : (
         <>
           {r.polymerWarning && <PolymerCard />}
+          {r.derived.integral && <IntegralCard slot={slot} />}
           <KeyData r={r} discs={sm.deferred.discs} />
           <CheckCards r={r} compact fixes={view} />
         </>

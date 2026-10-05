@@ -102,6 +102,7 @@ export function ExportDxfPanel({
   const info = res.info;
   const disabled = !res.ok || hasFieldErrors;
   const byId = (id: string): PartDrawing | undefined => res.parts.find((p) => p.id === id);
+  const integral = inputs.outerPin.construction === 'integral';
 
   return (
     <Card
@@ -147,8 +148,9 @@ export function ExportDxfPanel({
               <div className="dxf-part-text">
                 <strong className="dxf-part-name">{p?.title ?? id}</strong>
                 <span className="dxf-part-sub">
-                  {PART_BLURB[id]}
-                  {p && <span className="dxf-qty"> · make {p.id === 'pins' ? `${inputs.Zp} + ${inputs.Zp} + ${inputs.Zw}` : p.quantity}</span>}
+                  {integral && id === 'housing' ? 'Internal teeth with tool fillets, outline and mounting holes'
+                    : integral && id === 'pins' ? 'Inner standoff or pin section (no outer pins)' : PART_BLURB[id]}
+                  {p && <span className="dxf-qty"> · make {p.id === 'pins' ? (integral ? String(inputs.Zw) : `${inputs.Zp} + ${inputs.Zp} + ${inputs.Zw}`) : p.quantity}</span>}
                 </span>
               </div>
               <Button
@@ -326,6 +328,29 @@ export function ExportDxfPanel({
             step={1}
             error={fieldErrors.outputCentreDia}
           />
+        )}
+        {integral && (
+          <>
+            <NumberField
+              label="Ring housing mounting holes"
+              help={DXF_HELP.housingHoles}
+              value={opts.housingHoleCount}
+              onChange={(v) => patch({ housingHoleCount: v ?? DEFAULT_EXPORT_OPTIONS.housingHoleCount })}
+              defaultValue={DEFAULT_EXPORT_OPTIONS.housingHoleCount}
+              step={1}
+              error={fieldErrors.housingHoleCount}
+            />
+            <NumberField
+              label="Mounting hole diameter"
+              quantity="length"
+              help={DXF_HELP.housingHoles}
+              value={opts.housingHoleDia}
+              onChange={(v) => patch({ housingHoleDia: v ?? DEFAULT_EXPORT_OPTIONS.housingHoleDia })}
+              defaultValue={DEFAULT_EXPORT_OPTIONS.housingHoleDia}
+              step={0.1}
+              error={fieldErrors.housingHoleDia}
+            />
+          </>
         )}
         {modified && (
           <div className="dxf-reset">

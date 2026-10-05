@@ -241,7 +241,8 @@ export const POLYMER_WARNING_LINES: readonly string[] = [
 // Pin construction options and their bending limits
 // ---------------------------------------------------------------------------
 
-export type OuterPinConstruction = 'boltBushing' | 'solid';
+/** 'integral': no pins, the teeth are machined into the housing (CLAUDE.md Addition 12). */
+export type OuterPinConstruction = 'boltBushing' | 'solid' | 'integral';
 export type InnerPinConstruction = 'standoff' | 'solid';
 
 export interface OuterPinSpec {
@@ -252,9 +253,15 @@ export interface OuterPinSpec {
   boltYield: number;
   /**
    * Contact material. For boltBushing this is the bushing (E, nu for E*); for solid it is the pin
-   * material and also supplies bending strength (Sy, sigmaF).
+   * material and also supplies bending strength (Sy, sigmaF). Not used by an integral ring (see housingMaterial).
    */
   material: MaterialProps;
+  /** integral: the housing material the teeth are machined from (contact and tooth root). Missing = aluminum 6061-T6. */
+  housingMaterial?: MaterialProps;
+  /** integral: radial clearance between the disc's farthest reach and the housing wall (root circle), mm. Missing = 0.3. */
+  rootClearance?: number;
+  /** integral: end-mill radius, which leaves a fillet where each tooth meets the root circle, mm. Missing = 1.5. */
+  toolRadius?: number;
 }
 
 export interface InnerPinSpec {
@@ -271,14 +278,14 @@ export interface InnerPinSpec {
 
 /** Outer pin bending section diameter: shank for bolt+bushing, 2*rr for a solid pin. */
 export function outerPinBendingDia(p: OuterPinSpec, rr: number): number {
-  return p.construction === 'solid' ? 2 * rr : p.shankDia;
+  return p.construction === 'boltBushing' ? p.shankDia : 2 * rr;
 }
 
 /** Outer pin bending stress limit, MPa: 0.4*Sy_bolt, or min(0.4*Sy, sigmaF) for a solid pin. */
 export function outerPinBendingLimit(p: OuterPinSpec): number {
-  return p.construction === 'solid'
-    ? Math.min(0.4 * p.material.Sy, p.material.sigmaF)
-    : 0.4 * p.boltYield;
+  return p.construction === 'boltBushing'
+    ? 0.4 * p.boltYield
+    : Math.min(0.4 * p.material.Sy, p.material.sigmaF);
 }
 
 /** Inner pin section modulus, mm^3 (hollow standoff or solid round). */

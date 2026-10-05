@@ -1,8 +1,12 @@
 import { Fragment } from 'react';
 import { GREEN_LIMIT, POLYMER_WARNING_LINES, type Check, type Fix, type FixReport, type GearboxResult, type InnerPinSupport } from '../../calc';
 import { FixLine } from '../components/FixChips';
+import { InfoTip } from '../components/InfoTip';
+import { HELP } from '../help';
+import { patchMotor } from '../motorUi';
+import { CUSTOM, type Slot } from '../session';
 import { fixResultText } from '../fixes';
-import { Card, DataTable, Notice, ResponsiveTable, STATUS_WORD, StatusChip, UtilBar, verdictKind, type StatusKind } from '../components/primitives';
+import { Button, Card, DataTable, Notice, ResponsiveTable, STATUS_WORD, StatusChip, UtilBar, verdictKind, type StatusKind } from '../components/primitives';
 import { checkLimit, checkValue, fixed, hours, num, util, DASH } from '../format';
 import { PLAIN, verdictHeadline } from '../plain';
 import { useStore } from '../store';
@@ -85,8 +89,13 @@ export function KeyData({ r, discs }: { r: GearboxResult; discs: number }) {
           { label: 'Gear ratio', value: `${num(d.ratio, 0)}:1`, note: `Zp ${num(d.ratio + 1, 0)}, ${num(d.Zc, 0)} lobes` },
           { label: 'K1 (eccentricity ratio)', value: fixed(d.K1, 3), flag: k1Ok ? 'ok' : 'marginal', note: k1Ok ? 'usual 0.40 to 0.85' : 'outside 0.40 to 0.85' },
           { label: 'Inner pin circle radius, Rw', value: u.fu('length', d.Rw, { dp: 1 }), note: d.RwIsOverride ? 'overridden' : 'automatic' },
-          { label: 'Housing outside diameter', value: u.fu('length', d.housingOD, { dp: 1 }), note: 'D + 2·rr + 2·wall' },
-          { label: 'Peak ring pin force', value: u.fu('force', r.loads.FRingPeak, { dp: 0 }), note: 'at design torque' },
+          { label: 'Housing outside diameter', value: u.fu('length', d.housingOD, { dp: 1 }), note: d.integral ? '2·R_h + 2·wall (machined ring)' : 'D + 2·rr + 2·wall' },
+          ...(d.integral ? [
+            { label: 'Ring root diameter, 2·R_h', value: u.fu('length', 2 * d.integral.Rh, { dp: 2 }), note: `disc reach + ${u.fu('length', d.integral.rootClearance, { dp: 2 })} clearance` },
+            { label: 'Tooth height / base width', value: `${u.fu('length', d.integral.toothHeight, { dp: 2 })} / ${u.fu('length', d.integral.baseChord, { dp: 2 })}`, note: 'from the root circle' },
+            { label: 'Largest end-mill radius', value: u.fu('length', d.integral.maxToolRadius, { dp: 2 }), note: 'keeps 0.05 mm from the disc' },
+          ] : []),
+          { label: d.integral ? 'Peak ring tooth force' : 'Peak ring pin force', value: u.fu('force', r.loads.FRingPeak, { dp: 0 }), note: 'at design torque' },
           { label: 'Peak inner pin force', value: u.fu('force', r.loads.FInnerPeak, { dp: 0 }), note: 'at design torque' },
           { label: 'Peak eccentric bearing load', value: u.fu('force', r.loads.bearingPeak, { dp: 0 }), note: 'limit is the static rating C0' },
           { label: 'Bearing life, L10h', value: hours(r.loads.L10h), note: `at ${u.fu('force', r.loads.bearingWorking, { dp: 0 })} working load` },
@@ -113,6 +122,42 @@ export function PolymerCard() {
 }
 
 // ---------------------------------------------------------------------------
+// Integral (machined) ring notice
+// ---------------------------------------------------------------------------
+
+/** Suggested gearbox efficiency for a sliding (pinless) ring. */
+export const INTEGRAL_ETA = 0.78;
+
+export function IntegralCard({ slot }: { slot: Slot | null }) {
+  const { state, updateArm } = useStore();
+  const joint = slot && slot !== CUSTOM ? state.arm.joints.find((j) => j.id === slot) : undefined;
+  const motor = joint?.drive === 'cycloidal' ? joint.motor : undefined;
+  const eta = motor?.efficiency;
+  return (
+    <Notice kind="info" title="Machined ring: the disc slides on the teeth">
+      <ul className="plain-list">
+        <li>Sliding contact (no rolling bushings): grease the teeth, and expect more wear and a lower efficiency, about 0.75 to 0.8.</li>
+        <li>
+          Set the motor efficiency to match, so the recommended ratio has enough torque.
+          {motor ? (
+            <>
+              {' '}It is {eta != null ? eta.toFixed(2) : '—'} now.{' '}
+              {eta !== INTEGRAL_ETA && (
+                <Button size="sm" variant="secondary" onClick={() => updateArm((a) => patchMotor(a, joint!.id, { efficiency: INTEGRAL_ETA }))}>
+                  Set η {INTEGRAL_ETA}
+                </Button>
+              )}
+            </>
+          ) : ' Enter a motor under Motor & ratio to use it.'}
+        </li>
+        <li>Aluminum on aluminum galls: pair different materials (steel or plastic discs) or hard-anodize the housing.</li>
+        <li>Plastic discs (POM, nylon) in a metal ring work well: low friction and quiet.</li>
+      </ul>
+    </Notice>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Checks table
 // ---------------------------------------------------------------------------
 
@@ -121,6 +166,12 @@ function checkNote(c: Check, u: ReturnType<typeof useStore>['u'], used: InnerPin
     return `fixed-fixed ${u.fu('stress', c.info.fixedFixed, { dp: 0 })}, simply supported ${u.fu('stress', c.info.simplySupported, { dp: 0 })} (used)`;
   }
   if (c.info && c.id === 'standoffBending') return standoffNote(c, used, u);
+  if (c.info && c.id === 'toothRoot') {
+    return `bending ${u.fu('stress', c.info.bending, { dp: 1 })}, shear ${u.fu('stress', c.info.shear, { dp: 1 })}, combined ${u.fu('stress', c.info.combined, { dp: 1 })} (used); base ${u.fu('length', c.info.baseChord, { dp: 2 })}, height ${u.fu('length', c.info.toothHeight, { dp: 2 })}, length ${u.fu('length', c.info.toothLength, { dp: 2 })}`;
+  }
+  if (c.info && c.id === 'toolFillet') {
+    return `tool radius ${u.fu('length', c.info.toolRadius, { dp: 2 })}; largest that clears: ${u.fu('length', c.info.maxToolRadius, { dp: 2 })}`;
+  }
   return null;
 }
 
@@ -137,6 +188,11 @@ export function standoffNote(c: Check, used: InnerPinSupport, u: ReturnType<type
     .join(' · ');
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+const CHECK_HELP: Partial<Record<Check['id'], (typeof HELP)[string]>> = {
+  toothRoot: HELP.checkToothRoot,
+  toolFillet: HELP.checkToolFillet,
+};
 
 /** `compact`: the narrow inspector column keeps it a table (smaller type, no bar) instead of stacking cards. */
 export function CheckCards({ r, compact, fixes }: { r: GearboxResult; compact?: boolean; fixes?: FixesView }) {
@@ -174,7 +230,7 @@ export function CheckCards({ r, compact, fixes }: { r: GearboxResult; compact?: 
               <Fragment key={c.id}>
               <tr className={gov ? 'is-gov' : undefined}>
                 <th scope="row" data-label="Check">
-                  <span className="check-name">{c.label}{gov && <span className="gov-tag">GOVERNING</span>}</span>
+                  <span className="check-name">{c.label}{CHECK_HELP[c.id] && <InfoTip help={CHECK_HELP[c.id]!} label={c.label} />}{gov && <span className="gov-tag">GOVERNING</span>}</span>
                   <span className="check-basis">{u.text(note)}</span>
                 </th>
                 <td className="num" data-label="Value">{valueText}</td>

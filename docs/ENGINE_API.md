@@ -27,7 +27,8 @@ interface GearboxInputs {
   wall: number;                                     // housing wall for housingOD, default 4 mm
   innerPinSupport: 'ringClamped' | 'ringPinned' | 'cantilever';   // inner pin bending model, default 'ringClamped'
   discMaterial: MaterialProps;                      // {E, nu, Sy, sigmaF, density, kind}
-  outerPin: { construction: 'boltBushing' | 'solid'; shankDia; boltYield; material: MaterialProps };
+  outerPin: { construction: 'boltBushing' | 'solid' | 'integral'; shankDia; boltYield; material: MaterialProps;
+              housingMaterial?; rootClearance?; toolRadius? };   // the last three: integral ring only (section 2b)
   innerPin: { construction: 'standoff' | 'solid'; od; bore; standoffYield; material: MaterialProps };
   Treq; Tdes; Kc; KcLife;                           // N·m, factors
   discShare: number | null;                         // null = 1.0 (1 disc) / 0.55 (2 discs)
@@ -99,6 +100,48 @@ Catalogs (`catalog.ts`): `BEARINGS` (15 bearings `{name, series, bore, OD, width
 and nothing else (the advisor searches all 15; the DXF cam looks its bore up by name). `OUTER_PIN_OPTIONS` (od, bolt label, shank), `INNER_PIN_OPTIONS` (od, bore, thread),
 `DISC_STOCK_METAL/POLYMER`, `ZP_OPTIONS`, `ZW_OPTIONS`.
 
+## 2b. Integral (pinless) ring machined into the housing (`integral.ts`, CLAUDE.md Addition 12)
+
+`outerPin.construction = 'integral'`: no pins, bolts or bushings. The teeth are half-round bumps of radius `rr` (any positive
+value, no catalog) centred on the pin circle, cut into the housing. Extra fields (all optional; `integralSpecOf(outerPin)` fills
+the defaults, and `defaultGearboxInputs()` / `normalizeGearboxInputs` carry them for every construction):
+`housingMaterial` (default 6061-T6), `rootClearance` c (mm, default 0.3), `toolRadius` r_tool (mm, default 1.5).
+`outerPin.material` is not used (and not validated) for an integral ring.
+
+* **Geometry** (`derived.integral: IntegralDerived | null`): reach = max sampled actual-profile radius + e (never below the exact
+  Rp + 2e − rr); `Rh` = reach + c; `toothHeight` = Rh − (Rp − rr); `baseChord` b = 2·Rh·sin φb with
+  cos φb = (Rp² + Rh² − rr²)/(2·Rp·Rh); `pitchChord` = 2·Rh·sin(π/Zp); `toothLength` Lt = discs·L + (discs − 1)·gap;
+  `housingOD` = 2·Rh + 2·wall. Validation errors (`integralGeometryErrors`): rr ≤ e + c/2 (teeth do not reach the wall), tooth
+  bases overlap (φb ≥ π/Zp), or the tool fillet does not fit between two teeth (its root tangent angle α > π/Zp; the message gives
+  `maxFittingToolRadius`). Field errors: "Housing material: …", "Root clearance must be >= 0 mm", "Tool radius must be > 0 mm".
+* **Contact**: same Hertz sweep; `EstarRing` from the disc/housing pair; limits = `contactLimits(disc, housing)`
+  (`ringContactMaterial(outerPin)`). A polymer housing sets `polymerWarning`.
+* **Checks**: `boltBending` is absent (its loads read 0). In its place:
+  * `toothRoot` "Ring tooth root (integral)": F = `loads.FRingPeak` (per disc) acting over one disc thickness L (each disc
+    loads its own stretch of the tooth; `toothLength` Lt is reported for reference only), σb = 6·F·h/(L·b²) (h = tooth
+    height, a conservative lever), τ = 1.5·F/(L·b), value = √(σb² + 3τ²) vs min(0.4·Sy, σf) of the housing. `loads.toothBending/toothShear/toothStress`;
+    `info = {bending, shear, combined, baseChord, toothHeight, toothLength}`.
+  * `toolFillet` "Tool fillet clearance", kind `min`, limit `FILLET_CLEARANCE_MIN` = 0.05 mm: the fillet is the tool circle
+    tangent to the root circle (|F| = Rh − r_tool) and the tooth (|F − C| = rr + r_tool). The disc profile (128 points per lobe at
+    npf 6000) is swept over the reference angles θ_t = 2πt/nth in the ring frame, folded into one half tooth sector, and the
+    farthest point per angular bin is kept (`discEnvelope`; it sweeps only θ mod 2π/Zp and one mirror half, which is exact:
+    `discEnvelopeReference` is the brute-force version). Value = smallest signed distance to the fillet arcs (negative = the fillet
+    cuts into the disc path). `info = {toolRadius, maxToolRadius}`; `derived.integral.maxToolRadius` is the largest tool radius
+    whose clearance is ≥ 0.05 mm (bisection to 0.001 mm, also capped by the gap fit).
+* **Model**: `model.ringProfile(tol)` (closed CCW polyline: per tooth the − fillet, the tooth arc through Rp − rr, the + fillet and
+  the root arc) and `drawingAt(θ).ring = { profile, Rh }`; `ringProfile(Zp, Rp, rr, Rh, rt, tol)` is the same as a pure function.
+* **Advisor**: `rr` is searched over `INTEGRAL_RR_OPTIONS` (1.5 to 6 mm, 0.25 steps); a lock is `{kind: 'custom', od: 2·rr}`
+  (a catalog index means that catalog OD). Housing OD = 2·Rh + 2·wall, so it depends on e; groups are ordered by the e at K1 = 0.40
+  (a lower bound) and every candidate uses its own OD. The coarse search checks the tooth root, and the fillet clearance
+  (`filletClearanceCached`, nth 120, 64 points per lobe) only for candidates that pass everything else. About 1 to 2 s.
+* **Fixes**: tooth radius both ways (0.25 mm grid, field `rr`); a stronger housing (`outerPin.housingMaterial`) when a ring contact
+  or the tooth root governs; a smaller tool (`outerPin.toolRadius`: the standard `END_MILL_RADII` below the current one plus the
+  largest that fits) when the tool fillet check fails. Bolt grade and bushing material fixes are not offered.
+* **DXF**: the housing part becomes "Ring housing (integral teeth)", make 1: the tooth profile as one closed polyline, the outline
+  circle (housing OD) and `housingHoleCount` (default 6) holes of `housingHoleDia` (default 3.4 mm) on the mid-wall circle
+  (Rh + OD/2)/2; notes give thickness = Lt + 2·gap. `info.ringRoot`, `info.ringPointCount`. The pin sheet lists only the inner pins.
+* Check time: about 5 ms (vs 1.5 ms for pins).
+
 ## 3. The gearbox check
 
 ```ts
@@ -127,7 +170,8 @@ GearboxResult {
 ```
 
 Check ids: `ringContactStrength, ringContactLife, innerContactStrength, innerContactLife, ligamentBore,
-ligamentHoles, cusp, boltBending, standoffBending, bearingStatic, bearingLife`, plus `ligamentRoot`
+ligamentHoles, cusp, boltBending, standoffBending, bearingStatic, bearingLife` (an integral ring has `toothRoot, toolFillet` in
+place of `boltBending`), plus `ligamentRoot`
 only when `RwOverride` is set. `utilization` = value/limit (`max`) or limit/value (`min`), finite, capped
 at 99. `status`: `ok` ≤ 0.85 (green), `marginal` ≤ 1.0 (amber), `fail` > 1.0 (red). Use an icon/text as
 well as colour. `boltBending.info = {fixedFixed, simplySupported}`. `standoffBending.info = {ringClamped, ringPinned,

@@ -90,7 +90,7 @@ export function AdvisorPanel({ slot }: { slot: Slot }) {
 
         <div className="mat-summary">
           <div><span className="muted">Disc</span> {eff.discMaterial.kind === 'polymer' ? 'polymer' : 'metal'}, E {u.fu('stress', eff.discMaterial.E, { dp: 0 })}, Sy {u.fu('stress', eff.discMaterial.Sy, { dp: 0 })}</div>
-          <div><span className="muted">Outer pins</span> {eff.outerPin.construction === 'solid' ? 'solid pins' : 'bolt + bushing'}</div>
+          <div><span className="muted">Outer pins</span> {eff.outerPin.construction === 'integral' ? 'machined into the housing (no pins)' : eff.outerPin.construction === 'solid' ? 'solid pins' : 'bolt + bushing'}</div>
           <div><span className="muted">Inner pins</span> {eff.innerPin.construction === 'solid' ? 'solid pins' : 'standoffs'}</div>
           <button type="button" className="linkish" onClick={() => openSection('design', slot)}>Materials and pin type come from Gearbox design</button>
         </div>
@@ -274,7 +274,9 @@ export function Hero({ d, target, elapsed, evaluated, joint, onApply, locked, cl
   const kind = verdictKind(r.verdict);
   const L = (mm: number, dp = 2) => u.fu('length', mm, { dp });
   const T = (k: AdvisorLockKey) => <Tag k={k} locked={locked} />;
-  const outerDesc = d.inputs.outerPin.construction === 'solid'
+  const outerDesc = d.inputs.outerPin.construction === 'integral'
+    ? `teeth machined into the housing, rr ${L(d.outerPinOD / 2, 2)}`
+    : d.inputs.outerPin.construction === 'solid'
     ? `${L(d.outerPinOD, 1)} solid pin`
     : `${L(d.outerPinOD, 1)} bushing on ${d.outerBolt ?? (d.outerCustom ? 'a custom bolt' : 'bolt')} (${L(d.shankDia ?? 0, 1)} shank)`;
   const innerDesc = d.inputs.innerPin.construction === 'solid'

@@ -3,7 +3,11 @@ import type { DiscDrawing } from '../../calc';
 import { useU } from '../store';
 import { forceColor, forceStops } from './colors';
 
-/** The disc in the ring frame. Outer pins are coloured by force; hover / focus a pin for its number. */
+/**
+ * The disc in the ring frame. Outer pins are coloured by force; hover / focus a pin for its number. For an integral
+ * (machined) ring the housing is drawn filled with its teeth and tool fillets, and each loaded tooth gets a dot coloured
+ * by its force.
+ */
 export function DiscSvg({
   drawing,
   peak,
@@ -23,7 +27,9 @@ export function DiscSvg({
   label?: string;
 }) {
   const u = useU();
-  const R = Rp + rr + Math.max(2, rr * 0.8);
+  const ring = drawing?.ring && drawing.ring.profile.length ? drawing.ring : null;
+  const ringOuter = ring ? ring.Rh + Math.max(2.5, ring.Rh * 0.06) : 0;
+  const R = ring ? ringOuter + 1 : Rp + rr + Math.max(2, rr * 0.8);
   const path = useMemo(() => {
     if (!drawing) return '';
     const p = drawing.profile;
@@ -31,6 +37,13 @@ export function DiscSvg({
     for (let i = 0; i < p.length; i++) d += `${i ? 'L' : 'M'}${p[i].x.toFixed(3)} ${(-p[i].y).toFixed(3)}`;
     return d + 'Z';
   }, [drawing]);
+  const ringPath = useMemo(() => {
+    if (!ring) return '';
+    const p = ring.profile;
+    let d = `M${ringOuter} 0A${ringOuter} ${ringOuter} 0 1 0 ${-ringOuter} 0A${ringOuter} ${ringOuter} 0 1 0 ${ringOuter} 0Z`;
+    for (let i = 0; i < p.length; i++) d += `${i ? 'L' : 'M'}${p[i].x.toFixed(3)} ${(-p[i].y).toFixed(3)}`;
+    return d + 'Z';
+  }, [ring, ringOuter]);
   if (!drawing) {
     return <div className="disc-empty" style={{ width: size, maxWidth: '100%' }}>No drawing for these inputs</div>;
   }
@@ -43,15 +56,28 @@ export function DiscSvg({
       width={size}
       style={{ maxWidth: '100%', height: 'auto', aspectRatio: '1 / 1' }}
       role="img"
-      aria-label={label ?? 'Cycloidal disc drawing with outer pins coloured by force'}
+      aria-label={label ?? (ring ? 'Cycloidal disc in the machined ring housing, loaded teeth coloured by force' : 'Cycloidal disc drawing with outer pins coloured by force')}
     >
+      {ring && <path className="disc-ring-housing" d={ringPath} fillRule="evenodd" vectorEffect="non-scaling-stroke" />}
       <circle className="disc-housing" cx={0} cy={0} r={Rp} />
       <path className="disc-profile" d={path} vectorEffect="non-scaling-stroke" />
       {drawing.innerHoles.map((h, i) => (
         <circle key={`h${i}`} className="disc-hole" cx={h.x} cy={-h.y} r={h.r} vectorEffect="non-scaling-stroke" />
       ))}
       <circle className="disc-hole" cx={drawing.bore.x} cy={-drawing.bore.y} r={drawing.bore.r} vectorEffect="non-scaling-stroke" />
-      {drawing.outerPins.map((p) => (
+      {ring ? drawing.outerPins.filter((p) => p.loaded).map((p) => (
+        <circle
+          key={p.index}
+          className="disc-tooth-load"
+          cx={p.x}
+          cy={-p.y}
+          r={Math.max(0.6, p.r * 0.45)}
+          style={{ fill: forceColor(peak > 0 ? p.force / peak : 0, theme) }}
+          vectorEffect="non-scaling-stroke"
+        >
+          <title>{`Tooth ${p.index + 1}: ${u.fu('force', p.force, { dp: 0 })}`}</title>
+        </circle>
+      )) : drawing.outerPins.map((p) => (
         <circle
           key={p.index}
           className={p.loaded ? 'disc-pin is-loaded' : 'disc-pin'}

@@ -43,6 +43,15 @@ import {
   outerPinBendingLimit,
   outerPinSectionModulus,
 } from './materials';
+import {
+  filletClearanceCached,
+  FILLET_CLEARANCE_MIN,
+  INTEGRAL_RR_OPTIONS,
+  integralGeometry,
+  integralSpecOf,
+  ringContactMaterial,
+  toothRootStress,
+} from './integral';
 import { now, runAsync, runSync, SLICE_MS, type RunHooks } from './runner';
 import type { GearboxInputs, GearboxResult } from './types';
 
@@ -87,7 +96,7 @@ export interface AdvisorLocks {
   L?: number;
   discs?: 1 | 2;
   bearing?: BearingLock;
-  /** Constraint, not a variable: housing OD (D + 2 rr + 2 wall) must not exceed this, mm */
+  /** Constraint, not a variable: housing OD (D + 2 rr + 2 wall; 2 R_h + 2 wall for an integral ring) must not exceed this, mm */
   maxHousingOD?: number;
 }
 
@@ -148,11 +157,11 @@ export interface AdvisorDesign {
   Zp: number;
   ratio: number;
   D: number;
-  /** D + 2 rr + 2 wall, mm */
+  /** D + 2 rr + 2 wall (2 R_h + 2 wall for an integral ring), mm */
   housingOD: number;
   e: number;
   K1: number;
-  /** Outer pin / bushing OD, mm */
+  /** Outer pin / bushing OD, mm (integral ring: twice the tooth radius rr) */
   outerPinOD: number;
   /** Bolt size label (bolt+bushing construction, catalog bolt only) */
   outerBolt: string | null;
@@ -396,10 +405,14 @@ function buildSpace(inputs: GearboxInputs, o: ResolvedOptions): Space {
   else Zps = o.ratioVary ? [...ZP_OPTIONS] : [inputs.Zp];
 
   let outer: OuterOpt[];
+  const integral = inputs.outerPin.construction === 'integral';
   if (lk.outerPin) {
     outer = [lk.outerPin.kind === 'catalog'
-      ? catalogOuter(lk.outerPin.index)
+      ? (integral ? { ...catalogOuter(lk.outerPin.index), bolt: null } : catalogOuter(lk.outerPin.index))
       : { od: lk.outerPin.od, shank: lk.outerPin.shank, bolt: null, custom: true }];
+  } else if (integral) {
+    // a machined ring has no catalog: the tooth radius is searched on a continuous grid
+    outer = INTEGRAL_RR_OPTIONS.map((rr) => ({ od: 2 * rr, shank: 0, bolt: null, custom: false }));
   } else outer = OUTER_PIN_OPTIONS.map((_, i) => catalogOuter(i));
 
   let inner: InnerOpt[];
@@ -568,9 +581,12 @@ function* searchGen(
 
   const Kc = base.Kc, Tdes = base.Tdes, Treq = base.Treq, KcLife = base.KcLife;
   const disc = base.discMaterial;
-  const EsRing = effectiveModulus(base.outerPin.material, disc);
+  const integral = base.outerPin.construction === 'integral';
+  const ispec = integralSpecOf(base.outerPin);
+  const EsRing = effectiveModulus(ringContactMaterial(base.outerPin), disc);
   const EsIn = effectiveModulus(base.innerPin.material, disc);
-  const limRing = contactLimits(disc, base.outerPin.material);
+  const limRing = contactLimits(disc, ringContactMaterial(base.outerPin));
+  const toothLim = Math.min(0.4 * ispec.housingMaterial.Sy, ispec.housingMaterial.sigmaF);
   const limIn = contactLimits(disc, base.innerPin.material);
   const boltLim = outerPinBendingLimit(base.outerPin);
   const soLim = innerPinBendingLimit(base.innerPin);
@@ -626,8 +642,15 @@ function* searchGen(
       const Rp = D / 2;
       for (let pi = 0; pi < sp.outer.length; pi++) {
         const rr = outerRr[pi];
-        if (2 * Rp * Math.sin(Math.PI / Zp) - 2 * rr < o.minPinClearance) continue;
-        const od = D + 2 * rr + 2 * wall;
+        let od: number;
+        if (integral) {
+          // the housing grows with e (R_h = Rp + 2e - rr + c): the group carries the smallest one (lower bound)
+          const eMin = sp.eFixed !== null ? sp.eFixed : (ADVISOR_K1_MIN * Rp) / Zp;
+          od = 2 * (Rp + 2 * eMin - rr + ispec.rootClearance) + 2 * wall;
+        } else {
+          if (2 * Rp * Math.sin(Math.PI / Zp) - 2 * rr < o.minPinClearance) continue;
+          od = D + 2 * rr + 2 * wall;
+        }
         if (od > sp.maxOD + TOL) continue;
         groups.push({ Zp, D, pinIdx: pi, od });
       }
@@ -686,6 +709,25 @@ function* searchGen(
       }
       const Rroot = Rp - e - rr;
       if (!(Rroot > 0)) continue;
+      // integral ring: machinable teeth and the real housing OD of this eccentricity
+      let candOD = od;
+      let toothB = 0, toothH = 0, RhI = 0;
+      let filletU = -1; // lazily computed per ring geometry
+      if (integral) {
+        const ig = integralGeometry(Zp, Rp, e, rr, ispec.rootClearance, ispec.toolRadius);
+        if (!ig.protrudes || !ig.attached || !ig.separate || !ig.fillet.exists || !ig.fillet.fits) continue;
+        candOD = 2 * ig.Rh + 2 * wall;
+        if (candOD > sp.maxOD + TOL) continue;
+        if (!closestMode && bestOD < Infinity && candOD > bestOD + o.discAltWindowMm + TOL) continue;
+        toothB = ig.baseChord; toothH = ig.toothHeight; RhI = ig.Rh;
+      }
+      const filletUtil = (): number => {
+        if (filletU < 0) {
+          const c = filletClearanceCached(Zp, Rp, e, rr, RhI, ispec.toolRadius, o.nthCoarse, 64);
+          filletU = c > 0 ? Math.min(UTIL_CAP, FILLET_CLEARANCE_MIN / c) : UTIL_CAP;
+        }
+        return filletU;
+      };
 
       // Cheap geometric pre-scan: is there any inner pin / Zw / bearing that fits at all?
       let anyGeo = false;
@@ -723,7 +765,9 @@ function* searchGen(
           const uRL = (p0 * sLife) / limRing.life;
           if (uRS > thr || uRL > thr) continue;
           const span = di * L + (di + 1) * gap;
-          const uBolt = (Fpk * span / 4 / Zo) / boltLim;
+          const uBolt = integral
+            ? toothRootStress(Fpk, L, toothB, toothH, ispec.housingMaterial).vonMises / toothLim
+            : (Fpk * span / 4 / Zo) / boltLim;
           if (uBolt > thr) continue;
           const standoffArm = gap + (di - 1) * (L + gap) + L / 2;
           const hat = support === 'cantilever' ? null : ringHat(Zp, di, L);
@@ -771,11 +815,13 @@ function* searchGen(
                   uBL = base.reqLifeH / L10h;
                 }
                 if (uBL > thr) continue;
+                const uF = integral ? filletUtil() : 0;
+                if (uF > thr) continue;
                 evaluated++;
-                cur.util = Math.max(base2, uLB, uBS, uBL);
+                cur.util = Math.max(base2, uLB, uBS, uBL, uF);
                 const net = netBase - Math.PI * (brg.OD / 2) * (brg.OD / 2);
                 cur.mass = (Math.max(0, net) * L * rho / 1000) * di;
-                cur.od = od; cur.discs = di;
+                cur.od = candOD; cur.discs = di;
                 cur.Zp = Zp; cur.D = D; cur.K1 = K1; cur.e = e;
                 cur.pinIdx = pinIdx; cur.inIdx = ii; cur.Zw = Zw; cur.L = L; cur.brgIdx = bi; cur.Rw = Rw;
                 best.add(cur);
@@ -787,13 +833,13 @@ function* searchGen(
                   continue;
                 }
                 (di === 1 ? one : two).add(cur);
-                if (od <= bestOD + o.altWindowMm + TOL || bestOD === Infinity) {
+                if (candOD <= bestOD + o.altWindowMm + TOL || bestOD === Infinity) {
                   light.add(cur);
                   margin.add(cur);
                 }
-                if (od < bestOD) bestOD = od;
-                if (di === 1 && od < oneOD) oneOD = od;
-                if (di === 2 && od < twoOD) twoOD = od;
+                if (candOD < bestOD) bestOD = candOD;
+                if (di === 1 && candOD < oneOD) oneOD = candOD;
+                if (di === 2 && candOD < twoOD) twoOD = candOD;
               }
             }
           }
@@ -912,7 +958,9 @@ const LOCK_NAMES: Record<AdvisorLockKey | 'maxHousingOD', string> = {
 const trimNum = (x: number, dp: number) => String(parseFloat(x.toFixed(dp)));
 
 function hintFor(key: AdvisorLockKey | 'maxHousingOD', d: AdvisorDesign): { value: string; sentence: string } {
-  const outer = d.inputs.outerPin.construction === 'solid'
+  const outer = d.inputs.outerPin.construction === 'integral'
+    ? `machined teeth of radius ${trimNum(d.outerPinOD / 2, 2)} mm`
+    : d.inputs.outerPin.construction === 'solid'
     ? `${trimNum(d.outerPinOD, 2)} mm solid pins`
     : d.outerBolt ? `${trimNum(d.outerPinOD, 2)} mm bushings on ${d.outerBolt} bolts` : `${trimNum(d.outerPinOD, 2)} mm bushings`;
   const inner = d.inputs.innerPin.construction === 'solid'
@@ -1045,6 +1093,10 @@ function onlyCand(inputs: GearboxInputs, sp: Space): Cand {
   c.Zp = Zp; c.D = D; c.e = e; c.K1 = (e * Zp) / (D / 2);
   c.pinIdx = 0; c.inIdx = 0; c.Zw = sp.Zws[0]; c.L = sp.Lfixed as number; c.brgIdx = 0; c.discs = sp.discs[0];
   c.od = D + sp.outer[0].od + 2 * inputs.wall;
+  if (inputs.outerPin.construction === 'integral') {
+    const ig = integralSpecOf(inputs.outerPin);
+    c.od = 2 * (D / 2 + 2 * e - sp.outer[0].od / 2 + ig.rootClearance) + 2 * inputs.wall;
+  }
   return c;
 }
 

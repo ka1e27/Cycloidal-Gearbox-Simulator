@@ -64,7 +64,7 @@ export function DiscAndCharts({ model, layout = 'cards' }: { model: GearboxModel
             <DataTable
               columns={1}
               rows={[
-                { label: 'Loaded outer pins', value: `${pins ? pins.filter((p) => p.loaded).length : DASH} of ${pins?.length ?? DASH}` },
+                { label: model.result.derived.integral ? 'Loaded ring teeth' : 'Loaded outer pins', value: `${pins ? pins.filter((p) => p.loaded).length : DASH} of ${pins?.length ?? DASH}` },
                 { label: 'Largest pin force now', value: drawing ? u.fu('force', drawing.maxForce, { dp: 0 }) : DASH },
                 { label: 'Eccentricity e', value: u.fu('length', model.inputs.e, { dp: 3 }) },
               ]}

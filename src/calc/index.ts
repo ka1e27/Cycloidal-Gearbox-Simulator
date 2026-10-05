@@ -2,6 +2,7 @@ export * from './types';
 export * from './materials';
 export * from './catalog';
 export * from './presets';
+export * from './integral';
 export {
   checkGearbox, createGearboxModel, validateGearboxInputs, deriveGeometry, discShareOf,
   contactLimits, statusOf, GEARBOX_MAX, DEFAULT_NPF, DEFAULT_NTH, GREEN_LIMIT, UTIL_CAP,

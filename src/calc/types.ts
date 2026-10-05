@@ -88,6 +88,10 @@ export type CheckId =
   | 'ligamentRoot'
   | 'cusp'
   | 'boltBending'
+  /** Integral ring only: tooth root bending + shear (replaces boltBending) */
+  | 'toothRoot'
+  /** Integral ring only: clearance between the disc and the end-mill fillets at the tooth roots */
+  | 'toolFillet'
   | 'standoffBending'
   | 'bearingStatic'
   | 'bearingLife';
@@ -140,8 +144,32 @@ export interface DerivedGeometry {
   share: number;
   /** Outer pin span between housing plates, mm */
   span: number;
-  /** Housing outer diameter = D + 2 rr + 2 wall, mm */
+  /** Housing outer diameter, mm: D + 2 rr + 2 wall (pins), 2 R_h + 2 wall (integral ring) */
   housingOD: number;
+  /** Integral (machined) ring geometry; null for bolt + bushing and solid pins */
+  integral: IntegralDerived | null;
+}
+
+/** Geometry of an integral ring (CLAUDE.md Addition 12), mm. */
+export interface IntegralDerived {
+  /** Root circle (housing inner wall) radius R_h = disc reach + root clearance */
+  Rh: number;
+  /** Farthest reach of the disc in the ring frame (max actual-profile radius + e) */
+  reach: number;
+  rootClearance: number;
+  toolRadius: number;
+  /** R_h - (Rp - rr) */
+  toothHeight: number;
+  /** Chord where the tooth circle meets the root circle */
+  baseChord: number;
+  /** Tooth pitch at the root circle, 2 R_h sin(pi/Zp) */
+  pitchChord: number;
+  /** Axial length of a tooth the discs load: discs L + (discs - 1) gap */
+  toothLength: number;
+  /** Smallest distance from the swept disc to a tool fillet (negative = intrudes); NaN until analysed */
+  filletClearance: number;
+  /** Largest tool radius that keeps the fillet clearance limit; NaN until analysed */
+  maxToolRadius: number;
 }
 
 /** Values at T = 1 N*m on one disc, Kc = 1 (the SPEC "unit case"). */
@@ -179,6 +207,10 @@ export interface ScaledLoads {
   /** Bolt/pin bending, fixed-fixed and simply-supported, MPa */
   boltBendingFixed: number;
   boltBendingSimple: number;
+  /** Integral ring tooth root, MPa: bending, shear and combined (von Mises); 0 for pins */
+  toothBending: number;
+  toothShear: number;
+  toothStress: number;
   /** Inner pin bending, SPEC heuristic "tie ring = cantilever / 2" and cantilever (F_in_pk * arm / Z), MPa */
   standoffBendingTie: number;
   standoffBendingCantilever: number;
@@ -284,6 +316,8 @@ export interface DiscDrawing {
   bore: { x: number; y: number; r: number };
   /** Largest pin force at this theta, N (for colour scaling) */
   maxForce: number;
+  /** Integral ring: the housing's internal tooth profile (closed, ring frame, static) and its root radius */
+  ring?: { profile: { x: number; y: number }[]; Rh: number } | null;
 }
 
 export interface GearboxModel {
@@ -295,4 +329,6 @@ export interface GearboxModel {
   drawingAt(theta: number, profilePoints?: number): DiscDrawing | null;
   /** Disc profile in the disc frame, centred on the disc centre. */
   profilePoints(n?: number): { x: number; y: number }[] | null;
+  /** Integral ring: closed internal tooth profile of the housing (ring frame), chord tolerance tol mm. Null otherwise. */
+  ringProfile(tol?: number): { x: number; y: number }[] | null;
 }

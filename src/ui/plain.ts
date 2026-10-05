@@ -48,6 +48,16 @@ export const PLAIN: Record<CheckId, { name: string; problem: string; fix: string
     problem: 'the outer pins would bend more than the fatigue limit allows',
     fix: 'Use a larger bolt, a stiffer pin, or shorten the span (thinner disc, smaller gap).',
   },
+  toothRoot: {
+    name: 'ring tooth root',
+    problem: 'the machined ring teeth would bend or shear at their base under the peak ring force',
+    fix: 'Use a larger tooth radius, a thicker disc or two discs, a larger pin circle, or a stronger housing material.',
+  },
+  toolFillet: {
+    name: 'tool fillet clearance',
+    problem: 'the fillet the end mill leaves where each tooth meets the housing wall reaches into the path of the disc',
+    fix: 'Use a smaller end mill (see the largest tool radius that fits) or a larger root clearance.',
+  },
   standoffBending: {
     name: 'inner pin bending',
     problem: 'the output standoffs would bend more than the limit allows',

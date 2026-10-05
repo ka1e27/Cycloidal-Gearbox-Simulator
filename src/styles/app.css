@@ -449,6 +449,8 @@ button:disabled, input:disabled { cursor: not-allowed; }
 .disc-profile { fill: var(--fig-fill); stroke: var(--ink); stroke-width: 1.5px; stroke-linejoin: round; }
 .disc-hole { fill: var(--surface); stroke: var(--ink); stroke-width: 1px; }
 .disc-pin { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1px; }
+.disc-ring-housing { fill: var(--rule); stroke: var(--ink); stroke-width: 1.2px; stroke-linejoin: round; }
+.disc-tooth-load { stroke: var(--ink); stroke-width: 0.8px; }
 .disc-pin.is-loaded { stroke: var(--ink); stroke-width: 1.2px; }
 .disc-inner-pin { fill: var(--ink); }
 .disc-cross line { stroke: var(--ink-2); stroke-width: 1px; }

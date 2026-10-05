@@ -1,5 +1,6 @@
 // Default inputs and the SPEC.md joint presets.
 
+import { DEFAULT_ROOT_CLEARANCE, DEFAULT_TOOL_RADIUS, defaultHousingMaterial } from './integral';
 import { materialForm, materialProps, SPEC_STEEL, type MaterialProps } from './materials';
 import { DEFAULT_INNER_PIN_SUPPORT, INNER_PIN_SUPPORTS } from './types';
 import type { GearboxInputs, InnerPinSupport } from './types';
@@ -30,6 +31,10 @@ export function defaultGearboxInputs(): GearboxInputs {
       shankDia: 3.0,
       boltYield: 640,
       material: { ...SPEC_STEEL },
+      // integral ring only (Addition 12): unused by bolt + bushing and solid pins
+      housingMaterial: defaultHousingMaterial(),
+      rootClearance: DEFAULT_ROOT_CLEARANCE,
+      toolRadius: DEFAULT_TOOL_RADIUS,
     },
     innerPin: {
       construction: 'standoff',
@@ -129,6 +134,7 @@ export function normalizeGearboxInputs(partial: unknown): GearboxInputs {
   };
   fixForm(out.discMaterial, rawMat(p.discMaterial));
   fixForm(out.outerPin.material, rawMat(rawMat(p.outerPin)?.material));
+  if (out.outerPin.housingMaterial) fixForm(out.outerPin.housingMaterial, rawMat(rawMat(p.outerPin)?.housingMaterial));
   fixForm(out.innerPin.material, rawMat(rawMat(p.innerPin)?.material));
   return out;
 }

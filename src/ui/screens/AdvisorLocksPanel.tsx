@@ -175,6 +175,7 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
   const plan: RatioPlan = planIn ?? { mode: ratioModeOf(ls, false), rec: null, usable: false, zps: [], feasible: false, nearest: null, note: '' };
   const r = resolveLockValues(ls, eff);
   const bolt = eff.outerPin.construction === 'boltBushing';
+  const integral = eff.outerPin.construction === 'integral';
   const standoff = eff.innerPin.construction === 'standoff';
   const stock = discStockFor(eff.discMaterial);
   const L = (mm: number, dp = 2) => u.fu('length', mm, { dp });
@@ -245,7 +246,9 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
 
   // ---- what the advisor chose for a free variable ----
   const c = chosen;
-  const outerChosen = c && (eff.outerPin.construction === 'solid'
+  const outerChosen = c && (integral
+    ? `teeth rr ${L(c.outerPinOD / 2, 2)}`
+    : eff.outerPin.construction === 'solid'
     ? `${L(c.outerPinOD, 1)} solid pin`
     : `${c.outerBolt ?? 'bolt'} · ${L(c.outerPinOD, 1)} bushing, ${L(c.shankDia ?? 0, 1)} shank`);
   const innerChosen = c && (eff.innerPin.construction === 'solid'
@@ -285,7 +288,16 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
       control: <BareNumber label="Eccentricity e" quantity="length" value={r.e} step={0.05} nullable placeholder={u.f('length', eff.e, { dp: 3, trim: true })}
         onChange={(v) => patchValues({ e: v })} invalid={!!err('e')} describedBy="lv-msg-e" />,
     },
-    {
+    integral ? {
+      // a machined ring has no catalog: the lock is the tooth radius itself (stored as a custom OD = 2 rr)
+      k: 'outerPin', name: 'Tooth radius rr', sym: 'rr',
+      control: (
+        <BareNumber label="Tooth radius rr" quantity="length" value={r.outerPin.kind === 'custom' ? r.outerPin.od / 2 : OUTER_PIN_OPTIONS[r.outerPin.index].od / 2}
+          step={0.25} placeholder={u.f('length', eff.rr, { dp: 2, trim: true })}
+          onChange={(v) => patchValues({ outerPin: { kind: 'custom', od: 2 * (v ?? eff.rr), shank: eff.outerPin.shankDia } })}
+          invalid={!!err('outerPin')} describedBy="lv-msg-outerPin" />
+      ),
+    } : {
       k: 'outerPin', name: 'Outer pin size', sym: 'rr',
       control: (
         <div className="lv-stack">

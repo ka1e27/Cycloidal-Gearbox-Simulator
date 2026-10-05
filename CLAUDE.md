@@ -227,6 +227,27 @@ indeterminate model (`innerPinSupport`):
 The derivation and an exact-constraint FEM check are in `scripts/parity/standoff/`. The SPEC
 heuristic (σ_cant/2) and the cantilever stress stay in the results for reference/parity only.
 
+## Addition 12 — Integral (pinless) ring, machined into the housing
+A third outer-pin construction, 'integral': no pins, bolts or bushings. The ring teeth are
+half-round bumps of radius rr centred on the pin circle (radius Rp), machined into the housing
+from a chosen **housing material**. The disc slides on the teeth (no rolling bushing).
+- **Housing inner wall (root circle):** radius R_h = Rp + 2e − rr + c_root (clearance, default 0.3 mm)
+  clears the disc's farthest reach in the ring frame. Tooth height = R_h − (Rp − rr).
+- **Ring contact checks:** the same Hertz model, with E* from the disc/housing pair; the limits use
+  the weaker of disc and housing.
+- **The outer bolt bending check is replaced by a tooth-root check:** the per-disc peak ring force
+  acts over one disc thickness L (each disc loads its own stretch of the tooth). Bending and shear are
+  checked at the tooth base (chord where the tooth circle meets the root circle) against the
+  housing material (fatigue: min(0.4·Sy, σf)).
+- **Machining:** an end-mill radius r_tool (default 1.5 mm) leaves a fillet where each tooth meets
+  the root circle. The fillet must not intrude into the disc's swept envelope in the ring
+  frame. Check the clearance by sweeping the disc profile; fail it if intruding.
+- **Housing OD** = 2·R_h + 2·wall.
+- **Efficiency:** sliding contact, so suggest η ≈ 0.75–0.8 (a note; the motor η stays the
+  user's).
+- **DXF:** the housing becomes a ring plate with the internal tooth profile (with tool fillets)
+  as a closed polyline, the outline, and optional mounting holes.
+
 ## UI / UX — "very nice and very user friendly"
 - Clean engineering-tool look: light and dark themes (follow the OS, plus a toggle), one accent
   color, generous spacing, clear typographic hierarchy, cards, no clutter. Responsive down to

@@ -24,6 +24,7 @@ const GROUPS: { title: string; items: string[] }[] = [
       SUPPLIER_DATA_NOTE,
       'PETG and PLA are printed polymers: they creep under sustained load, soften with friction heat (PLA near 60 °C) and are weaker across layers. The Hertz limits are only a rough screen for them.',
       'For solid pins the bending limits are min(0.4 · Sy, σf) for outer pins and min(0.5 · Sy, σf) for inner pins. Steel bolts and standoffs use 0.4 · and 0.5 · their yield strength.',
+      'Machined (integral) ring: the teeth are half-round bumps of radius rr on the pin circle, cut into the housing; the wall (root circle) sits at the disc\u2019s farthest reach D/2 + 2e − rr plus the root clearance. Ring contact uses the same Hertz model with the disc/housing pair. The tooth root check treats one tooth as a short cantilever as long as the disc stack (discs · L + gaps), loaded by the peak ring force at the tooth height (conservative), bending plus shear at the base chord against min(0.4 · Sy, σf) of the housing; the fillets that widen the base are ignored. The tool-fillet check sweeps the disc profile through the reference input angles and measures the gap to the end-mill fillets. Sliding friction, wear and galling are not modeled: grease the teeth and expect an efficiency of about 0.75 to 0.8.',
       BEARING_NOTE,
       'Disc mass is the profile area minus the centre bore and inner holes, times thickness and density, times the number of discs.',
     ],

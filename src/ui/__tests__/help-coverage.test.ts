@@ -139,6 +139,15 @@ function customSolid(): Session {
   return s;
 }
 
+/** J2 with the machined (integral) ring and a motor: tooth radius, housing material, root clearance, tool radius, DXF holes. */
+function integralRing(): Session {
+  const s = withMotors();
+  s.selected = 'J2';
+  s.gearboxes.J2 = { ...s.gearboxes.J2, outerPin: { ...s.gearboxes.J2.outerPin, construction: 'integral' } };
+  s.advisorLocks.J2 = { ...(s.advisorLocks.J2 ?? {}), on: { ...(s.advisorLocks.J2?.on ?? {}), outerPin: true } } as Session['advisorLocks'][string];
+  return s;
+}
+
 /** Every advisor variable locked, with custom pin and bearing values and the housing limit on, plus a motor. */
 function allLocked(): Session {
   const s = withMotors();
@@ -168,6 +177,8 @@ const CASES: { name: string; session: () => Session; screen: ComponentType; dxf?
   { name: 'J2 inspector, every section open (design, loads, motor, solver, advisor, DXF, disc)', session: withMotors, screen: GearboxScreen, min: 60 },
   { name: 'J2 inspector, DXF with chord error and both centre holes', session: defaultSession, screen: GearboxScreen, dxf: DXF_ALL_ON, min: 60 },
   { name: 'Custom gearbox with solid PLA pins and a PETG disc', session: customSolid, screen: GearboxScreen, min: 50 },
+  { name: 'J2 with the machined (integral) ring', session: integralRing, screen: GearboxScreen, min: 60 },
+  { name: 'Design Advisor with the machined ring and its tooth radius locked', session: integralRing, screen: AdvisorScreen, min: 10 },
   { name: 'Arm item and every joint (Joint & link, Motor & ratio, Loads, pose sliders, schematic)', session: withMotors, screen: ArmScreen, min: 60 },
   { name: 'Design Advisor with every variable locked to custom values', session: allLocked, screen: AdvisorScreen, min: 20 },
   { name: 'Design Advisor, defaults', session: defaultSession, screen: AdvisorScreen, min: 10 },

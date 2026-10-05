@@ -13,6 +13,7 @@ import {
   SUPPLIER_DATA_NOTE,
   bearingsBySeries,
   discStockFor,
+  integralSpecOf,
   materialForm,
   materialProps,
   sameMaterialProps,
@@ -23,6 +24,8 @@ import {
   type GearboxResult,
   type InnerPinSupport,
   type MaterialProps,
+  type OuterPinConstruction,
+  type OuterPinSpec,
 } from '../../calc';
 import { FixBadge, FixChip } from '../components/FixChips';
 import { fixesByField, useApplyFix, useFixes } from '../fixes';
@@ -232,7 +235,7 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
   const W = (...p: string[]) => pick(v.warnings, ...p);
   const usedPrefixes = ['Zp ', 'Zw ', 'D ', 'e ', 'L ', 'rr ', 'rw ', 'Db ', 't_min ', 'discs ', 'gap ', 'wall ', 'Rw override', 'K1 ',
     'T_req ', 'T_des ', 'Kc ', 'Kc_life ', 'Input speed', 'Required life', 'Disc share', 'Bearing C', 'Disc material', 'Outer pin material',
-    'Inner pin material', 'Bolt ', 'Standoff '];
+    'Inner pin material', 'Bolt ', 'Standoff ', 'Housing material', 'Root clearance', 'Tool radius', 'Tooth radius', 'Ring teeth'];
   const orphan = v.errors.filter((m) => !usedPrefixes.some((p) => m.startsWith(p)));
 
   const arm_ = slot === CUSTOM ? null : arm.joints.find((x) => x.joint === slot) ?? null;
@@ -240,6 +243,14 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
   const toggle = slot === CUSTOM ? null : armToggle(state, slot);
 
   const outerMatch = OUTER_PIN_OPTIONS.find((o) => Math.abs(2 * g.rr - o.od) < 1e-9);
+  const integral = g.outerPin.construction === 'integral';
+  const ispec = integralSpecOf(g.outerPin);
+  const refSpec = integralSpecOf(ref.outerPin);
+  const setOuter = (p: Partial<OuterPinSpec>) => set({ outerPin: { ...g.outerPin, ...p } });
+  const maxTool = result.valid ? result.derived.integral?.maxToolRadius : undefined;
+  const setConstruction = (c: OuterPinConstruction) =>
+    // switching to the machined ring fills its fields (older sessions have none), so they show and save
+    setOuter(c === 'integral' ? { ...integralSpecOf(g.outerPin), construction: c } : { construction: c });
   const innerMatch = INNER_PIN_OPTIONS.find((o) => Math.abs(2 * g.rw - o.od) < 1e-9);
   const bearingMatch = BEARINGS.find((b) => b.name === g.bearing.name && b.C === g.bearing.C && b.C0 === g.bearing.C0);
   const stock = discStockFor(g.discMaterial);
@@ -381,8 +392,8 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
             options={[{ value: 1, label: '1' }, { value: 2, label: '2' }]} />
         </FieldRow>
         <Advanced>
-          <NumberField label="Outer pin radius" symbol="rr" quantity="length" value={g.rr} onChange={(x) => set({ rr: x ?? 0 })}
-            defaultValue={ref.rr} error={E('rr ')} warning={W('Neighbouring')} help={HELP.rr} step={0.25} />
+          <NumberField label={integral ? 'Tooth radius' : 'Outer pin radius'} symbol="rr" quantity="length" value={g.rr} onChange={(x) => set({ rr: x ?? 0 })}
+            defaultValue={ref.rr} error={E('rr ')} warning={W('Neighbouring')} help={integral ? HELP.toothRadius : HELP.rr} step={0.25} />
           <NumberField label="Inner pin radius" symbol="rw" quantity="length" value={g.rw} onChange={(x) => set({ rw: x ?? 0 })}
             defaultValue={ref.rw} error={E('rw ')} help={HELP.rw} step={0.25} />
           <NumberField label="Centre bore" symbol="Db" quantity="length" value={g.Db} onChange={(x) => set({ Db: x ?? 0 })}
@@ -395,12 +406,12 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
             onChange={(x) => set({ RwOverride: x })} defaultValue={null} error={E('Rw override')}
             placeholder={Number.isFinite(derived.Rw) && !derived.RwIsOverride ? `auto ${u.f('length', derived.Rw, { dp: 1 })}` : 'auto'}
             help={HELP.RwOverride} step={0.5} />
-          <NumberField label="Housing wall" quantity="length" value={g.wall} onChange={(x) => set({ wall: x ?? 0 })}
+          <NumberField label={integral ? 'Housing wall (outside the root circle)' : 'Housing wall'} quantity="length" value={g.wall} onChange={(x) => set({ wall: x ?? 0 })}
             defaultValue={ref.wall} error={E('wall ')} help={HELP.wall} step={0.5} />
         </Advanced>
       </Section>
 
-      <Section title="Materials" badge={badgeFor('discMaterial', 'rr', 'rw', 'innerPinSupport', 'outerPin.material', 'outerPin.boltYield', 'innerPin.material')}
+      <Section title="Materials" badge={badgeFor('discMaterial', 'rr', 'rw', 'innerPinSupport', 'outerPin.material', 'outerPin.boltYield', 'innerPin.material', 'outerPin.housingMaterial', 'outerPin.toolRadius')}
         summary={MATERIALS.find((m) => matchesMaterial(m, g.discMaterial))?.name ?? 'Custom disc'}>
         <p className="section-note">{SUPPLIER_DATA_NOTE}</p>
         <h4 className="subgroup-h">Disc</h4>
@@ -408,12 +419,46 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           reference={ref.discMaterial} errors={v.errors} errPrefix="Disc material" full help={HELP.discMaterial} showForm
           fixClass={hl('discMaterial')} fixChip={chip('discMaterial')} />
 
-        <h4 className="subgroup-h">Outer pins (ring)</h4>
-        <FieldRow label="Construction" help={HELP.outerConstruction} stacked>
+        <h4 className="subgroup-h">{integral ? 'Ring (machined into the housing)' : 'Outer pins (ring)'}</h4>
+        <FieldRow label="Construction" help={integral ? HELP.integralRing : HELP.outerConstruction} stacked>
           <Segmented label="Outer pin construction" value={g.outerPin.construction} fullWidth
-            onChange={(c) => set({ outerPin: { ...g.outerPin, construction: c } })}
-            options={[{ value: 'boltBushing', label: 'Steel bolt + bushing' }, { value: 'solid', label: 'Solid pin' }]} />
+            onChange={setConstruction}
+            options={[
+              { value: 'boltBushing', label: 'Bolt + bushing' },
+              { value: 'solid', label: 'Solid pin' },
+              { value: 'integral', label: 'Machined into housing' },
+            ]} />
         </FieldRow>
+        {integral ? (
+          <>
+            <NumberField label="Tooth radius" symbol="rr" quantity="length" value={g.rr} onChange={(x) => set({ rr: x ?? 0 })}
+              defaultValue={ref.rr} error={E('rr ', 'Tooth radius', 'Ring teeth')} help={HELP.toothRadius} step={0.25}
+              className={hl('rr')} addon={chip('rr')} />
+            <MaterialPicker
+              label="Housing material"
+              value={ispec.housingMaterial}
+              onChange={(m) => setOuter({ housingMaterial: m })}
+              reference={refSpec.housingMaterial}
+              errors={v.errors}
+              errPrefix="Housing material"
+              help={HELP.housingMaterial}
+              full
+              fixClass={hl('outerPin.housingMaterial')}
+              fixChip={chip('outerPin.housingMaterial')}
+            />
+            <NumberField label="Root clearance" symbol="c_root" quantity="length" value={ispec.rootClearance}
+              onChange={(x) => setOuter({ rootClearance: x ?? 0 })} defaultValue={refSpec.rootClearance}
+              error={E('Root clearance')} help={HELP.rootClearance} step={0.05} />
+            <NumberField label="Tool radius" symbol="r_tool" quantity="length" value={ispec.toolRadius}
+              onChange={(x) => setOuter({ toolRadius: x ?? 0 })} defaultValue={refSpec.toolRadius}
+              error={E('Tool radius')} help={HELP.toolRadius} step={0.25}
+              note={maxTool != null && Number.isFinite(maxTool)
+                ? (maxTool > 0 ? `Largest that fits: ${u.fu('length', maxTool, { dp: 2 })} (end mill dia ${u.fu('length', 2 * maxTool, { dp: 1 })})` : 'No end mill radius clears the disc: raise the root clearance')
+                : undefined}
+              className={hl('outerPin.toolRadius')} addon={chip('outerPin.toolRadius')} />
+          </>
+        ) : (
+          <>
         <SelectField
           label={g.outerPin.construction === 'solid' ? 'Pin size' : 'Bolt and bushing size'}
           help={HELP.outerPinSize}
@@ -456,6 +501,8 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
             </>
           ) : undefined}
         />
+          </>
+        )}
 
         <h4 className="subgroup-h">Inner pins (output)</h4>
         <FieldRow label="Construction" help={HELP.innerConstruction} stacked>
