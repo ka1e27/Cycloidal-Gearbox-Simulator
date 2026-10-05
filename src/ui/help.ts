@@ -124,7 +124,7 @@ export const HELP: Record<string, HelpEntry> = {
 
   // ------------------------------------------------------------------ Materials
   discMaterial: {
-    what: 'Material of the cycloidal disc. Picking one fills in its properties, which you can still edit. The list has three families: metals, machined plastics (HDPE, UHMW-PE, acetal, nylon PA66; cut from plate) and 3D-printed plastics (PETG, PLA, ABS, ASA, PC, nylon PA12, PA6-CF).',
+    what: 'Material of the cycloidal disc. Picking one fills in its properties, which you can still edit. The list has four families: metals, composites (G10 / FR4 glass-epoxy sheet), machined plastics (HDPE, UHMW-PE, acetal, Delrin 150, nylon PA66; cut from plate) and 3D-printed plastics (PETG, PLA, ABS, ASA, PC, nylon PA12, PA6-CF).',
     why: 'The disc lobes take the highest contact stress in the gearbox, so the material sets most of the limits.',
     up: 'Stronger choices (7075, steel) allow higher loads; steel is much heavier.',
     down: 'Plastics are light and quiet, but their limits are a small fraction of aluminum’s and they creep under constant load. Acetal (POM) is the best plastic for a disc; HDPE and UHMW-PE suit bushings and light joints.',

@@ -20,12 +20,15 @@ describe('audit: material library matches CLAUDE.md', () => {
     hdpe: [1000, 0.46, 25, 8, 0.95, 'polymer'],
     uhmw: [700, 0.46, 20, 7, 0.93, 'polymer'],
     pom: [2900, 0.35, 65, 30, 1.41, 'polymer'],
+    delrin150: [3100, 0.35, 72, 32, 1.42, 'polymer'],
     pa66: [2000, 0.39, 55, 20, 1.14, 'polymer'],
     abs: [2000, 0.35, 35, 10, 1.04, 'polymer'],
     asa: [2000, 0.35, 38, 11, 1.07, 'polymer'],
     pc: [2300, 0.37, 55, 15, 1.20, 'polymer'],
     pa12: [1700, 0.40, 45, 14, 1.01, 'polymer'],
     pa6cf: [6000, 0.35, 70, 20, 1.15, 'polymer'],
+    // composite laminate (in-plane values)
+    g10: [18600, 0.12, 240, 60, 1.85, 'polymer'],
   };
   it('has exactly the listed materials (Addition 2 plus the added plastics) with the listed numbers', () => {
     expect(MATERIALS.map((m) => m.id).sort()).toEqual(Object.keys(want).sort());

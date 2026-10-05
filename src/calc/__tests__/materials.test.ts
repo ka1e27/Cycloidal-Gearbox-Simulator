@@ -10,7 +10,8 @@ describe('material library', () => {
   it('has the Addition 2 materials with the specified numbers, then the added plastics, ordered by family', () => {
     expect(MATERIALS.map((m) => m.id)).toEqual([
       'steel-1018', 'steel-4140', 'al-6061', 'al-7075',
-      'hdpe', 'uhmw', 'pom', 'pa66',
+      'g10',
+      'hdpe', 'uhmw', 'pom', 'delrin150', 'pa66',
       'petg', 'pla', 'abs', 'asa', 'pc', 'pa12', 'pa6cf',
     ]);
     const al = getMaterial('al-6061');
@@ -135,6 +136,7 @@ describe('added plastics (machined and 3D printed)', () => {
     ['hdpe', 1000, 0.46, 25, 8, 0.95, 'plate'],
     ['uhmw', 700, 0.46, 20, 7, 0.93, 'plate'],
     ['pom', 2900, 0.35, 65, 30, 1.41, 'plate'],
+    ['delrin150', 3100, 0.35, 72, 32, 1.42, 'plate'],
     ['pa66', 2000, 0.39, 55, 20, 1.14, 'plate'],
     ['abs', 2000, 0.35, 35, 10, 1.04, 'printed'],
     ['asa', 2000, 0.35, 38, 11, 1.07, 'printed'],
@@ -157,10 +159,24 @@ describe('added plastics (machined and 3D printed)', () => {
     for (const m of MATERIALS) if (m.kind === 'metal') expect([m.family, m.form]).toEqual(['metal', 'plate']);
     expect(getMaterial('petg').form).toBe('printed');
     expect(getMaterial('pla').form).toBe('printed');
-    // families are contiguous, in the order metals, machined, printed
-    const order = ['metal', 'machined', 'printed'];
+    // families are contiguous, in the order metals, composites, machined, printed
+    const order = ['metal', 'composite', 'machined', 'printed'];
     const fams = MATERIALS.map((m) => order.indexOf(m.family));
+    expect(fams.every((f) => f >= 0)).toBe(true);
     expect(fams).toEqual([...fams].sort((a, b) => a - b));
+  });
+
+  it('G10 / FR4: in-plane laminate values, plate stock, own family, warning line', () => {
+    const m = getMaterial('g10');
+    expect([m.E, m.nu, m.Sy, m.sigmaF, m.density]).toEqual([18600, 0.12, 240, 60, 1.85]);
+    expect([m.kind, m.family, m.form]).toEqual(['polymer', 'composite', 'plate']);
+    expect(discStockFor(materialProps('g10'))).toEqual([3.175, 4.76, 6.35, 9.525, 12.7]);
+    expect(POLYMER_WARNING_LINES.some((l) => /G10/.test(l))).toBe(true);
+    // contact limits follow the usual formulas: 1.67 x Sy and 0.577 x sigmaF / 0.25
+    const r = checkGearbox({ ...defaultGearboxInputs(), discMaterial: materialProps('g10') });
+    const ring = r.checks.find((c) => c.id === 'ringContactLife')!;
+    expect(ring.limit).toBeCloseTo((0.577 * 60) / 0.25, 6);
+    expect(r.polymerWarning).toBe(true);
   });
 
   it('E* for steel on POM: hand computed 3,256 MPa, used by the check', () => {

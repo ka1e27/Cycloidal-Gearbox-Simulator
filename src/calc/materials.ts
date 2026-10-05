@@ -9,8 +9,8 @@ export type MaterialKind = 'metal' | 'polymer';
  * thickness). Optional for older sessions: `materialForm()` falls back to the kind (polymer = printed).
  */
 export type MaterialForm = 'plate' | 'printed';
-/** Library grouping: metals, machined plastics (plate / sheet / rod), 3D-printed plastics. */
-export type MaterialFamily = 'metal' | 'machined' | 'printed';
+/** Library grouping: metals, composites (laminate sheet), machined plastics (plate / sheet / rod), 3D-printed plastics. */
+export type MaterialFamily = 'metal' | 'composite' | 'machined' | 'printed';
 
 /** Plain numeric material properties, all editable by the user. */
 export interface MaterialProps {
@@ -42,9 +42,11 @@ export type MaterialId =
   | 'steel-4140'
   | 'al-6061'
   | 'al-7075'
+  | 'g10'
   | 'hdpe'
   | 'uhmw'
   | 'pom'
+  | 'delrin150'
   | 'pa66'
   | 'petg'
   | 'pla'
@@ -79,6 +81,14 @@ export const MATERIALS: readonly Material[] = [
     E: 71700, nu: 0.33, Sy: 503, sigmaF: 160, density: 2.81, kind: 'metal', family: 'metal', form: 'plate',
     note: 'Higher strength than 6061, lower toughness and corrosion resistance.',
   },
+  // Composites (laminate sheet): plate stock thicknesses. In-plane (edgewise) properties, since the pins load the
+  // disc edge in the plane of the sheet. G10 has no true yield; Sy is a conservative edgewise compressive strength.
+  {
+    id: 'g10',
+    name: 'G10 / FR4 (glass-epoxy laminate)',
+    E: 18600, nu: 0.12, Sy: 240, sigmaF: 60, density: 1.85, kind: 'polymer', family: 'composite', form: 'plate',
+    note: 'Glass-fiber epoxy sheet: stiff, strong and stable, with little creep. Brittle, abrasive to pins, and the cut edges can delaminate.',
+  },
   // Machined plastics (plate, sheet or rod): plate stock thicknesses
   {
     id: 'hdpe',
@@ -97,6 +107,12 @@ export const MATERIALS: readonly Material[] = [
     name: 'Acetal / POM / Delrin (machined)',
     E: 2900, nu: 0.35, Sy: 65, sigmaF: 30, density: 1.41, kind: 'polymer', family: 'machined', form: 'plate',
     note: 'The classic gear plastic: stiff, low friction, good fatigue. Best plastic choice for a cycloidal disc.',
+  },
+  {
+    id: 'delrin150',
+    name: 'Delrin 150 (acetal homopolymer, machined)',
+    E: 3100, nu: 0.35, Sy: 72, sigmaF: 32, density: 1.42, kind: 'polymer', family: 'machined', form: 'plate',
+    note: 'DuPont homopolymer acetal, the usual Delrin rod and plate grade: a little stiffer and stronger than generic POM. Creep under constant load is the main risk; use a hub insert for the bearing and steel sleeves in the inner pin holes.',
   },
   {
     id: 'pa66',
@@ -151,6 +167,7 @@ export const MATERIALS: readonly Material[] = [
 
 export const MATERIAL_FAMILIES: readonly { id: MaterialFamily; label: string }[] = [
   { id: 'metal', label: 'Metals' },
+  { id: 'composite', label: 'Composites' },
   { id: 'machined', label: 'Machined plastics' },
   { id: 'printed', label: '3D-printed plastics' },
 ];
@@ -212,10 +229,11 @@ export function effectiveModulus(
 }
 
 export const POLYMER_WARNING_LINES: readonly string[] = [
-  'Creep: polymers deform under sustained load, so contact patches and pin fits relax over time.',
+  'Creep: polymers deform under sustained load, so contact patches and pin fits relax over time (much less so for G10).',
   'Heat: friction and motor heat soften the part (PLA glass transition is about 60 C; HDPE and UHMW-PE soften from about 80 C).',
   'Print orientation (3D-printed parts): layer adhesion makes strength anisotropic. Orient layers so contact loads act along layers.',
   'Moisture: nylons (PA66, PA12, PA6-CF) absorb water and get softer and weaker.',
+  'G10 / FR4: brittle (it cracks rather than yields), abrasive to steel pins and bushings, and the cut edges can delaminate. Its dust is a lung irritant: waterjet it or machine it wet with extraction.',
   'The Hertz pressure limits used here are only a rough screen for polymers, not a validated criterion.',
 ];
 
