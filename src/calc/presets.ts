@@ -3,6 +3,7 @@
 import { DEFAULT_ROOT_CLEARANCE, DEFAULT_TOOL_RADIUS, defaultHousingMaterial } from './integral';
 import { materialForm, materialProps, SPEC_STEEL, type MaterialProps } from './materials';
 import { DEFAULT_INNER_PIN_SUPPORT, INNER_PIN_SUPPORTS } from './types';
+import { normalizeToleranceSpec } from './tolerance';
 import type { GearboxInputs, InnerPinSupport } from './types';
 
 export type JointId = 'J1' | 'J2' | 'J3' | 'J4';
@@ -136,5 +137,8 @@ export function normalizeGearboxInputs(partial: unknown): GearboxInputs {
   fixForm(out.outerPin.material, rawMat(rawMat(p.outerPin)?.material));
   if (out.outerPin.housingMaterial) fixForm(out.outerPin.housingMaterial, rawMat(rawMat(p.outerPin)?.housingMaterial));
   fixForm(out.innerPin.material, rawMat(rawMat(p.innerPin)?.material));
+  // machining tolerances (Addition 13): optional; a missing spec stays missing (= the default spec, profile clearance 0)
+  if (p.tolerance !== undefined && p.tolerance !== null) out.tolerance = normalizeToleranceSpec(p.tolerance);
+  if (typeof p.useToleranceKc === 'boolean') out.useToleranceKc = p.useToleranceKc;
   return out;
 }

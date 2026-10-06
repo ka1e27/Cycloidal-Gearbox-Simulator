@@ -52,6 +52,7 @@ import {
   ringContactMaterial,
   toothRootStress,
 } from './integral';
+import { withResolvedKc } from './toleranceKc';
 import { now, runAsync, runSync, SLICE_MS, type RunHooks } from './runner';
 import type { GearboxInputs, GearboxResult } from './types';
 
@@ -130,6 +131,11 @@ export interface AdvisorOptions {
   locks?: AdvisorLocks;
   /** When nothing meets the target, search for the closest design. Default true. */
   closest?: boolean;
+  /**
+   * Tolerance Kc of the inputs when `useToleranceKc` is on (the worker client sends the main thread's cached value; null /
+   * missing = this thread's cache, else the typed Kc). The search holds these factors fixed; the designs keep the switch.
+   */
+  toleranceKc?: { Kc: number; KcLife: number } | null;
   /** When nothing meets the target, compute the relax hints (one re-run per released lock). Default true. */
   hints?: boolean;
 }
@@ -1236,12 +1242,36 @@ export function cancelledAdvisorResult(target: number): AdvisorResult {
   return { ...invalidAdvisor([], target), cancelled: true };
 }
 
+/**
+ * "Use tolerance Kc": the search runs with the tolerance factors written into Kc / Kc_life (switch off), and every design
+ * it returns gets the user's typed factors and the switch back, so applying a design keeps the setting.
+ */
+function kcFor(inputs: GearboxInputs, opts: AdvisorOptions): { inp: GearboxInputs; restore: (r: AdvisorResult) => AdvisorResult } {
+  if (inputs.useToleranceKc !== true) return { inp: inputs, restore: (r) => r };
+  const inp = withResolvedKc(inputs, opts.toleranceKc);
+  const back = (d: AdvisorDesign | null) => {
+    if (d) d.inputs = { ...d.inputs, Kc: inputs.Kc, KcLife: inputs.KcLife, useToleranceKc: true };
+  };
+  return {
+    inp,
+    restore: (r) => {
+      back(r.best);
+      back(r.closest);
+      for (const d of Object.values(r.alternatives)) back(d);
+      for (const h of r.relaxHints) back(h.design);
+      return r;
+    },
+  };
+}
+
 /** Synchronous advisor (tests, small jobs). Never throws. */
 export function adviseDesign(
-  inputs: GearboxInputs, opts: AdvisorOptions = {}, hooks?: RunHooks<AdvisorProgress>,
+  inputsIn: GearboxInputs, opts: AdvisorOptions = {}, hooks?: RunHooks<AdvisorProgress>,
 ): AdvisorResult {
   try {
-    return runSync(adviseGen(inputs, opts), hooks) ?? cancelledAdvisorResult(clampTarget(opts.target));
+    const { inp: inputs, restore } = kcFor(inputsIn, opts);
+    const r = runSync(adviseGen(inputs, opts), hooks);
+    return r ? restore(r) : cancelledAdvisorResult(clampTarget(opts.target));
   } catch (err) {
     return invalidAdvisor([`Advisor failed: ${err instanceof Error ? err.message : String(err)}`], clampTarget(opts.target));
   }
@@ -1249,10 +1279,12 @@ export function adviseDesign(
 
 /** Async advisor: yields to the event loop between slices so it can be cancelled. Never throws. */
 export async function adviseDesignAsync(
-  inputs: GearboxInputs, opts: AdvisorOptions = {}, hooks?: RunHooks<AdvisorProgress>,
+  inputsIn: GearboxInputs, opts: AdvisorOptions = {}, hooks?: RunHooks<AdvisorProgress>,
 ): Promise<AdvisorResult> {
   try {
-    return (await runAsync(adviseGen(inputs, opts), hooks)) ?? cancelledAdvisorResult(clampTarget(opts.target));
+    const { inp: inputs, restore } = kcFor(inputsIn, opts);
+    const r = await runAsync(adviseGen(inputs, opts), hooks);
+    return r ? restore(r) : cancelledAdvisorResult(clampTarget(opts.target));
   } catch (err) {
     return invalidAdvisor([`Advisor failed: ${err instanceof Error ? err.message : String(err)}`], clampTarget(opts.target));
   }

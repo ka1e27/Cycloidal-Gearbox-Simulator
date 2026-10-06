@@ -6,13 +6,14 @@ import {
   createContext, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react';
 import {
-  GREEN_LIMIT, getCalcClient, motorUtilization, type CalcJob, type Fix, type FixField, type FixReport, type GearboxInputs,
+  GREEN_LIMIT, getCalcClient, kcTag, motorUtilization, type CalcJob, type Fix, type FixField, type FixReport, type GearboxInputs,
   type MotorSpec,
 } from '../calc';
 import { util } from './format';
 import { motorUsable } from './motorUi';
 import { CUSTOM, computeArmResult, effectiveInputs, type Session, type Slot } from './session';
 import { useStore } from './store';
+import { useToleranceVersion } from './tolerance';
 import { modelFor } from './workbench/status';
 
 const DEBOUNCE_MS = 300;
@@ -20,7 +21,8 @@ const KEEP = 24;
 
 /** Identity of one fix search: the checked inputs, the motor (cycloidal joints) and the target. */
 export function fixKey(inputs: GearboxInputs, motor: MotorSpec | null): string {
-  return JSON.stringify([inputs, motor, GREEN_LIMIT]);
+  // with "use tolerance Kc" the cached tolerance factors are part of what is being fixed
+  return JSON.stringify([inputs, motor, GREEN_LIMIT]) + kcTag(inputs);
 }
 
 interface Want { slot: Slot; key: string; inputs: GearboxInputs; motor: MotorSpec | null }
@@ -59,8 +61,9 @@ export function FixesProvider({ children }: { children: ReactNode }) {
   const { state } = useStore();
   const d = useDeferredValue(state);
   const { arm: armIn, gearboxes, useArmLoads, presetBase } = d;
+  const tv = useToleranceVersion();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const list = useMemo(() => slotsOf(d), [armIn, gearboxes, useArmLoads, presetBase]);
+  const list = useMemo(() => slotsOf(d), [armIn, gearboxes, useArmLoads, presetBase, tv]);
   const [reports, setReports] = useState<Record<string, FixReport>>({});
   const job = useRef<{ key: string; job: CalcJob<FixReport> } | null>(null);
   const sel = state.wb.sel;

@@ -5,6 +5,7 @@ import { InfoTip } from '../components/InfoTip';
 import { HELP } from '../help';
 import { motorChip } from '../motorUi';
 import { DASH, fixed, num, thickness, util } from '../format';
+import { useToleranceVersion } from '../tolerance';
 import { useStore } from '../store';
 import { JointTag } from '../components/JointTag';
 
@@ -41,7 +42,9 @@ function MotorChipCell({ info }: { info: JointSummaryRow['motor'] }) {
 export function JointsSummary() {
   const { state, selectItem, openSection, patchWb, runAdvisor, u } = useStore();
   const dep = useDeferredValue({ arm: state.arm, gb: state.gearboxes, use: state.useArmLoads });
-  const sum = useMemo(() => summarizeAllJoints(dep.arm, dep.gb, { useArmLoads: dep.use }), [dep]);
+  const tv = useToleranceVersion();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sum = useMemo(() => summarizeAllJoints(dep.arm, dep.gb, { useArmLoads: dep.use }), [dep, tv]);
   // gearbox rows and servo rows together, in arm order
   const lines = useMemo(() => {
     const all: ({ kind: 'gear'; i: number; row: JointSummaryRow } | { kind: 'servo'; i: number; row: ServoRow })[] = [

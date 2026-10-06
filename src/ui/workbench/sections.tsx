@@ -1,7 +1,7 @@
 // Inspector section bodies and their one-line summaries (CLAUDE.md Addition 10). The light sections live in the main
 // chunk; the heavy ones (Disc, Solver, Advisor, DXF) load on demand, with a skeleton while they load.
 import { lazy, type ComponentType, type ReactNode } from 'react';
-import { MOTION_LABEL, analyzeJointMotor, type ArmJoint, type Fix } from '../../calc';
+import { MOTION_LABEL, analyzeJointMotor, withTolerance, type ArmJoint, type Fix } from '../../calc';
 import { useApplyFix, useFixes } from '../fixes';
 import { MotorFields } from '../components/MotorFields';
 import { num, util } from '../format';
@@ -12,6 +12,7 @@ import type { U } from '../units';
 import { GearboxInputsPanel } from '../screens/GearboxInputsPanel';
 import { CheckCards, IntegralCard, InvalidCard, KeyData, PolymerCard, VerdictBanner } from '../screens/GearboxResults';
 import { MotorCard } from '../screens/MotorCard';
+import { ArmSlopCard, ArmSlopSummary, TolerancePanel, ToleranceSummary } from '../screens/TolerancePanel';
 import type { SlotModel } from '../screens/GearboxScreen';
 import { ArmSettings, JointArmLoads, JointLinkFields, ServoRequirement, TorqueTable } from '../screens/ArmScreen';
 import type { SectionId } from './wbState';
@@ -96,6 +97,15 @@ function ChecksBody({ slot, sm }: SectionCtx) {
   );
 }
 
+function ToleranceBody({ slot, sm, index }: SectionCtx) {
+  if (!slot || !sm) return null;
+  return <TolerancePanel slot={slot} eff={sm.eff} result={sm.model.result} index={index} />;
+}
+
+function ArmSlopBody() {
+  return <ArmSlopCard />;
+}
+
 function ArmSettingsBody() {
   return <ArmSettings />;
 }
@@ -130,9 +140,10 @@ const LazyAdvisor = lazy(() => import('../screens/AdvisorScreen').then((m) => ({
 })));
 const LazyDxf = lazy(() => import('../components/ExportDxfPanel').then((m) => ({
   default: function DxfBody({ slot, sm }: SectionCtx) {
-    const { state } = useStore();
+    const { state, updateGearbox } = useStore();
     if (!slot || !sm) return null;
-    return <m.ExportDxfPanel inputs={sm.deferred} label={slotShort(state.arm, slot)} model={sm.model} />;
+    return <m.ExportDxfPanel inputs={sm.deferred} label={slotShort(state.arm, slot)} model={sm.model}
+      onTolerance={(p) => updateGearbox(slot, (g) => withTolerance(g, p))} />;
   },
 })));
 
@@ -143,15 +154,17 @@ export const LAZY_BODIES: SectionBodies = {
   loads: LoadsBody,
   design: DesignBody,
   checks: ChecksBody,
+  tolerance: ToleranceBody,
   disc: LazyDisc as unknown as ComponentType<SectionCtx>,
   solver: LazySolver as unknown as ComponentType<SectionCtx>,
   advisor: LazyAdvisor as unknown as ComponentType<SectionCtx>,
   dxf: LazyDxf as unknown as ComponentType<SectionCtx>,
   armSettings: ArmSettingsBody,
   armTorques: ArmTorquesBody,
+  armSlop: ArmSlopBody,
 };
 
-export const LIGHT_BODIES = { JointBody, MotorBody, LoadsBody, DesignBody, ChecksBody, ArmSettingsBody, ArmTorquesBody };
+export const LIGHT_BODIES = { JointBody, MotorBody, LoadsBody, DesignBody, ChecksBody, ToleranceBody, ArmSettingsBody, ArmTorquesBody, ArmSlopBody };
 
 // ---------------------------------------------------------------------------
 // One-line summaries shown on a collapsed section
@@ -209,6 +222,10 @@ export function sectionSummary(id: SectionId, c: SectionCtx, x: SummaryInput): R
       const word = r.verdict === 'pass' ? 'PASS' : r.verdict === 'marginal' ? 'MARGINAL' : 'FAIL';
       return `${word} ${util(r.maxUtilization)}${r.governing ? ` · ${plainName(r.governing)}` : ''}`;
     }
+    case 'tolerance':
+      return c.slot ? <ToleranceSummary slot={c.slot} /> : null;
+    case 'armSlop':
+      return <ArmSlopSummary />;
     case 'disc': {
       const m = c.sm?.model;
       if (!m || !m.result.valid) return '—';

@@ -13,12 +13,12 @@ export const STAGE_TABS: { id: StageTab; label: string }[] = [
   { id: 'summary', label: 'Summary' },
 ];
 
-/** Inspector sections. The first nine are a joint's (or Custom's); the last two are the Arm item's. */
+/** Inspector sections. The first ten are a joint's (or Custom's); the last three are the Arm item's. */
 export type SectionId =
-  | 'joint' | 'motor' | 'loads' | 'design' | 'checks' | 'disc' | 'solver' | 'advisor' | 'dxf'
-  | 'armSettings' | 'armTorques';
+  | 'joint' | 'motor' | 'loads' | 'design' | 'checks' | 'tolerance' | 'disc' | 'solver' | 'advisor' | 'dxf'
+  | 'armSettings' | 'armTorques' | 'armSlop';
 export const SECTION_IDS: readonly SectionId[] = [
-  'joint', 'motor', 'loads', 'design', 'checks', 'disc', 'solver', 'advisor', 'dxf', 'armSettings', 'armTorques',
+  'joint', 'motor', 'loads', 'design', 'checks', 'tolerance', 'disc', 'solver', 'advisor', 'dxf', 'armSettings', 'armTorques', 'armSlop',
 ];
 
 export interface SectionMeta {
@@ -36,19 +36,21 @@ export const SECTION_META: Record<SectionId, SectionMeta> = {
   loads: { id: 'loads', title: 'Loads', chip: 'Loads', help: { what: 'The torque this joint must carry (from the arm model or typed by you) and the loads on its output bearing.' } },
   design: { id: 'design', title: 'Gearbox design', chip: 'Design', help: { what: 'Geometry, materials, bearing and load factors of this cycloidal gearbox; every check updates as you type.' } },
   checks: { id: 'checks', title: 'Checks', chip: 'Checks', help: { what: 'Every SPEC check with its value, limit and utilization, plus the key numbers of the current design.' } },
+  tolerance: { id: 'tolerance', title: 'Tolerances & backlash', chip: 'Tolerances', help: { what: 'Enter your machining errors and clearances: the backlash (play) at the output, whether the disc can bind, how unevenly the pins share the load (Kc), the stiffness and the slop at the tool tip.' } },
   disc: { id: 'disc', title: 'Disc & charts', chip: 'Disc', help: { what: 'The disc at an input angle θ with the pin forces; open it in the stage for the full-size view and both charts.' } },
   solver: { id: 'solver', title: 'Min-size solver', chip: 'Solver', help: { what: 'Sweeps D and K1 for the smallest pin circle whose contact checks pass, keeping everything else as it is.' } },
   advisor: { id: 'advisor', title: 'Design Advisor', chip: 'Advisor', help: { what: 'Searches every free design variable for the smallest housing that keeps every check under the target, then lets you apply it.' } },
   dxf: { id: 'dxf', title: 'Export DXF', chip: 'DXF', help: { what: 'Download manufacturing DXFs of the disc, housing, output plate, cam and pins for the current design.' } },
   armSettings: { id: 'armSettings', title: 'Arm settings', chip: 'Settings', help: { what: 'Payload, service factor and the minimum design torque, which apply to every joint, plus the arm totals.' } },
   armTorques: { id: 'armTorques', title: 'Torque table', chip: 'Torques', help: { what: 'The worst-case torque and output-bearing loads of every joint side by side.' } },
+  armSlop: { id: 'armSlop', title: 'Tip slop', chip: 'Tip slop', help: { what: 'How far the tool tip can move because of each gearbox’s backlash and twist under load, joint by joint and for the whole arm.' } },
 };
 
 /** Sections per kind of selection, top to bottom. */
-export const CYCLOIDAL_SECTIONS: readonly SectionId[] = ['joint', 'motor', 'loads', 'design', 'checks', 'disc', 'solver', 'advisor', 'dxf'];
+export const CYCLOIDAL_SECTIONS: readonly SectionId[] = ['joint', 'motor', 'loads', 'design', 'checks', 'tolerance', 'disc', 'solver', 'advisor', 'dxf'];
 export const SERVO_SECTIONS: readonly SectionId[] = ['joint', 'motor', 'loads'];
-export const CUSTOM_SECTIONS: readonly SectionId[] = ['design', 'checks', 'disc', 'solver', 'advisor', 'dxf'];
-export const ARM_SECTIONS: readonly SectionId[] = ['armSettings', 'armTorques'];
+export const CUSTOM_SECTIONS: readonly SectionId[] = ['design', 'checks', 'tolerance', 'disc', 'solver', 'advisor', 'dxf'];
+export const ARM_SECTIONS: readonly SectionId[] = ['armSettings', 'armTorques', 'armSlop'];
 
 export type MobileTab = 'view' | 'details' | 'summary';
 

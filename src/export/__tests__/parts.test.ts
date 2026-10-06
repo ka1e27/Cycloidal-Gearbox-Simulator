@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PRESETS, createGearboxModel, defaultGearboxInputs, type GearboxInputs } from '../../calc';
+import { PRESETS, createGearboxModel, defaultGearboxInputs, withTolerance, type GearboxInputs } from '../../calc';
 import {
   DEFAULT_EXPORT_OPTIONS,
   EXPORT_LAYERS,
@@ -21,6 +21,10 @@ function read(inputs: GearboxInputs, id: PartId | 'all', opts = {}) {
   const res = buildParts(inputs, opts, 'J');
   return { res, dxf: readDxf(buildDxf(res, id, opts).text) };
 }
+/** The profile clearance is a gearbox input now (tolerance.profileClearance, CLAUDE.md Addition 13). */
+const pc = (inp: GearboxInputs, c: number) => withTolerance(inp, { profileClearance: c, innerHoleClearance: 0 });
+/** The exact SPEC geometry: no profile or inner hole clearance (a gearbox without a spec gets the fitted CNC mill ones). */
+const exact = (inp: GearboxInputs) => pc(inp, 0);
 const circles = (es: ReadEntity[]) => es.filter((e) => e.type === 'CIRCLE');
 
 function bboxOf(es: ReadEntity[]) {
@@ -35,7 +39,7 @@ function bboxOf(es: ReadEntity[]) {
 describe('disc part', () => {
   it('polyline is closed with 120 points per lobe and radius extremes Rp-e-rr, Rp+e-rr', () => {
     for (const inp of [J2, J3, defaultGearboxInputs()]) {
-      const { res, dxf } = read(inp, 'disc');
+      const { res, dxf } = read(exact(inp), 'disc');
       const polys = dxf.entities.filter((e) => e.type === 'POLYLINE');
       expect(polys).toHaveLength(1);
       expect(polys[0].closed).toBe(true);
@@ -61,8 +65,8 @@ describe('disc part', () => {
     expect(max).toBeLessThan(1e-9);
   });
 
-  it('has a centre bore Db and Zw holes dh = 2rw + 2e on radius Rw', () => {
-    const { res, dxf } = read(J2, 'disc');
+  it('has a centre bore Db and Zw holes dh = 2rw + 2e (+ the inner hole clearance) on radius Rw', () => {
+    const { res, dxf } = read(withTolerance(J2, { innerHoleClearance: 0 }), 'disc');
     const cs = circles(dxf.entities);
     expect(cs).toHaveLength(1 + J2.Zw);
     const bore = cs.find((c) => Math.hypot(c.cx!, c.cy!) < 1e-9)!;
@@ -80,8 +84,8 @@ describe('disc part', () => {
   });
 
   it('profile clearance shrinks the profile by exactly the clearance', () => {
-    const base = read(J3, 'disc').dxf.entities.find((e) => e.type === 'POLYLINE')!.vertices!;
-    const shr = read(J3, 'disc', { profileClearance: 0.15 }).dxf.entities.find((e) => e.type === 'POLYLINE')!.vertices!;
+    const base = read(exact(J3), 'disc').dxf.entities.find((e) => e.type === 'POLYLINE')!.vertices!;
+    const shr = read(pc(J3, 0.15), 'disc', { profileClearance: 0.7 /* ignored: the input wins */ }).dxf.entities.find((e) => e.type === 'POLYLINE')!.vertices!;
     expect(shr).toHaveLength(base.length);
     const [lo0, hi0] = radiusRange(base);
     const [lo1, hi1] = radiusRange(shr);
@@ -100,11 +104,22 @@ describe('disc part', () => {
     }
   });
 
-  it('disc hole clearance widens the bore and holes only', () => {
-    const { dxf } = read(J3, 'disc', { discHoleClearance: 0.1 });
+  it('disc bore clearance widens the bore; the inner holes take the inner hole clearance input', () => {
+    const { dxf } = read(withTolerance(J3, { innerHoleClearance: 0.07 }), 'disc', { discHoleClearance: 0.1 });
     const cs = circles(dxf.entities);
-    expect(Math.min(...cs.map((c) => c.r! * 2))).toBeCloseTo(2 * J3.rw + 2 * J3.e + 0.1, 6);
+    expect(Math.min(...cs.map((c) => c.r! * 2))).toBeCloseTo(2 * J3.rw + 2 * J3.e + 0.07, 6);
     expect(Math.max(...cs.map((c) => c.r! * 2))).toBeCloseTo(J3.Db + 0.1, 6);
+    // a gearbox without a tolerance spec uses the default: the CNC mill's fitted 0.07 mm
+    const d0 = circles(read(J3, 'disc').dxf.entities);
+    expect(Math.min(...d0.map((c) => c.r! * 2))).toBeCloseTo(2 * J3.rw + 2 * J3.e + 0.07, 6);
+  });
+
+  it('the pin hole clearance is twice the hole play input (reamed holes: 0.01 mm)', () => {
+    const r = buildParts(withTolerance(J3, { holePlay: 0.005 }), { pinHoleClearance: 0.4 /* ignored */ }, 'J3');
+    const housing = r.parts.find((p) => p.id === 'housing')!;
+    const holes = housing.entities.filter((e) => e.type === 'CIRCLE' && Math.abs(Math.hypot(e.cx, e.cy) - J3.D / 2) < 1e-6);
+    expect(holes).toHaveLength(J3.Zp);
+    for (const h of holes) if (h.type === 'CIRCLE') expect(2 * h.r).toBeCloseTo(J3.outerPin.shankDia + 0.01, 9);
   });
 
   it('chord-error mode honours the tolerance', () => {
@@ -119,7 +134,7 @@ describe('disc part', () => {
 
   it('warns but still exports when there is a cusp', () => {
     // a clearance that sharpens the lobe tips past the 0.3 mm limit
-    const r = buildParts(J3, { profileClearance: 4.9 }, 'J3');
+    const r = buildParts(pc(J3, 4.9), {}, 'J3');
     expect(r.ok).toBe(true);
     expect(r.warnings.join(' ')).toMatch(/cusp/i);
     expect(readDxf(buildDxf(r, 'disc').text).entities.some((e) => e.type === 'POLYLINE')).toBe(true);
@@ -312,7 +327,7 @@ describe('units, finiteness, extents', () => {
     expect(res.errors.length).toBeGreaterThan(0);
     expect(() => buildDxf(res, 'all')).toThrow();
     expect(buildParts({ ...J3, D: NaN }, {}, 'bad').ok).toBe(false);
-    expect(buildParts(J3, { profileClearance: 60 }, 'bad').ok).toBe(false);
+    expect(buildParts(pc(J3, 60), {}, 'bad').ok).toBe(false);
   });
 
   it('file names are descriptive', () => {
@@ -340,7 +355,8 @@ const GOLDEN_J2_DISC_HASH = '0e6d0177';
 const GOLDEN_J2_DISC_LENGTH = 148913;
 
 describe('golden: J2 SPEC case (D 85, e 1.6, rr 2.5, 2 discs)', () => {
-  const res = buildParts(J2, {}, 'J2');
+  // recorded before the inner holes took the tolerance input: with an inner hole clearance of 0 the file is unchanged
+  const res = buildParts(exact(J2), {}, 'J2');
   const text = buildDxf(res, 'disc').text;
   const d = readDxf(text);
   it('disc DXF matches the recorded structure and numbers', () => {

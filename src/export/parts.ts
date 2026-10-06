@@ -15,6 +15,7 @@ import {
   INNER_PIN_OPTIONS,
   MATERIALS,
   createGearboxModel,
+  dxfClearancesOf,
   ringProfile,
   type GearboxInputs,
   type GearboxModel,
@@ -43,15 +44,25 @@ import {
 export interface ExportOptions {
   /** Unit of the written file. */
   units: DxfUnits;
-  /** Profile offset / clearance, mm. Positive shrinks the disc: the profile is offset by rr + clearance. Default 0. */
+  /**
+   * Profile offset / clearance, mm. Positive shrinks the disc: the profile is offset by rr + clearance.
+   * Mirrors the gearbox input `tolerance.profileClearance` (the one source of truth, CLAUDE.md Addition 13): buildParts
+   * always takes it from the inputs and ignores this field. Kept so stored options and old callers still type-check.
+   */
   profileClearance: number;
   /** Polyline points per lobe. null = choose the count from `maxChordError` instead. Default 120. */
   pointsPerLobe: number | null;
   /** Largest allowed gap between the polyline chords and the true profile, mm (used when pointsPerLobe is null). */
   maxChordError: number;
-  /** Extra diameter added to the disc centre bore and the Zw disc holes, mm. Default 0. */
+  /**
+   * Extra diameter added to the disc centre bore, mm. Default 0. (The Zw inner holes take the gearbox input
+   * `tolerance.innerHoleClearance` instead.)
+   */
   discHoleClearance: number;
-  /** Extra diameter on pin / bolt holes in the plates and on the bushing bore, mm. Default 0.2. */
+  /**
+   * Extra diameter on pin / bolt holes in the plates and on the bushing bore, mm. Mirrors 2 x the gearbox input
+   * `tolerance.holePlay` (radial): buildParts always takes it from the inputs and ignores this field.
+   */
   pinHoleClearance: number;
   /** Input shaft diameter for the cam, mm. Default 5. */
   shaftDia: number;
@@ -445,6 +456,10 @@ export function buildParts(
   const o = normalizeExportOptions({ ...DEFAULT_EXPORT_OPTIONS, ...optionsIn });
   const fail = (errors: string[]): PartsResult => ({ ok: false, errors, warnings: [], parts: [], info: null, tag: '', label });
   try {
+    // the clearances that are gearbox inputs (one source of truth with the tolerance analysis)
+    const tc = dxfClearancesOf(inputs);
+    o.profileClearance = tc.profileClearance;
+    o.pinHoleClearance = tc.pinHoleClearance;
     const optErr = Object.values(validateExportOptions(o));
     if (optErr.length) return fail(optErr as string[]);
     const m = model ?? createGearboxModel(inputs);
@@ -471,12 +486,12 @@ export function buildParts(
       const b = new PartBuilder('DISC');
       b.poly(prof.points, true);
       const boreD = inputs.Db + o.discHoleClearance;
-      const holeD = d.dh + o.discHoleClearance;
+      const holeD = d.dh + tc.innerHoleClearance;
       if (inputs.Db > 0) b.circle(0, 0, boreD / 2);
       ringOfCircles(b, Zw, d.Rw, holeD);
       b.summary.push(`Profile: closed polyline, ${prof.points.length} points (${ppl} per lobe, ${Zc} lobes)`);
       if (inputs.Db > 0) b.summary.push(`Centre bore: dia ${fix(boreD)} mm`);
-      b.summary.push(`${Zw} inner holes: dia ${fix(holeD)} mm on radius ${fix(d.Rw)} mm`);
+      b.summary.push(`${Zw} inner holes: dia ${fix(holeD)} mm on radius ${fix(d.Rw)} mm (inner hole clearance ${fix(tc.innerHoleClearance, 3)} mm)`);
       if (r.cusp) {
         b.warnings.push('The engine flags a cusp or undercut on the disc profile (a lobe radius of curvature under 0.3 mm). The profile is exported anyway: check it before cutting.');
       } else if (prof.cusp) {

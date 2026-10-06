@@ -32,6 +32,8 @@ import {
 import { END_MILL_RADII, integralSpecOf } from './integral';
 import { checkMotor, K1_MAX, K1_MIN, recommendRatio, rescaleEForZp, type MotorSpec } from './motor';
 import { now, runAsync, runSync, type RunHooks } from './runner';
+import { REAMED_HOLE_PLAY, analyzeTolerance, fitClearances, matchProcess, processPreset, processSpec, tighterProcesses, toleranceOf } from './tolerance';
+import { resolveKc, withResolvedKc } from './toleranceKc';
 import type { CheckId, CheckStatus, GearboxInputs, GearboxResult, InnerPinSupport } from './types';
 
 // ---------------------------------------------------------------------------
@@ -42,12 +44,14 @@ import type { CheckId, CheckStatus, GearboxInputs, GearboxResult, InnerPinSuppor
 export type FixField =
   | 'D' | 'e' | 'L' | 'discs' | 'rr' | 'rw' | 'Zw' | 'bearing' | 'discMaterial' | 'innerPinSupport'
   | 'outerPin.material' | 'outerPin.boltYield' | 'innerPin.material' | 'Zp'
-  | 'outerPin.housingMaterial' | 'outerPin.toolRadius';
+  | 'outerPin.housingMaterial' | 'outerPin.toolRadius'
+  /** A tighter machining process (only with "use tolerance Kc" on): the tolerance spec of the next better preset */
+  | 'tolerance';
 
 export const FIX_FIELDS: readonly FixField[] = [
   'D', 'e', 'L', 'discs', 'rr', 'rw', 'Zw', 'bearing', 'discMaterial', 'innerPinSupport',
   'outerPin.material', 'outerPin.boltYield', 'innerPin.material', 'Zp',
-  'outerPin.housingMaterial', 'outerPin.toolRadius',
+  'outerPin.housingMaterial', 'outerPin.toolRadius', 'tolerance',
 ];
 
 /** A gearbox check, or 'motor' (the motor torque / speed through the gearbox ratio). */
@@ -66,6 +70,13 @@ export interface FixOptions {
   /** Verification resolution. Defaults 6000 / 240 (SPEC). */
   npfFull?: number;
   nthFull?: number;
+  /**
+   * Tolerance Kc of the inputs when `useToleranceKc` is on (the worker client sends the main thread's cached value).
+   * The search then runs with these factors held fixed; null / missing = the cache of this thread, else the typed Kc.
+   */
+  toleranceKc?: { Kc: number; KcLife: number } | null;
+  /** Monte Carlo trials for the tighter-process fixes (default 200) */
+  processTrials?: number;
 }
 
 export interface Fix {
@@ -201,6 +212,8 @@ function clampTarget(t: number | undefined): number {
 interface Resolved {
   target: number;
   motor: MotorSpec | null;
+  toleranceKc: { Kc: number; KcLife: number } | null | undefined;
+  processTrials: number;
   Dmax: number;
   coarse: { npf: number; nth: number };
   full: { npf: number; nth: number };
@@ -210,6 +223,8 @@ function resolve(o: FixOptions | undefined): Resolved {
   return {
     target: clampTarget(o?.target),
     motor: o?.motor ?? null,
+    toleranceKc: o?.toleranceKc,
+    processTrials: fin(o?.processTrials) && o!.processTrials! >= 20 ? Math.floor(o!.processTrials!) : 200,
     Dmax: fin(o?.Dmax) && o!.Dmax! > 0 ? o!.Dmax! : ADVISOR_D_MAX,
     coarse: { npf: fin(o?.npfCoarse) ? o!.npfCoarse! : 1500, nth: fin(o?.nthCoarse) ? o!.nthCoarse! : 120 },
     full: { npf: fin(o?.npfFull) ? o!.npfFull! : 6000, nth: fin(o?.nthFull) ? o!.nthFull! : 240 },
@@ -245,8 +260,11 @@ interface Candidate {
   exactMin?: number | null;
 }
 
-function* fixGen(inputs: GearboxInputs, o: Resolved): Generator<FixProgress, FixReport, void> {
+function* fixGen(inputsIn: GearboxInputs, o: Resolved): Generator<FixProgress, FixReport, void> {
   const t0 = now();
+  // "use tolerance Kc": the search holds the tolerance factors of the current design fixed (patches never touch Kc)
+  const kcSource = resolveKc(inputsIn, o.toleranceKc).source;
+  const inputs = withResolvedKc(inputsIn, o.toleranceKc);
   let evaluated = 0;
   const target = o.target;
   const motor = o.motor;
@@ -791,6 +809,59 @@ function* fixGen(inputs: GearboxInputs, o: Resolved): Generator<FixProgress, Fix
       }
     }
     yield progress('outerPin.material');
+
+    // ---------------------------------------------------------------- tighter machining process (tolerance Kc only)
+    // The next better process presets, nearest first: each candidate's Kc is its own Monte Carlo p95 (the hole play the
+    // user chose is kept). Offered only when the checks run on the tolerance Kc.
+    if (kcSource === 'tolerance') {
+      const cur = toleranceOf(inputsIn);
+      const integralRing = inputsIn.outerPin.construction === 'integral';
+      const presets = tighterProcesses(cur);
+      // each with its own fitted clearances, keeping the user's hole fit (reamed or not)
+      const specs = presets.map((pp) => fitClearances(inputsIn, processSpec(pp.id, { integral: integralRing, holePlay: cur.holePlay, keep: cur })));
+      const cands: GearboxInputs[] = [];
+      const keep: number[] = [];
+      specs.forEach((t, k) => {
+        const tr = analyzeTolerance({ ...inputsIn, tolerance: t }, { trials: o.processTrials, sensitivity: false });
+        if (!tr.valid || !(tr.kc.strength.p95 > 0) || !(tr.kc.life.p95 > 0)) return;
+        cands.push({ ...inputs, tolerance: t, Kc: tr.kc.strength.p95, KcLife: tr.kc.life.p95 });
+        keep.push(k);
+      });
+      const r = listSearch(cands, 'tolerance');
+      if (r) {
+        const pp = presets[keep[r.k]];
+        const curId = matchProcess(cur, integralRing);
+        const f = finish({
+          field: 'tolerance', label: 'Machining process', direction: 'change',
+          from: curId ? processPreset(curId).label : 'custom tolerances', to: pp.label, fromValue: null, toValue: null,
+          short: `Process → ${pp.label}`, patch: { tolerance: specs[keep[r.k]] }, changeCost: 0.5,
+        }, cands[r.k]);
+        if (f) {
+          f.sideEffects.unshift(`tolerance Kc ${inputs.Kc.toFixed(2)} → ${cands[r.k].Kc.toFixed(2)} (p95)`);
+          push(f);
+        }
+      }
+      // reamed / dowel-fit outer pin holes (the hole play usually dominates the spread of the pin gaps)
+      if (inputsIn.outerPin.construction !== 'integral' && cur.holePlay > REAMED_HOLE_PLAY + 1e-9) {
+        // a preset's clearances are re-fitted to the smaller stack; custom clearances are kept
+        const pid = matchProcess(cur, integralRing, cur.fitMode === 'statistical' ? fitClearances(inputsIn, cur) : null);
+        const t = pid ? fitClearances(inputsIn, processSpec(pid, { holePlay: REAMED_HOLE_PLAY, keep: cur })) : { ...cur, holePlay: REAMED_HOLE_PLAY };
+        const tr = analyzeTolerance({ ...inputsIn, tolerance: t }, { trials: o.processTrials, sensitivity: false });
+        if (tr.valid && tr.kc.strength.p95 > 0 && tr.kc.life.p95 > 0) {
+          const at = { ...inputs, tolerance: t, Kc: tr.kc.strength.p95, KcLife: tr.kc.life.p95 };
+          note('tolerance', coarse(at));
+          const f = finish({
+            field: 'tolerance', label: 'Outer pin holes', direction: 'change', from: `${trim(cur.holePlay, 3)} mm hole play`,
+            to: 'reamed / dowel fit (0.005 mm)', fromValue: cur.holePlay, toValue: REAMED_HOLE_PLAY,
+            short: 'Ream the outer pin holes', patch: { tolerance: t }, changeCost: 0.3,
+          }, at);
+          if (f) {
+            f.sideEffects.unshift(`tolerance Kc ${inputs.Kc.toFixed(2)} → ${at.Kc.toFixed(2)} (p95)`, 'DXF pin holes + 0.01 mm: ream them to size');
+            push(f);
+          }
+        }
+      }
+    }
   } else {
     step = steps - 1;
   }

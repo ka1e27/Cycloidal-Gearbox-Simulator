@@ -6,6 +6,7 @@ import {
   PRESETS,
   closestPresetId,
   computeArm,
+  defaultToleranceSpec,
   defaultArmInputs,
   defaultGearboxInputs,
   jointLabel,
@@ -325,13 +326,62 @@ export function normalizeSession(raw: unknown, base: Session = defaultSession())
 // Persistence (every storage access is wrapped: the app must work when storage throws)
 // ---------------------------------------------------------------------------
 
+/** Where the DXF panel keeps its allowances (ExportDxfPanel). */
+export const DXF_OPTIONS_KEY = 'cycloid-calc-dxf-options-v1';
+/** Set once the stored DXF clearances have been moved into the gearbox inputs. */
+export const TOLERANCE_MIGRATED_KEY = 'cgd.tolerance-migrated.v1';
+
+/**
+ * Before Addition 13 the DXF panel held the profile clearance, the pin hole clearance and the disc hole clearance as its
+ * own (app-wide) options. They are gearbox inputs now (tolerance.profileClearance, tolerance.holePlay = pin hole
+ * clearance / 2, tolerance.innerHoleClearance). On load, every gearbox without a tolerance spec takes the stored DXF
+ * values, so the drawings it exports stay the same. Gearboxes that have a spec, and sessions without stored DXF options,
+ * are left as they are (a missing spec is the default: CNC mill with profile clearance 0).
+ */
+export function migrateDxfTolerance(s: Session, dxfRaw: unknown): Session {
+  if (!isObj(dxfRaw)) return s;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const pc = num(dxfRaw.profileClearance), ph = num(dxfRaw.pinHoleClearance), dh = num(dxfRaw.discHoleClearance);
+  if (pc == null && ph == null && dh == null) return s;
+  let changed = false;
+  const gearboxes = { ...s.gearboxes };
+  for (const [k, g] of Object.entries(gearboxes)) {
+    if (g.tolerance !== undefined) continue;
+    const t = defaultToleranceSpec();
+    if (pc != null) t.profileClearance = pc;
+    if (ph != null) t.holePlay = ph / 2;
+    if (dh != null) t.innerHoleClearance = dh;
+    gearboxes[k] = { ...g, tolerance: t };
+    changed = true;
+  }
+  return changed ? { ...s, gearboxes } : s;
+}
+
+function storedDxfOptions(): unknown {
+  try {
+    const t = window.localStorage.getItem(DXF_OPTIONS_KEY);
+    return t ? JSON.parse(t) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function loadSession(): Session {
+  let s: Session;
   try {
     const txt = window.localStorage.getItem(STORAGE_KEY);
-    if (!txt) return defaultSession();
-    return normalizeSession(JSON.parse(txt));
+    s = txt ? normalizeSession(JSON.parse(txt)) : defaultSession();
   } catch {
     return defaultSession();
+  }
+  // once: later gearboxes (new joints) start from the default spec, not from the old DXF options
+  try {
+    if (window.localStorage.getItem(TOLERANCE_MIGRATED_KEY)) return s;
+    const dxf = storedDxfOptions();
+    window.localStorage.setItem(TOLERANCE_MIGRATED_KEY, '1');
+    return migrateDxfTolerance(s, dxf);
+  } catch {
+    return s;
   }
 }
 

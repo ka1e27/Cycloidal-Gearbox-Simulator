@@ -248,6 +248,37 @@ from a chosen **housing material**. The disc slides on the teeth (no rolling bus
 - **DXF:** the housing becomes a ring plate with the internal tooth profile (with tool fillets)
   as a closed polyline, the outline, and optional mounting holes.
 
+## Addition 13 — Machining tolerances, backlash and load sharing
+Inputs per gearbox, with process presets that fill typical values. All values are editable.
+- Deliberate clearances: profile clearance Δrp (the disc's equidistant shrink, the SAME value the DXF uses);
+  inner hole clearance Δh (diametral, added to 2rw + 2e).
+- Play: bushing-on-bolt radial play; bolt-in-hole radial play (default from the DXF pin hole clearance / 2);
+  eccentric bearing radial internal clearance c_b.
+- ± tolerances (random): disc profile error δp; outer pin true-position error δQ; outer pin diameter
+  tolerance; eccentricity error δe; inner hole position error; inner pin diameter tolerance. Integral ring:
+  the tooth profile error replaces the pin position, diameter and play terms.
+
+Small-displacement model of the disc in the ring at input angle θ (reference geometry: n_i, arm_i):
+- Gap at pin i: g_i = Δrp + bushing play + hole play + random terms (profile error, position error along
+  n_i, radius error, −δe·(n_i·u)).
+- Rotation ψ and translation t (|t| ≤ c_b) change the gap to g_i + n_i·t + arm_i·ψ.
+- **Free rotation (backlash):** the most +ψ and the most −ψ the disc can turn with every gap ≥ 0 (an exact
+  2D convex feasibility in t for each ψ, then bisection), summed. The inner holes add 2·(Δh/2)/(Rw·max_k|t̂_k·u|).
+  - Report: nominal (deterministic terms only), Monte Carlo p50/p95, and the worst-case stack.
+  - The θ sweep covers one pin pitch.
+- **Binding:** worst-case minimum gap = the deterministic gap minus the worst random stack (incl. δe·max|n·u|).
+  If it is < 0, warn, and give the profile clearance needed.
+- **Load sharing (Monte Carlo):** loaded pins (arm > 0) are springs of stiffness k in series: Hertz
+  line-contact secant stiffness at the nominal peak force + pin bending (simply supported over the span; integral:
+  rigid tooth). F_i = k·max(0, arm_i·ψ − g_i); solve Σ F_i·arm_i = T·share for ψ.
+  - Kc = max F_i / max F_i,ideal, where ideal means all gaps are 0, which reproduces the engine's rigid distribution.
+  - Run it at T_des (strength) and T_req (life). Report p50/p95 and offer "use tolerance Kc" (it feeds Kc and KcLife).
+- **Torsional stiffness:** T/ψ at T_req (no gaps), giving the twist under load.
+- **Arm tip effect:** (backlash + twist) × the lever from that joint to the tool tip in the worst pose, per joint
+  and summed over the arm.
+- **Sensitivity:** each tolerance's share of the backlash and of Kc (one-at-a-time variance shares).
+Display only unless "use tolerance Kc" is on; nothing else in the checks changes.
+
 ## UI / UX — "very nice and very user friendly"
 - Clean engineering-tool look: light and dark themes (follow the OS, plus a toggle), one accent
   color, generous spacing, clear typographic hierarchy, cards, no clutter. Responsive down to

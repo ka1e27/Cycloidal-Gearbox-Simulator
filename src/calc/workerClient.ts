@@ -6,6 +6,8 @@ import { adviseDesignAsync, cancelledAdvisorResult, invalidAdvisor, type Advisor
 import { cancelledFixReport, suggestFixesAsync, type FixOptions, type FixProgress, type FixReport } from './fixes';
 import type { WorkerRequest, WorkerResponse } from './messages';
 import { cancelledResult, solveMinimumSizeAsync, type SolverOptions, type SolverProgress, type SolverResult } from './solver';
+import { analyzeToleranceAsync, cancelledToleranceResult, type ToleranceOptions, type ToleranceProgress, type ToleranceResult } from './tolerance';
+import { getToleranceKc } from './toleranceKc';
 import type { GearboxInputs } from './types';
 
 export interface CalcJob<R> {
@@ -32,7 +34,7 @@ const defaultFactory: WorkerFactory = () => {
 };
 
 interface Pending {
-  kind: 'solve' | 'advise' | 'fixes';
+  kind: 'solve' | 'advise' | 'fixes' | 'tolerance';
   resolve: (r: never) => void;
   onProgress?: (p: never) => void;
   target: number;
@@ -84,6 +86,8 @@ export class CalcClient {
       (p.resolve as (r: SolverResult) => void)({ ...cancelledResult(p.Dmax), cancelled: false, errors: [message] });
     } else if (p.kind === 'fixes') {
       (p.resolve as (r: FixReport) => void)({ ...cancelledFixReport(p.target), cancelled: false, errors: [message] });
+    } else if (p.kind === 'tolerance') {
+      (p.resolve as (r: ToleranceResult) => void)({ ...cancelledToleranceResult(), cancelled: false, errors: [message] });
     } else {
       (p.resolve as (r: AdvisorResult) => void)(invalidAdvisor([message], p.target));
     }
@@ -104,7 +108,7 @@ export class CalcClient {
   }
 
   private start<R, P>(
-    kind: 'solve' | 'advise' | 'fixes',
+    kind: 'solve' | 'advise' | 'fixes' | 'tolerance',
     req: (id: number) => WorkerRequest,
     fallback: (hooks: { onProgress?: (p: P) => void; shouldCancel: () => boolean }) => Promise<R>,
     cancelledValue: () => R,
@@ -165,8 +169,11 @@ export class CalcClient {
   }
 
   /** Run the Design Advisor. */
-  advise(inputs: GearboxInputs, options?: AdvisorOptions, onProgress?: (p: AdvisorProgress) => void): CalcJob<AdvisorResult> {
-    const target = options?.target ?? 0.85;
+  advise(inputs: GearboxInputs, optionsIn?: AdvisorOptions, onProgress?: (p: AdvisorProgress) => void): CalcJob<AdvisorResult> {
+    const target = optionsIn?.target ?? 0.85;
+    const options: AdvisorOptions | undefined = inputs.useToleranceKc === true && optionsIn?.toleranceKc === undefined
+      ? { ...optionsIn, toleranceKc: getToleranceKc(inputs) }
+      : optionsIn;
     return this.start<AdvisorResult, AdvisorProgress>(
       'advise',
       (id) => ({ type: 'advise', id, inputs, options }),
@@ -176,15 +183,32 @@ export class CalcClient {
     );
   }
 
-  /** Search single-variable fixes for a design that is not green (src/calc/fixes.ts). */
-  fixes(inputs: GearboxInputs, options?: FixOptions, onProgress?: (p: FixProgress) => void): CalcJob<FixReport> {
-    const target = options?.target ?? 0.85;
+  /**
+   * Search single-variable fixes for a design that is not green (src/calc/fixes.ts). With "use tolerance Kc" on, the
+   * tolerance Kc cached on this thread is sent along (the worker has its own, possibly empty, cache).
+   */
+  fixes(inputs: GearboxInputs, optionsIn?: FixOptions, onProgress?: (p: FixProgress) => void): CalcJob<FixReport> {
+    const target = optionsIn?.target ?? 0.85;
+    const options: FixOptions | undefined = inputs.useToleranceKc === true && optionsIn?.toleranceKc === undefined
+      ? { ...optionsIn, toleranceKc: getToleranceKc(inputs) }
+      : optionsIn;
     return this.start<FixReport, FixProgress>(
       'fixes',
       (id) => ({ type: 'fixes', id, inputs, options }),
       (hooks) => suggestFixesAsync(inputs, options, hooks),
       () => cancelledFixReport(target),
       onProgress, target, 120,
+    );
+  }
+
+  /** Machining tolerance analysis: backlash, binding, Monte Carlo Kc, stiffness, sensitivity (src/calc/tolerance.ts). */
+  tolerance(inputs: GearboxInputs, options?: ToleranceOptions, onProgress?: (p: ToleranceProgress) => void): CalcJob<ToleranceResult> {
+    return this.start<ToleranceResult, ToleranceProgress>(
+      'tolerance',
+      (id) => ({ type: 'tolerance', id, inputs, options }),
+      (hooks) => analyzeToleranceAsync(inputs, options, hooks),
+      () => cancelledToleranceResult(inputs),
+      onProgress, 0.85, 120,
     );
   }
 

@@ -1,6 +1,7 @@
 // Every inspector section body loaded eagerly. The app uses the lazy set (sections.tsx); tests and server rendering use
 // this one, because a lazy body only renders its skeleton until its chunk arrives.
 import type { ComponentType } from 'react';
+import { withTolerance } from '../../calc';
 import { ExportDxfPanel } from '../components/ExportDxfPanel';
 import { slotShort } from '../session';
 import { useStore } from '../store';
@@ -24,9 +25,10 @@ function AdvisorBody({ slot }: SectionCtx) {
   return <AdvisorPanel slot={slot} />;
 }
 function DxfBody({ slot, sm }: SectionCtx) {
-  const { state } = useStore();
+  const { state, updateGearbox } = useStore();
   if (!slot || !sm) return null;
-  return <ExportDxfPanel inputs={sm.deferred} label={slotShort(state.arm, slot)} model={sm.model} />;
+  return <ExportDxfPanel inputs={sm.deferred} label={slotShort(state.arm, slot)} model={sm.model}
+    onTolerance={(p) => updateGearbox(slot, (g) => withTolerance(g, p))} />;
 }
 
 export const EAGER_BODIES: SectionBodies = {
@@ -35,12 +37,14 @@ export const EAGER_BODIES: SectionBodies = {
   loads: LIGHT_BODIES.LoadsBody,
   design: LIGHT_BODIES.DesignBody,
   checks: LIGHT_BODIES.ChecksBody,
+  tolerance: LIGHT_BODIES.ToleranceBody,
   disc: DiscBody,
   solver: SolverBody,
   advisor: AdvisorBody,
   dxf: DxfBody,
   armSettings: LIGHT_BODIES.ArmSettingsBody,
   armTorques: LIGHT_BODIES.ArmTorquesBody,
+  armSlop: LIGHT_BODIES.ArmSlopBody,
 };
 
 export { DiscAndCharts, JointsSummary };

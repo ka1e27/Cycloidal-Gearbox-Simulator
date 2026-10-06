@@ -20,3 +20,5 @@ export * from './summary';
 export * from './messages';
 export { CalcClient, getCalcClient } from './workerClient';
 export type { CalcJob, WorkerLike, WorkerFactory } from './workerClient';
+export * from './tolerance';
+export * from './toleranceKc';

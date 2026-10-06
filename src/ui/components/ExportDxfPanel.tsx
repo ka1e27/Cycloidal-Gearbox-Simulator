@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { GearboxInputs, GearboxModel } from '../../calc';
+import { toleranceOf, type GearboxInputs, type GearboxModel, type ToleranceSpec } from '../../calc';
 import { downloadTextFile } from '../../export/download';
 import {
   DEFAULT_EXPORT_OPTIONS,
@@ -53,17 +53,21 @@ const PART_BLURB: Record<string, string> = {
  *
  * - `label` appears in file names and on the drawing notes (e.g. "J3"); it defaults to "custom".
  * - `model` is optional: pass an already-built `createGearboxModel(inputs)` to skip rebuilding it.
+ * - The profile, inner hole and pin hole clearances are gearbox inputs (Tolerances & backlash, one source of truth):
+ *   `onTolerance` edits them from here; without it (the advisor's design) they are shown read-only.
  */
 export function ExportDxfPanel({
   inputs,
   label = 'custom',
   model,
   title = 'Export DXF',
+  onTolerance,
 }: {
   inputs: GearboxInputs;
   label?: string;
   model?: GearboxModel;
   title?: string;
+  onTolerance?: (patch: Partial<ToleranceSpec>) => void;
 }) {
   const { u, notify } = useStore();
   const appUnit = u.prefs.length;
@@ -98,7 +102,11 @@ export function ExportDxfPanel({
     }
   };
 
-  const modified = JSON.stringify({ ...opts, units: 0 }) !== JSON.stringify({ ...DEFAULT_EXPORT_OPTIONS, units: 0 });
+  // the clearances that live in the gearbox inputs are not DXF options (stored values of them are ignored)
+  const own = (o: ExportOptions) => ({ ...o, units: 0, profileClearance: 0, pinHoleClearance: 0 });
+  const modified = JSON.stringify(own(opts)) !== JSON.stringify(own({ ...DEFAULT_EXPORT_OPTIONS }));
+  const tol = toleranceOf(inputs);
+  const linked = 'Same value as in Tolerances & backlash';
   const info = res.info;
   const disabled = !res.ok || hasFieldErrors;
   const byId = (id: string): PartDrawing | undefined => res.parts.find((p) => p.id === id);
@@ -179,7 +187,7 @@ export function ExportDxfPanel({
 
       {res.ok && info && (
         <p className="dxf-facts">
-          Disc outline: {info.pointCount} points ({info.pointsPerLobe} per lobe), chord error {u.fu('length', info.chordError, { dp: 3 })}, offset {u.fu('length', info.profileOffset, { dp: 3 })} from the pin-centre path.
+          Disc outline: {info.pointCount} points ({info.pointsPerLobe} per lobe), chord error {u.fu('length', info.chordError, { dp: 3 })}, offset {u.fu('length', info.profileOffset, { dp: u.prefs.length === 'in' ? 2 : 3 })} from the pin-centre path.
         </p>
       )}
 
@@ -196,13 +204,23 @@ export function ExportDxfPanel({
           label="Profile clearance"
           symbol="c"
           quantity="length"
-          value={opts.profileClearance}
-          onChange={(v) => patch({ profileClearance: v ?? 0 })}
-          defaultValue={DEFAULT_EXPORT_OPTIONS.profileClearance}
-          step={0.01}
+          value={tol.profileClearance}
+          onChange={(v) => onTolerance?.({ profileClearance: v ?? 0 })}
+          step={0.005}
           help={DXF_HELP.profileClearance}
-          error={fieldErrors.profileClearance}
-          note="Positive shrinks the disc (offset = rr + c)"
+          disabled={!onTolerance}
+          error={tol.profileClearance < 0 ? 'Enter a clearance of 0 or more' : undefined}
+          note={`Positive shrinks the disc (offset = rr + c). ${linked}`}
+        />
+        <NumberField
+          label="Inner hole clearance"
+          quantity="length"
+          value={tol.innerHoleClearance}
+          onChange={(v) => onTolerance?.({ innerHoleClearance: v ?? 0 })}
+          step={0.005}
+          help={DXF_HELP.innerHoleClearance}
+          disabled={!onTolerance}
+          note={`Diametral, on the ${inputs.Zw} inner pin holes. ${linked}`}
         />
         <FieldRow label="Outline resolution" help={DXF_HELP.resolution} stacked>
           <Segmented
@@ -238,7 +256,7 @@ export function ExportDxfPanel({
           />
         )}
         <NumberField
-          label="Disc bore and hole clearance"
+          label="Disc bore clearance"
           quantity="length"
           value={opts.discHoleClearance}
           onChange={(v) => patch({ discHoleClearance: v ?? 0 })}
@@ -250,12 +268,12 @@ export function ExportDxfPanel({
         <NumberField
           label="Pin hole clearance"
           quantity="length"
-          value={opts.pinHoleClearance}
-          onChange={(v) => patch({ pinHoleClearance: v ?? 0 })}
-          defaultValue={DEFAULT_EXPORT_OPTIONS.pinHoleClearance}
-          step={0.05}
+          value={2 * tol.holePlay}
+          onChange={(v) => onTolerance?.({ holePlay: (v ?? 0) / 2 })}
+          step={0.01}
           help={DXF_HELP.pinHoleClearance}
-          error={fieldErrors.pinHoleClearance}
+          disabled={!onTolerance}
+          note={`Diametral = 2 × the bolt hole play (${tol.holePlay.toFixed(3)} mm radial). ${linked}`}
         />
         <NumberField
           label="Cam shaft diameter"

@@ -1,6 +1,7 @@
 // Shared types for the calculation engine. Units: mm, N, N*m, MPa, g (masses in arm model), deg where named.
 
 import type { InnerPinSpec, MaterialProps, OuterPinSpec } from './materials';
+import type { ResolvedKc } from './toleranceKc';
 
 export interface BearingSpec {
   /** Display name, e.g. "61800" */
@@ -69,6 +70,55 @@ export interface GearboxInputs {
   rpm: number;
   /** Required bearing life, h */
   reqLifeH: number;
+
+  // Machining tolerances (CLAUDE.md Addition 13)
+  /** Clearances, plays and +- tolerances. Missing (older sessions) = the CNC mill preset with profile clearance 0. */
+  tolerance?: ToleranceSpec;
+  /**
+   * Use the p95 Kc / Kc_life of the tolerance Monte Carlo in the checks instead of the typed Kc / KcLife. The value comes
+   * from a cache the UI fills from the worker (see toleranceKc.ts); until it is there the typed values are used.
+   */
+  useToleranceKc?: boolean;
+}
+
+/**
+ * Machining tolerances of one gearbox, mm. Clearances are deliberate; plays are one-sided (they only add room);
+ * the +- values are random errors. See src/calc/tolerance.ts for the model.
+ */
+export interface ToleranceSpec {
+  /** Disc profile equidistant shrink, mm (the DXF uses the same value) */
+  profileClearance: number;
+  /** Inner hole clearance, diametral, mm, added to 2 rw + 2 e (the DXF uses the same value) */
+  innerHoleClearance: number;
+  /** Bushing on bolt, radial play, mm */
+  bushingPlay: number;
+  /** Bolt in the plate hole, radial play, mm (the DXF pin hole clearance is twice this) */
+  holePlay: number;
+  /** Eccentric bearing radial internal clearance, mm */
+  bearingClearance: number;
+  /** Disc profile error, +- mm (integral ring: also the tooth profile error) */
+  profileError: number;
+  /** Outer pin true-position error, radius of the zone, mm */
+  pinPosition: number;
+  /** Outer pin (bushing) diameter tolerance, +- mm */
+  pinDiaTol: number;
+  /** Eccentricity error, +- mm */
+  eccError: number;
+  /** Inner hole position error, radius of the zone, mm */
+  innerHolePosition: number;
+  /** Inner pin diameter tolerance, +- mm */
+  innerPinDiaTol: number;
+  /** Monte Carlo trials (default 400) */
+  mcTrials: number;
+  /** Random seed (results are deterministic for a seed) */
+  seed: number;
+  /**
+   * How the process presets fit the clearances: 'worst' = the worst-case stack (no build can bind, the default);
+   * 'statistical' = the smallest clearances whose Monte Carlo binding probability is <= bindTarget.
+   */
+  fitMode: 'worst' | 'statistical';
+  /** Accepted binding probability for the statistical fit, 0.001..0.2 (default 0.01) */
+  bindTarget: number;
 }
 
 /** Inner pin end support for the bending check (see GearboxInputs.innerPinSupport). */
@@ -276,6 +326,8 @@ export interface GearboxResult {
   sweep: SweepData;
   /** Resolution used */
   resolution: { npf: number; nth: number };
+  /** The load concentration factors the checks used and where they came from (typed, or the tolerance analysis) */
+  kc: ResolvedKc;
 }
 
 export interface ResolutionOptions {
@@ -283,6 +335,8 @@ export interface ResolutionOptions {
   npf?: number;
   /** Input-angle steps (SPEC default 240) */
   nth?: number;
+  /** Tolerance Kc to use when `useToleranceKc` is on (wins over the cache; e.g. sent along with a worker job) */
+  toleranceKc?: { Kc: number; KcLife: number } | null;
 }
 
 export interface DiscPin {

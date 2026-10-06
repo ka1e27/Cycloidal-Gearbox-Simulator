@@ -4,6 +4,7 @@ import { adviseDesignAsync } from './advisor';
 import { suggestFixesAsync } from './fixes';
 import type { WorkerRequest, WorkerResponse } from './messages';
 import { solveMinimumSizeAsync } from './solver';
+import { analyzeToleranceAsync } from './tolerance';
 
 export interface WorkerHost {
   post(msg: WorkerResponse): void;
@@ -40,6 +41,12 @@ export function createWorkerHandler(host: WorkerHost) {
           shouldCancel: () => cancelled.has(id),
         });
         host.post({ type: 'result', id, kind: 'fixes', result });
+      } else if (msg.type === 'tolerance') {
+        const result = await analyzeToleranceAsync(msg.inputs, msg.options, {
+          onProgress: (progress) => host.post({ type: 'progress', id, kind: 'tolerance', progress }),
+          shouldCancel: () => cancelled.has(id),
+        });
+        host.post({ type: 'result', id, kind: 'tolerance', result });
       }
     } catch (err) {
       host.post({ type: 'error', id, message: err instanceof Error ? err.message : String(err) });

@@ -4,6 +4,7 @@
 import { useDeferredValue, useMemo } from 'react';
 import type { GearboxInputs, GearboxModel } from '../../calc';
 import { useEffectiveInputs } from '../store';
+import { useToleranceVersion } from '../tolerance';
 import type { Slot } from '../session';
 import { modelFor } from '../workbench/status';
 
@@ -21,6 +22,8 @@ export interface SlotModel {
 export function useSlotModel(slot: Slot): SlotModel {
   const eff = useEffectiveInputs(slot);
   const deferred = useDeferredValue(eff);
-  const model = useMemo(() => modelFor(deferred), [deferred]);
+  const tv = useToleranceVersion();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const model = useMemo(() => modelFor(deferred), [deferred, deferred.useToleranceKc ? tv : 0]);
   return { eff, deferred, model, pending: deferred !== eff };
 }

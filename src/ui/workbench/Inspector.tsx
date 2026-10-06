@@ -117,7 +117,10 @@ function InspectorFrame({ ctx, sections, bodies, header, badge }: {
   // fix counts: Gearbox design holds every field a fix changes; Motor & ratio holds the recommended-ratio fix
   const fx = useFixes(ctx.slot);
   const fixList = fx.report?.fixes ?? [];
-  const fixesIn = (id: SectionId): Fix[] => (id === 'design' ? fixList : id === 'motor' ? fixList.filter((f) => f.field === 'Zp') : []);
+  // a tighter machining process (tolerance Kc on) lives in Tolerances & backlash
+  const fixesIn = (id: SectionId): Fix[] => (id === 'design' ? fixList.filter((f) => f.field !== 'tolerance')
+    : id === 'motor' ? fixList.filter((f) => f.field === 'Zp')
+      : id === 'tolerance' ? fixList.filter((f) => f.field === 'tolerance') : []);
 
   // bring a requested section into view and focus its header (openSection from a chip, a link or another panel)
   // (module-level, so a request that also changed the selection is handled by the newly mounted inspector)

@@ -1,0 +1,26 @@
+/* Tolerances & backlash section and the Arm item's tip slop card (CLAUDE.md Addition 13). */
+.tol-body { display: grid; gap: 4px; }
+.tol-body.is-pending .tol-results .dtable { opacity: 0.6; transition: opacity 0.2s var(--ease); }
+.tol-results { display: grid; gap: 6px; padding: 8px 0 4px; border-bottom: 1px solid var(--rule); margin-bottom: 4px; }
+.tol-results .notice p { margin: 0; }
+.tol-updating { display: grid; gap: 4px; font-size: 12px; }
+.tol-ok { margin: 0; font-size: 13px; color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tol-tip { color: var(--ink-2); font-size: 12px; }
+.tol-note { font-size: 12px; line-height: 1.45; margin: 2px 0; }
+.tol-sens { display: grid; gap: 4px; margin: 6px 0 10px; }
+.tol-sens-h { font-size: 12px; font-weight: 600; }
+.tol-sens ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.tol-sens li { display: grid; grid-template-columns: minmax(96px, 9.5em) 1fr auto; gap: 8px; align-items: center; font-size: 12px; }
+.tol-sens-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tol-sens-bar { height: 8px; background: var(--sunken); border: 1px solid var(--rule); position: relative; min-width: 40px; }
+.tol-sens-bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); }
+.tol-sens-v { font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+.tol-arm { display: grid; gap: 8px; }
+.tol-arm-table { width: 100%; font-size: 12.5px; }
+.tol-arm-table td, .tol-arm-table th { padding: 4px 6px; text-align: left; }
+.tol-arm-table td:not(:first-child) { font-family: var(--font-mono); }
+@media (max-width: 480px) {
+  .tol-sens li { grid-template-columns: 1fr 1fr; }
+  .tol-sens-v { grid-column: 1 / -1; }
+}
+.tol-fit { display: block; margin-top: 4px; font-size: 12px; line-height: 1.45; }

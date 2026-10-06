@@ -2,7 +2,7 @@
 // or the servo check, or a motor warning when that is worse. Pure TypeScript; the gearbox models are cached by inputs so
 // the rail, the inspector and the stage share one computation per design.
 import {
-  analyzeJointMotor, createGearboxModel, type ArmJoint, type ArmResult, type GearboxInputs, type GearboxModel,
+  analyzeJointMotor, createGearboxModel, kcTag, type ArmJoint, type ArmResult, type GearboxInputs, type GearboxModel,
 } from '../../calc';
 import { motorChip } from '../motorUi';
 import { plainName } from '../plain';
@@ -12,9 +12,12 @@ import type { StatusKind } from '../components/primitives';
 const CACHE_MAX = 24;
 const cache = new Map<string, GearboxModel>();
 
-/** The gearbox model (full SPEC resolution) of a set of inputs, cached by value. */
+/**
+ * The gearbox model (full SPEC resolution) of a set of inputs, cached by value. With "use tolerance Kc" on, the key also
+ * holds the cached tolerance factors, so a model is rebuilt when they arrive.
+ */
 export function modelFor(inputs: GearboxInputs): GearboxModel {
-  const key = JSON.stringify(inputs);
+  const key = JSON.stringify(inputs) + kcTag(inputs);
   const hit = cache.get(key);
   if (hit) {
     cache.delete(key);

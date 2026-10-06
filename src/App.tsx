@@ -4,6 +4,7 @@ import { Header } from './ui/components/Header';
 import { Toasts } from './ui/components/Toasts';
 import { StoreProvider } from './ui/store';
 import { FixesProvider } from './ui/fixes';
+import { ToleranceProvider } from './ui/tolerance';
 import { Workbench } from './ui/workbench/Workbench';
 import './styles/workbench.css';
 
@@ -21,6 +22,7 @@ export function ScreenLoading() {
 export default function App() {
   return (
     <StoreProvider>
+      <ToleranceProvider>
       <FixesProvider>
       <div className="app-shell">
         <a className="skip-link" href="#main">Skip to the stage</a>
@@ -32,6 +34,7 @@ export default function App() {
       <AssumptionsPanel />
       <Toasts />
       </FixesProvider>
+      </ToleranceProvider>
     </StoreProvider>
   );
 }

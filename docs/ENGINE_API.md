@@ -593,3 +593,68 @@ and is exported, but `computeArm` ignores it: the checks keep the worst case. Th
 `validateJointLimits(min, max) -> string | null` and `normalizeJointLimits(raw)` (a bad pair or the full range gives undefined; `normalizeArmInputs` uses it),
 plus `jointLimits(j)`, `hasLimits(j)`, `clampAngle(j, deg)` (a limited joint clamps, a full-range joint wraps) and
 `clampPose(joints, angles) -> { angles, clamped: indices }`. `randomPose` always lands inside the limits.
+
+## 13. Machining tolerances, backlash and load sharing (`tolerance.ts`, `toleranceKc.ts`, CLAUDE.md Addition 13)
+
+Inputs: `GearboxInputs.tolerance?: ToleranceSpec` (all mm: `profileClearance`, `innerHoleClearance` (diametral), `bushingPlay`,
+`holePlay` (radial), `bearingClearance`, `profileError` (±), `pinPosition` (true-position radius), `pinDiaTol` (±), `eccError` (±),
+`innerHolePosition`, `innerPinDiaTol` (±), plus `mcTrials` (400) and `seed` (1)) and `useToleranceKc?: boolean`. A missing spec is
+`defaultToleranceSpec(integral)` = the CNC mill preset with fitted clearances (0.155 / 0.070 mm with plain clearance holes; an integral
+ring 0.050 / 0.070). The bushing play is a one-sided gap; the hole play is a two-sided position error (a clamped bolt anywhere in its
+hole), added to the true-position vector. `normalizeGearboxInputs` keeps a present spec (normalized
+with `normalizeToleranceSpec`) and the switch, and leaves a missing spec missing. `toleranceOf(inputs)` is the spec in effect;
+`validateToleranceSpec(spec)` gives per-field messages (0..5 mm, trials 20..5000). The main checks never read the spec.
+
+Presets: `PROCESS_PRESETS` (`waterjet`, `laser`, `router`, `mill`, `edm`, `fdm`, `sls`; the table of the brief), `PRESET_COMMON`,
+`processSpec(id, { integral?, holePlay?, keep? })` (clearances fitted: `fittedClearances(spec, integral)` = `toleranceStacks` rounded up to
+0.005 mm, profile stack dp + dQ + holePlay + pinDiaTol/2 + de (integral 2 dp + de), inner 2 (dh_pos + tol/2 + de)), `matchProcess(spec,
+integral?)` (process fields and the fitted clearances for the spec's hole play; an edited clearance = custom),
+`tighterProcesses(spec)` (nearest first, by `processLooseness`). `REAMED_HOLE_PLAY` 0.005, `DRILLED_HOLE_PLAY` 0.1.
+
+**DXF (one source of truth).** `buildParts` takes the profile clearance from `tolerance.profileClearance`, the plate pin-hole and bushing
+bore clearance from `2 * tolerance.holePlay`, and the Zw disc holes from `dh + tolerance.innerHoleClearance` (`dxfClearancesOf`).
+`ExportOptions.profileClearance` / `pinHoleClearance` are ignored (kept for stored options); `discHoleClearance` now widens the centre
+bore only. The UI moves old stored DXF values into gearboxes without a spec once (`migrateDxfTolerance` in `src/ui/session.ts`).
+
+```ts
+analyzeTolerance(inputs, opts?: ToleranceOptions, hooks?): ToleranceResult        // sync, never throws (20-90 ms at 400 trials)
+analyzeToleranceAsync(inputs, opts?, hooks?): Promise<ToleranceResult>
+getCalcClient().tolerance(inputs, opts, onProgress): CalcJob<ToleranceResult>      // worker message type 'tolerance'
+```
+
+`ToleranceOptions`: `trials`, `seed` (default: the spec's), `nBacklash` (24 per pitch), `nKc` (8), `sensitivity` (true),
+`sensitivityTrials` (100). `ToleranceResult`: `valid`, `cancelled`, `errors`, `warnings`, `spec`, `integral`, `trials`, `seed`,
+`freeBuilds` (builds that fit and turn at every sample; the statistics use only these), `bindProb`, `statsShown` (at least min(50, trials)
+free builds, else the statistics are NaN), `backlash { design (no errors, bushing play/2, hole play 0), worst (full play, every term
+widening each pin: an upper bound of every build, so p50 <= p95 <= worst): {total, ring, inner, arcmin}, mc, mcArcmin: {p50, p95, mean} }`
+(rad; design <= p50 is not guaranteed, random errors usually take play away), `binding { minGapWorst, requiredProfileClearance, suggestedProfileClearance,
+binds, interferenceProb, innerMinGapWorst, requiredInnerHoleClearance, suggestedInnerHoleClearance, innerBinds, innerInterferenceProb }`,
+`kc { designStrength, designLife, strength, life: {p50, p95, mean}, typedKc, typedKcLife }`, `stiffness { strength, life: PinStiffness,
+Funit, kappaA, sumArm2, share, Kt_Nm_per_rad, Kt_Nm_per_arcmin, twistReq, twistReq_arcmin }`, `sensitivity { backlash, kc:
+{term, label, value, share}[] } | null`.
+
+The model (gaps, the exact 2D free-rotation test, inner holes, worst case, binding stack, load sharing, Hertz + bending spring,
+stiffness, sensitivity) is written out at the top of `tolerance.ts`. Building blocks, all exported and pure:
+`toleranceGeometryAt`, `feasibleTranslation`, `freeRotation`, `innerFreeRotation`, `loadShare`, `hertzLineApproach`, `pinStiffness`,
+`governingContact`, `makeRng`, `quantile`, `armTipLevers(arm)` (mm per joint, worst-case pose), `armTipSlop(levers, perJoint)`.
+
+**Tolerance Kc in the checks** (as built, before run-in, an upper bound: only the outer pins give way). With `useToleranceKc` on, `checkGearbox` / `createGearboxModel` use the cached p95 strength / life Kc
+(`setToleranceKc(inputs, {Kc, KcLife})`, keyed by `toleranceKey(inputs)` = every input except Kc, Kc_life and the switch), or an
+explicit `opts.toleranceKc`; until a value is cached the typed ones are used. `GearboxResult.kc = { source: 'typed' | 'tolerance' |
+'pending', Kc, KcLife, typedKc, typedKcLife }` says which. `resolveKc`, `withResolvedKc`, `kcTag` (cache-key suffix for UI memos).
+The fix engine and the advisor hold the resolved factors fixed during their searches (the worker client sends the main thread's cached
+value as `FixOptions.toleranceKc` / `AdvisorOptions.toleranceKc`); advisor designs come back with the typed factors and the switch.
+With the switch on, `suggestFixes` adds field `'tolerance'` ("Process → CNC mill"): the tighter presets, nearest first, each with its
+own Monte Carlo Kc (`processTrials`, default 200), keeping the user's hole play.
+
+**Statistical clearance fit.** `ToleranceSpec.fitMode: 'worst' | 'statistical'` (default and old specs: 'worst') and `bindTarget`
+(0.001..0.2, default 0.01). `statisticalFitFor(inputs, spec)` returns the smallest profile / inner hole clearances on the 0.005 mm grid
+whose Monte Carlo binding probability (ring / inner holes separately) is <= bindTarget, never above the worst-case fit: the builds are
+drawn exactly as the analysis draws them (common random numbers: same seed and order of draws; a clearance only adds to every gap), per
+build the smallest clearance that fits at all theta samples is found (inner holes exact; ring bisected to 1e-7 mm with
+`feasibleTranslation`), and the fitted value is the smallest grid point at most floor(target x trials) builds exceed. So it is
+deterministic, monotone in the target, and the analysis at the fitted value reports a probability <= target. About 25-45 ms at 400
+trials. `fitClearances(inputs, spec)` applies the spec's mode; `ToleranceResult.fit = { worst, statistical }` (the analysis also runs
+the statistical fit for the current process values, in the worker). `matchProcess(spec, integral, statFit)` compares against the
+statistical values in that mode. The UI computes `fitClearances` synchronously when a preset, the mode, the target or the hole fit
+is changed (one click, 25-45 ms); everything else runs in the worker.

@@ -31,6 +31,7 @@ import {
   toothRootStress,
 } from './integral';
 import { DEFAULT_INNER_PIN_SUPPORT, INNER_PIN_SUPPORTS } from './types';
+import { resolveKc, type ResolvedKc } from './toleranceKc';
 import type {
   Check,
   CheckId,
@@ -448,7 +449,12 @@ function nanGeometry(): DerivedGeometry {
   };
 }
 
-function invalidResult(errors: string[], warnings: string[], derived?: DerivedGeometry, res?: { npf: number; nth: number }): GearboxResult {
+function typedKc(inp: GearboxInputs | undefined): ResolvedKc {
+  const Kc = inp && fin(inp.Kc) ? inp.Kc : NaN, KcLife = inp && fin(inp.KcLife) ? inp.KcLife : NaN;
+  return { source: 'typed', Kc, KcLife, typedKc: Kc, typedKcLife: KcLife };
+}
+
+function invalidResult(errors: string[], warnings: string[], derived?: DerivedGeometry, res?: { npf: number; nth: number }, kc?: ResolvedKc): GearboxResult {
   const n = NaN;
   return {
     valid: false,
@@ -473,6 +479,7 @@ function invalidResult(errors: string[], warnings: string[], derived?: DerivedGe
     mass: { netAreaMm2: n, perDisc_g: n, total_g: n },
     sweep: { thetaDeg: [], p0Strength: [], p0Life: [], FPeak: [], bearingLoad: [], limitStrength: n, limitLife: n },
     resolution: res ?? { npf: DEFAULT_NPF, nth: DEFAULT_NTH },
+    kc: kc ?? typedKc(undefined),
   };
 }
 
@@ -493,6 +500,17 @@ export function estimateMass(inp: GearboxInputs, g: DerivedGeometry, profileArea
 // Main entry points
 // ---------------------------------------------------------------------------
 
+/** The inputs with the load concentration factors in effect (typed, or the cached tolerance p95 values). */
+function withKc(inputs: GearboxInputs, opts?: ResolutionOptions): { inp: GearboxInputs; kc: ResolvedKc } {
+  let kc: ResolvedKc;
+  try {
+    kc = resolveKc(inputs, opts?.toleranceKc);
+  } catch {
+    kc = typedKc(inputs);
+  }
+  return { inp: kc.source === 'tolerance' ? { ...inputs, Kc: kc.Kc, KcLife: kc.KcLife } : inputs, kc };
+}
+
 function resolveRes(opts?: ResolutionOptions): { npf: number; nth: number } {
   const npf = opts?.npf != null && Number.isFinite(opts.npf) ? Math.max(200, Math.floor(opts.npf)) : DEFAULT_NPF;
   const nth = opts?.nth != null && Number.isFinite(opts.nth) ? Math.max(12, Math.floor(opts.nth)) : DEFAULT_NTH;
@@ -500,15 +518,16 @@ function resolveRes(opts?: ResolutionOptions): { npf: number; nth: number } {
 }
 
 /** Run the full SPEC.md check. Never throws: bad input gives `valid: false` with `errors`. */
-export function checkGearbox(inputs: GearboxInputs, opts?: ResolutionOptions): GearboxResult {
+export function checkGearbox(inputsIn: GearboxInputs, opts?: ResolutionOptions): GearboxResult {
   const res = resolveRes(opts);
   try {
+    const { inp: inputs, kc } = withKc(inputsIn, opts);
     const v = validateGearboxInputs(inputs);
     if (v.errors.length) {
       const g = safeDerived(inputs);
-      return invalidResult(v.errors, v.warnings, g, res);
+      return invalidResult(v.errors, v.warnings, g, res, kc);
     }
-    return analyze(inputs, res, v.warnings).result;
+    return analyze(inputs, res, v.warnings, kc).result;
   } catch (err) {
     return invalidResult([`Calculation failed: ${err instanceof Error ? err.message : String(err)}`], [], undefined, res);
   }
@@ -530,7 +549,7 @@ interface Analysis {
   npf: number;
 }
 
-function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings: string[]): Analysis {
+function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings: string[], kc: ResolvedKc): Analysis {
   const { npf, nth } = res;
   const integralRing = inp.outerPin.construction === 'integral';
   // integral ring: the disc's swept envelope (reference theta sweep) gives the exact reach and the fillet clearance
@@ -617,7 +636,7 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
   if (Number.isNaN(loads.L10h)) errors.push('bearing life result is not a number');
   if (errors.length) {
     return {
-      result: invalidResult(errors, allWarn, g, res),
+      result: invalidResult(errors, allWarn, g, res, kc),
       Rp: g.Rp, kappaA: prof.kappaA, npf,
     };
   }
@@ -643,6 +662,7 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
     mass,
     sweep,
     resolution: res,
+    kc,
   };
   return { result, Rp: g.Rp, kappaA: prof.kappaA, npf };
 }
@@ -655,16 +675,18 @@ function analyze(inp: GearboxInputs, res: { npf: number; nth: number }, warnings
  * Check plus everything the UI needs for the theta slider: per-pin forces, drawing geometry,
  * profile points. Build once per input change and call pinsAt/drawingAt as the slider moves.
  */
-export function createGearboxModel(inputs: GearboxInputs, opts?: ResolutionOptions): GearboxModel {
+export function createGearboxModel(inputsIn: GearboxInputs, opts?: ResolutionOptions): GearboxModel {
   const res = resolveRes(opts);
   let analysis: Analysis | null = null;
   let result: GearboxResult;
+  // the per-pin forces use the factors in effect, like the checks
+  const { inp: inputs, kc } = withKc(inputsIn, opts);
   try {
     const v = validateGearboxInputs(inputs);
     if (v.errors.length) {
-      result = invalidResult(v.errors, v.warnings, safeDerived(inputs), res);
+      result = invalidResult(v.errors, v.warnings, safeDerived(inputs), res, kc);
     } else {
-      analysis = analyze(inputs, res, v.warnings);
+      analysis = analyze(inputs, res, v.warnings, kc);
       result = analysis.result;
       if (!result.valid) analysis = null;
     }
@@ -753,7 +775,7 @@ export function createGearboxModel(inputs: GearboxInputs, opts?: ResolutionOptio
   }
 
   return {
-    inputs,
+    inputs: inputsIn,
     result,
     pinsAt,
     drawingAt,
