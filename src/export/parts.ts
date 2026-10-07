@@ -17,6 +17,10 @@ import {
   createGearboxModel,
   dxfClearancesOf,
   REAMED_HOLE_PLAY,
+  STANDOFF_MATERIAL_LABEL,
+  outerStandoffBore,
+  outerStandoffFor,
+  outerStandoffSpecOf,
   shoulderBoltFor,
   ringProfile,
   type GearboxInputs,
@@ -81,6 +85,11 @@ export interface ExportOptions {
   housingHoleCount: number;
   /** Integral ring housing: mounting hole diameter, mm. Default 3.4 (M3 clearance). */
   housingHoleDia: number;
+  /**
+   * Outer standoffs located in pockets: pocket depth in each plate, mm (a note on the drawing). null = 1.5 mm, or 1/16"
+   * (1.5875 mm) when the file is in inches.
+   */
+  standoffPocketDepth: number | null;
 }
 
 export const DEFAULT_EXPORT_OPTIONS: Readonly<ExportOptions> = Object.freeze({
@@ -99,7 +108,13 @@ export const DEFAULT_EXPORT_OPTIONS: Readonly<ExportOptions> = Object.freeze({
   outputCentreDia: 10,
   housingHoleCount: 6,
   housingHoleDia: 3.4,
+  standoffPocketDepth: null,
 });
+
+/** Default standoff pocket depth: 1.5 mm, or 1/16" in an inch file. */
+export function defaultPocketDepth(units: DxfUnits): number {
+  return units === 'in' ? 25.4 / 16 : 1.5;
+}
 
 /** Margin of plate material around the inner pin holes for the default output plate outline, mm (each side). */
 export const OUTPUT_PLATE_MARGIN = 4;
@@ -120,6 +135,7 @@ export function normalizeExportOptions(raw: unknown): ExportOptions {
   if (r.pointsPerLobe === null || isNum(r.pointsPerLobe)) d.pointsPerLobe = r.pointsPerLobe as number | null;
   if (r.bearingBore === null || isNum(r.bearingBore)) d.bearingBore = r.bearingBore as number | null;
   if (r.plateOutlineDia === null || isNum(r.plateOutlineDia)) d.plateOutlineDia = r.plateOutlineDia as number | null;
+  if (r.standoffPocketDepth === null || isNum(r.standoffPocketDepth)) d.standoffPocketDepth = r.standoffPocketDepth as number | null;
   bool('housingCentreHole');
   bool('outputCentreHole');
   return d;
@@ -145,6 +161,7 @@ export function validateExportOptions(o: ExportOptions): Partial<Record<keyof Ex
   if (o.outputCentreHole && (!isNum(o.outputCentreDia) || o.outputCentreDia <= 0 || o.outputCentreDia > L.maxDia)) e.outputCentreDia = 'Centre hole diameter must be greater than 0';
   if (!isNum(o.housingHoleCount) || !Number.isInteger(o.housingHoleCount) || o.housingHoleCount < 0 || o.housingHoleCount > 64) e.housingHoleCount = 'Mounting holes must be a whole number from 0 to 64';
   if (!isNum(o.housingHoleDia) || o.housingHoleDia <= 0 || o.housingHoleDia > L.maxDia) e.housingHoleDia = 'Mounting hole diameter must be greater than 0';
+  if (o.standoffPocketDepth !== null && (!isNum(o.standoffPocketDepth) || o.standoffPocketDepth <= 0 || o.standoffPocketDepth > 100)) e.standoffPocketDepth = 'Pocket depth must be greater than 0 (at most 100 mm)';
   return e;
 }
 
@@ -582,6 +599,44 @@ export function buildParts(
         o.housingCentreHole ? `Centre hole dia ${fix(o.housingCentreDia)}` : 'No centre hole',
       ]);
       parts.push(b.finish('housing', 2));
+    } else if (inputs.outerPin.construction === 'standoff') {
+      // round female-female standoffs: both plates alike, the ends in milled pockets (or only screwed on), a screw from each side
+      const b = new PartBuilder('HOUSING');
+      const so = outerStandoffFor(rr, inputs.outerPin.standoffId);
+      const pockets = outerStandoffSpecOf(inputs.outerPin).pocketLocated;
+      const od = 2 * rr;
+      const pocketD = od + o.pinHoleClearance;
+      const clrD = so ? so.clearanceHole : null;
+      const thread = so ? so.thread : 'the standoff thread';
+      const depth = o.standoffPocketDepth ?? defaultPocketDepth(o.units);
+      const depthText = o.units === 'in' ? `${fix(depth, 3)} mm (${trimNum(depth / 25.4, 4)} in)` : `${fix(depth, 2)} mm`;
+      const R = d.housingOD / 2;
+      b.circle(0, 0, R);
+      if (pockets) ringOfCircles(b, Zp, Rp, pocketD);
+      if (clrD != null) ringOfCircles(b, Zp, Rp, clrD);
+      if (o.housingCentreHole) b.circle(0, 0, o.housingCentreDia / 2);
+      const outerD = pockets ? pocketD : clrD ?? od;
+      b.summary.push(`Outline: circle dia ${fix(d.housingOD)} mm (D + 2*rr + 2*wall), make 2 (both plates alike)`);
+      if (pockets) b.summary.push(`${Zp} pockets: dia ${fix(pocketD, 3)} mm (standoff OD ${fix(od, 3)} + ${fix(o.pinHoleClearance, 3)}), ${depthText} deep, on dia ${fix(inputs.D)} mm`);
+      b.summary.push(clrD != null
+        ? `${Zp} ${thread} screw clearance holes: dia ${fix(clrD, 3)} mm through${pockets ? ', in the pocket centres' : ''}, on dia ${fix(inputs.D)} mm`
+        : 'No screw clearance holes drawn (the standoff is not a catalog size, so the thread is unknown)');
+      if (o.housingCentreHole) b.summary.push(`Centre hole: dia ${fix(o.housingCentreDia)} mm`);
+      if (!so) b.warnings.push(`Housing plate: a ${fix(od, 3)} mm standoff is not a catalog round standoff, so no screw holes are drawn. Pick a standoff size.`);
+      if (R < Rp + outerD / 2 + 0.5) b.warnings.push('Housing plate: the outline leaves under 0.5 mm of material outside the standoff holes. Increase the wall.');
+      if (o.housingCentreHole && o.housingCentreDia / 2 > Rp - outerD / 2 - 0.5) b.warnings.push('Housing plate: the centre hole runs into the standoff holes. Make it smaller.');
+      b.notes([
+        `${PART_META.housing.title.toUpperCase()}  ${label}  make 2 (standoffs span two plates, both alike)`,
+        `Outline dia ${fix(d.housingOD)} = D ${fix(inputs.D)} + 2*rr ${fix(rr, 3)} + 2*wall ${fix(inputs.wall)}`,
+        pockets
+          ? `${Zp} pockets dia ${fix(pocketD, 3)} x ${depthText} deep on D ${fix(inputs.D)} (standoff OD ${fix(od, 3)} + ${fix(o.pinHoleClearance, 3)}), mill to fit`
+          : `${Zp} standoffs screwed on through clearance holes (no pockets): hole play sets the pin position`,
+        clrD != null ? `${Zp} clearance holes dia ${fix(clrD, 3)} through for ${thread} screws${pockets ? ' (pocket centres)' : ''}` : 'Screw holes: pick a catalog standoff',
+        'Standoff length sets plate spacing (±0.1 mm typical); check the axial gaps or set spacing with the housing ring',
+        'Round standoffs only, not hex (the disc slides on the round OD)',
+        o.housingCentreHole ? `Centre hole dia ${fix(o.housingCentreDia)}` : 'No centre hole',
+      ]);
+      parts.push(b.finish('housing', 2));
     } else {
       const b = new PartBuilder('HOUSING');
       const outer = inputs.outerPin.construction === 'boltBushing';
@@ -680,6 +735,11 @@ export function buildParts(
         const sb = shoulderBoltFor(rr);
         const band = sb ? ` (${fix(2 * rr + sb.lower, 3)} to ${fix(2 * rr + sb.upper, 3)})` : '';
         items.push({ tag: '1', od: 2 * rr, id: null, text: `1  Shoulder bolt: shoulder dia ${fix(2 * rr, 3)}${band}  thread ${sb ? sb.thread : '?'}  ground shoulder, no bushing  shoulder span ${fix(d.span, 3)} between plates plus plate engagement  make ${Zp}` });
+      } else if (inputs.outerPin.construction === 'standoff') {
+        const so = outerStandoffFor(rr, inputs.outerPin.standoffId);
+        const sm = STANDOFF_MATERIAL_LABEL[outerStandoffSpecOf(inputs.outerPin).standoffMaterial];
+        const bore = outerStandoffBore(rr, inputs.outerPin.standoffId);
+        items.push({ tag: '1', od: 2 * rr, id: bore, text: `1  Outer standoff (round, female-female): OD ${fix(2 * rr, 3)}  ${so ? `${so.thread} tap (bore ${fix(bore, 3)})` : `bore ${fix(bore, 3)} assumed`}  ${sm}  length = plate spacing  no bushing  make ${Zp}` });
       } else if (boltBushing) {
         const bushId = inputs.outerPin.shankDia + o.pinHoleClearance;
         items.push({ tag: '1', od: 2 * rr, id: bushId, text: `1  Outer bushing: OD ${fix(2 * rr)}  ID ${fix(bushId)} (shank + ${fix(o.pinHoleClearance)})  disc stack ${fix(inputs.discs * inputs.L + (inputs.discs - 1) * inputs.gap, 2)}  make ${Zp}` });

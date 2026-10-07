@@ -12,6 +12,15 @@ import {
   REAMED_HOLE_PLAY,
   SHOULDER_BOLT_STEEL,
   SPEC_STEEL,
+  STANDOFF_DIA_TOL,
+  STANDOFF_MATERIAL_IDS,
+  STANDOFF_MATERIAL_LABEL,
+  outerStandoffFor,
+  outerStandoffSpecOf,
+  outerStandoffsOf,
+  standoffGalls,
+  standoffHolePlay,
+  standoffMaterialProps,
   SUPPLIER_DATA_NOTE,
   bearingsBySeries,
   discStockFor,
@@ -33,7 +42,10 @@ import {
   type MaterialProps,
   type OuterPinConstruction,
   type OuterPinSpec,
+  type StandoffMaterialId,
 } from '../../calc';
+
+const STANDOFF_MATERIAL_SHORT: Record<StandoffMaterialId, string> = { stainless: 'Stainless', aluminum: 'Aluminum', brass: 'Brass' };
 import { FixBadge, FixChip } from '../components/FixChips';
 import { fixesByField, useApplyFix, useFixes } from '../fixes';
 import { Advanced, Button, FieldRow, Notice, Section, SelectField, Segmented, Switch } from '../components/primitives';
@@ -42,6 +54,7 @@ import { InfoTip } from '../components/InfoTip';
 import { HELP } from '../help';
 import { CUSTOM, armToggle, gearboxOf, presetFor, presetIdFor, type Slot } from '../session';
 import { useStore } from '../store';
+import { useStandoffPockets } from '../tolerance';
 import { inchFraction, type U } from '../units';
 
 // ---------------------------------------------------------------------------
@@ -258,25 +271,39 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
   const maxTool = result.valid ? result.derived.integral?.maxToolRadius : undefined;
   const shoulder = g.outerPin.construction === 'shoulderBolt';
   const shoulderMatch = shoulderBoltFor(g.rr);
+  const standoffRing = g.outerPin.construction === 'standoff';
+  const standoffMatch = standoffRing ? outerStandoffFor(g.rr, g.outerPin.standoffId) : null;
+  const sspec = outerStandoffSpecOf(g.outerPin);
+  const setPockets = useStandoffPockets(slot);
   const setConstruction = (c: OuterPinConstruction) => {
     if (c === g.outerPin.construction) return;
     // switching to the machined ring fills its fields (older sessions have none), so they show and save
-    const outerPin: OuterPinSpec = c === 'integral' ? { ...g.outerPin, ...integralSpecOf(g.outerPin), construction: c } : { ...g.outerPin, construction: c };
+    let outerPin: OuterPinSpec = c === 'integral' ? { ...g.outerPin, ...integralSpecOf(g.outerPin), construction: c } : { ...g.outerPin, construction: c };
     // a shoulder bolt snaps rr to the nearest catalog shoulder (inch sizes when the length unit is inches)
     let rr = g.rr;
     if (c === 'shoulderBolt' && !shoulderBoltFor(rr)) {
       const list = shoulderBoltsOf(imperial ? 'inch' : 'metric');
       rr = list.reduce((a, b) => (Math.abs(b.dia - 2 * g.rr) < Math.abs(a.dia - 2 * g.rr) ? b : a)).dia / 2;
     }
+    // a round standoff snaps rr to the nearest catalog standoff and fills its fields (stainless, in pockets)
+    if (c === 'standoff') {
+      const cur = outerStandoffFor(rr, g.outerPin.standoffId);
+      const so = cur ?? outerStandoffsOf(imperial ? 'inch' : 'metric')
+        .reduce((a, b) => (Math.abs(b.od - 2 * g.rr) < Math.abs(a.od - 2 * g.rr) ? b : a));
+      rr = so.od / 2;
+      const sp = outerStandoffSpecOf(g.outerPin);
+      outerPin = { ...outerPin, standoffId: so.id, standoffMaterial: sp.standoffMaterial, pocketLocated: sp.pocketLocated };
+    }
     // a stored process preset is re-fitted for the new construction (a shoulder bolt gets reamed holes); custom values stay
     let tolerance = g.tolerance;
     if (tolerance) {
       const next = { ...g, rr, outerPin };
       const pid = matchProcess(tolerance, ringTolOf(g));
-      const holePlay = c === 'shoulderBolt' ? REAMED_HOLE_PLAY : tolerance.holePlay;
+      const holePlay = c === 'shoulderBolt' ? REAMED_HOLE_PLAY
+        : c === 'standoff' ? standoffHolePlay(outerPin.pocketLocated !== false) : tolerance.holePlay;
       tolerance = pid && tolerance.fitMode !== 'statistical'
         ? processSpec(pid, { integral: ringTolOf(next), holePlay, keep: tolerance })
-        : { ...tolerance, holePlay };
+        : { ...tolerance, holePlay, ...(c === 'standoff' ? { pinDiaTol: STANDOFF_DIA_TOL } : {}) };
     }
     set({ rr, outerPin, tolerance });
   };
@@ -440,7 +467,7 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
         </Advanced>
       </Section>
 
-      <Section title="Materials" badge={badgeFor('discMaterial', 'rr', 'rw', 'innerPinSupport', 'outerPin.material', 'outerPin.boltYield', 'innerPin.material', 'outerPin.housingMaterial', 'outerPin.toolRadius')}
+      <Section title="Materials" badge={badgeFor('discMaterial', 'rr', 'rw', 'innerPinSupport', 'outerPin.material', 'outerPin.boltYield', 'innerPin.material', 'outerPin.housingMaterial', 'outerPin.toolRadius', 'outerPin.standoffMaterial')}
         summary={MATERIALS.find((m) => matchesMaterial(m, g.discMaterial))?.name ?? 'Custom disc'}>
         <p className="section-note">{SUPPLIER_DATA_NOTE}</p>
         <h4 className="subgroup-h">Disc</h4>
@@ -448,14 +475,15 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           reference={ref.discMaterial} errors={v.errors} errPrefix="Disc material" full help={HELP.discMaterial} showForm
           fixClass={hl('discMaterial')} fixChip={chip('discMaterial')} />
 
-        <h4 className="subgroup-h">{integral ? 'Ring (machined into the housing)' : shoulder ? 'Outer pins (shoulder bolts)' : 'Outer pins (ring)'}</h4>
-        <FieldRow label="Construction" help={integral ? HELP.integralRing : shoulder ? HELP.shoulderBolt : HELP.outerConstruction} stacked>
+        <h4 className="subgroup-h">{integral ? 'Ring (machined into the housing)' : shoulder ? 'Outer pins (shoulder bolts)' : standoffRing ? 'Outer pins (round standoffs)' : 'Outer pins (ring)'}</h4>
+        <FieldRow label="Construction" help={integral ? HELP.integralRing : shoulder ? HELP.shoulderBolt : standoffRing ? HELP.outerStandoff : HELP.outerConstruction} stacked>
           <Segmented label="Outer pin construction" value={g.outerPin.construction} fullWidth
             onChange={setConstruction}
             options={[
               { value: 'boltBushing', label: 'Bolt + bushing' },
               { value: 'solid', label: 'Solid pin' },
               { value: 'shoulderBolt', label: 'Shoulder bolt' },
+              { value: 'standoff', label: 'Standoff' },
               { value: 'integral', label: 'Machined into housing' },
             ]} />
         </FieldRow>
@@ -492,6 +520,62 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
                 <li>Sliding contact like a machined ring: grease the shoulders. The Checks section suggests the efficiency (η ≈ 0.78).</li>
                 <li>Delrin or acetal discs on steel are excellent; an aluminum disc needs grease or hard anodizing. <InfoTip help={HELP.shoulderPairing} label="Disc material on a shoulder bolt" /></li>
                 <li>The shoulder length is only ±0.1 mm: set the plate spacing with the housing ring. <InfoTip help={HELP.shoulderLength} label="Shoulder length tolerance" /></li>
+              </ul>
+            </Notice>
+          </>
+        ) : standoffRing ? (
+          <>
+            <SelectField
+              label="Outer standoff size"
+              help={HELP.outerStandoffSize}
+              className={hl('rr')}
+              addon={chip('rr')}
+              value={standoffMatch ? standoffMatch.id : 'custom'}
+              onChange={(val) => {
+                const o = outerStandoffsOf('metric').concat(outerStandoffsOf('inch')).find((x) => x.id === val);
+                if (o) set({ rr: o.od / 2, outerPin: { ...g.outerPin, standoffId: o.id } });
+              }}
+              options={[
+                ...(['metric', 'inch'] as const).flatMap((sys) => outerStandoffsOf(sys).map((o) => ({
+                  value: o.id,
+                  group: sys === 'metric' ? 'Metric' : 'Inch',
+                  label: `${o.thread} thread, ${o.label} OD`,
+                  title: `Round standoff OD ${o.od} mm, ${o.thread} tapped (bore ${o.bore} mm); screw clearance hole ${o.clearanceHole} mm`,
+                }))),
+                { value: 'custom', label: `Not a catalog size (${u.fu('length', 2 * g.rr, { dp: 3, trim: true })}): pick one`, disabled: !!standoffMatch },
+              ]}
+              note={standoffMatch
+                ? `Round, female-female: OD ${standoffMatch.od} mm, ${standoffMatch.thread} tapped through (bore ${standoffMatch.bore} mm, hollow section for bending)`
+                : undefined}
+            />
+            <SelectField
+              label="Outer standoff material"
+              help={HELP.outerStandoffMaterial}
+              className={hl('outerPin.standoffMaterial')}
+              addon={chip('outerPin.standoffMaterial')}
+              value={sspec.standoffMaterial}
+              onChange={(val) => setOuter({ standoffMaterial: val as StandoffMaterialId })}
+              options={STANDOFF_MATERIAL_IDS.map((id) => ({ value: id, label: STANDOFF_MATERIAL_SHORT[id], title: STANDOFF_MATERIAL_LABEL[id] }))}
+              note={(() => {
+                const m = standoffMaterialProps(sspec.standoffMaterial);
+                return `${STANDOFF_MATERIAL_LABEL[sspec.standoffMaterial]}: E ${u.fu('stress', m.E, { dp: 0 })}, yield ${u.fu('stress', m.Sy, { dp: 0 })}, fatigue ${u.fu('stress', m.sigmaF, { dp: 0 })}; bending limit ${u.fu('stress', Math.min(0.4 * m.Sy, m.sigmaF), { dp: 0 })}`;
+              })()}
+            />
+            <Switch checked={sspec.pocketLocated} onChange={(v) => setPockets(eff, v)}
+              label="Located in pockets" help={HELP.standoffPockets}
+              description={sspec.pocketLocated
+                ? 'Ends sit in milled pockets of the standoff OD in both plates: hole play 0.02 mm'
+                : 'Screwed on through clearance holes only: hole play 0.1 mm (more backlash)'} />
+            {standoffGalls(g) && (
+              <Notice kind="warning" title="Aluminum on aluminum galls">
+                Aluminum standoffs sliding on an aluminum disc gall and pick up. Use stainless or brass standoffs, a Delrin disc, or hard-anodize the disc. <InfoTip help={HELP.standoffPairing} label="Disc material on a standoff" />
+              </Notice>
+            )}
+            <Notice kind="info" title="Round standoff, no bushing: the disc slides on the pin">
+              <ul className="plain-list">
+                <li>Sliding contact like a machined ring: grease the standoffs. The Checks section suggests the efficiency (η ≈ 0.78).</li>
+                <li>A Delrin disc on stainless or brass standoffs is a good pair. <InfoTip help={HELP.standoffPairing} label="Disc material on a standoff" /></li>
+                <li>Round standoffs only (not hex). The standoff length sets the plate spacing (±0.1 mm typical): check the axial gaps or set the spacing with the housing ring.</li>
               </ul>
             </Notice>
           </>

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { checkMotor, createGearboxModel, type AdvisorDesign, type AdvisorLockKey, type MotorCheck, type RelaxHint } from '../../calc';
+import { STANDOFF_MATERIAL_LABEL, checkMotor, createGearboxModel, outerStandoffSpecOf, type AdvisorDesign, type AdvisorLockKey, type MotorCheck, type RelaxHint } from '../../calc';
 import { ExportDxfPanel } from '../components/ExportDxfPanel';
 import { NumberField } from '../components/NumberField';
 import {
@@ -39,7 +39,7 @@ export function AdvisorPanel({ slot }: { slot: Slot }) {
   // a result belongs to the slot it was run for
   const res = advisorRun.slot === slot ? advisorRun.result : null;
   const stale = res != null && advisorRun.key !== advisorKey(eff, opts,
-    eff.outerPin.construction === 'shoulderBolt' ? { ...engine, shoulderSystem: shoulderSystemFor(state.units) } : engine);
+    eff.outerPin.construction === 'shoulderBolt' || eff.outerPin.construction === 'standoff' ? { ...engine, shoulderSystem: shoulderSystemFor(state.units) } : engine);
   const fromArmNow = fromArm(slot);
   const dOpts = defaultAdvisorOptions();
   // D min / max only matter while D is free
@@ -92,7 +92,8 @@ export function AdvisorPanel({ slot }: { slot: Slot }) {
         <div className="mat-summary">
           <div><span className="muted">Disc</span> {eff.discMaterial.kind === 'polymer' ? 'polymer' : 'metal'}, E {u.fu('stress', eff.discMaterial.E, { dp: 0 })}, Sy {u.fu('stress', eff.discMaterial.Sy, { dp: 0 })}</div>
           <div><span className="muted">Outer pins</span> {eff.outerPin.construction === 'integral' ? 'machined into the housing (no pins)' : eff.outerPin.construction === 'solid' ? 'solid pins'
-            : eff.outerPin.construction === 'shoulderBolt' ? `shoulder bolts (${shoulderSystemFor(state.units) === 'inch' ? 'inch' : 'metric'} sizes searched)` : 'bolt + bushing'}</div>
+            : eff.outerPin.construction === 'shoulderBolt' ? `shoulder bolts (${shoulderSystemFor(state.units) === 'inch' ? 'inch' : 'metric'} sizes searched)`
+            : eff.outerPin.construction === 'standoff' ? `round standoffs, ${STANDOFF_MATERIAL_LABEL[outerStandoffSpecOf(eff.outerPin).standoffMaterial].toLowerCase()} (${shoulderSystemFor(state.units) === 'inch' ? 'inch' : 'metric'} sizes searched)` : 'bolt + bushing'}</div>
           <div><span className="muted">Inner pins</span> {eff.innerPin.construction === 'solid' ? 'solid pins' : 'standoffs'}</div>
           <button type="button" className="linkish" onClick={() => openSection('design', slot)}>Materials and pin type come from Gearbox design</button>
         </div>
@@ -282,6 +283,8 @@ export function Hero({ d, target, elapsed, evaluated, joint, onApply, locked, cl
     ? `${L(d.outerPinOD, 1)} solid pin`
     : d.inputs.outerPin.construction === 'shoulderBolt'
     ? `${L(d.outerPinOD, 3)} shoulder bolt${d.outerBolt ? ` (${d.outerBolt} thread)` : ''}, no bushing`
+    : d.inputs.outerPin.construction === 'standoff'
+    ? `${L(d.outerPinOD, 3)} round standoff${d.outerBolt ? ` (${d.outerBolt})` : ''}, no bushing`
     : `${L(d.outerPinOD, 1)} bushing on ${d.outerBolt ?? (d.outerCustom ? 'a custom bolt' : 'bolt')} (${L(d.shankDia ?? 0, 1)} shank)`;
   const innerDesc = d.inputs.innerPin.construction === 'solid'
     ? `${L(d.innerPinOD, 1)} solid pin`

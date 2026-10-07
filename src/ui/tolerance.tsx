@@ -8,7 +8,8 @@ import {
   createContext, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react';
 import {
-  getCalcClient, setToleranceKc, statFitKey, toleranceKey, toleranceOf, withTolerance,
+  getCalcClient, matchProcess, processSpec, ringTolOf, setToleranceKc, standoffHolePlay, statFitKey, toleranceKey, toleranceOf,
+  withStandoffPockets, withTolerance,
   type CalcJob, type GearboxInputs, type StatisticalFit, type ToleranceResult, type ToleranceSpec,
 } from '../calc';
 import { CUSTOM, computeArmResult, effectiveInputs, type Session, type Slot } from './session';
@@ -185,5 +186,26 @@ export function useStatFit(slot: Slot | null): { fitting: boolean; request: (inp
   return {
     fitting: !!(v && slot && v.fitting[slot]),
     request: (inputs, spec) => { if (v && slot) v.requestFit(slot, inputs, spec); },
+  };
+}
+
+/**
+ * Switch a slot's outer standoffs between milled pockets and clearance holes (the hole play follows). A stored preset in
+ * statistical mode gets its worst-case fit at once and the statistical fit from the worker; otherwise withStandoffPockets.
+ * `eff` is the slot's effective inputs (the fit needs the loads).
+ */
+export function useStandoffPockets(slot: Slot | null): (eff: GearboxInputs, located: boolean) => void {
+  const { updateGearbox } = useStore();
+  const fit = useStatFit(slot);
+  return (eff, located) => {
+    if (!slot) return;
+    const cur = eff.tolerance ? toleranceOf(eff) : null;
+    const pid = cur && cur.fitMode === 'statistical' ? matchProcess(cur, ringTolOf(eff)) : null;
+    if (cur && pid) {
+      const nextEff: GearboxInputs = { ...eff, outerPin: { ...eff.outerPin, pocketLocated: located } };
+      const spec = processSpec(pid, { integral: ringTolOf(nextEff), holePlay: standoffHolePlay(located), keep: cur });
+      updateGearbox(slot, (g) => ({ ...g, outerPin: { ...g.outerPin, pocketLocated: located }, tolerance: spec }));
+      fit.request({ ...nextEff, tolerance: spec }, spec);
+    } else updateGearbox(slot, (g) => withStandoffPockets(g, located));
   };
 }

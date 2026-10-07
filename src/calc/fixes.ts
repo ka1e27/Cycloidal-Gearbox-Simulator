@@ -24,15 +24,18 @@
 // Searches run at the coarse resolution; every reported fix is re-checked at full SPEC resolution (newMaxUtil,
 // governing, statuses), and monotone searches are adjusted at full resolution so the next value down fails.
 
-import { BEARINGS, INNER_PIN_OPTIONS, OUTER_PIN_OPTIONS, ADVISOR_D_MAX, ZW_OPTIONS, shoulderBoltFor, shoulderBoltsOf } from './catalog';
+import {
+  BEARINGS, INNER_PIN_OPTIONS, OUTER_PIN_OPTIONS, ADVISOR_D_MAX, ZW_OPTIONS, outerStandoffFor, outerStandoffsOf, shoulderBoltFor, shoulderBoltsOf,
+} from './catalog';
 import { checkGearbox, GREEN_LIMIT, innerPinSupportOf, UTIL_CAP } from './gearbox';
 import {
-  MATERIALS, SPEC_STEEL, discStockFor, materialProps, sameMaterialProps, type MaterialProps,
+  MATERIALS, SPEC_STEEL, STANDOFF_MATERIAL_IDS, STANDOFF_MATERIAL_LABEL, discStockFor, materialProps, outerStandoffSpecOf, sameMaterialProps,
+  standoffGalls, standoffMaterialProps, type MaterialProps, type StandoffMaterialId,
 } from './materials';
 import { END_MILL_RADII, integralSpecOf } from './integral';
 import { checkMotor, K1_MAX, K1_MIN, recommendRatio, rescaleEForZp, type MotorSpec } from './motor';
 import { now, runAsync, runSync, type RunHooks } from './runner';
-import { REAMED_HOLE_PLAY, analyzeTolerance, fitClearances, matchProcess, processPreset, processSpec, ringTolOf, tighterProcesses, toleranceOf } from './tolerance';
+import { REAMED_HOLE_PLAY, analyzeTolerance, fitClearances, matchProcess, processPreset, processSpec, ringTolOf, tighterProcesses, toleranceOf, withStandoffPockets } from './tolerance';
 import { resolveKc, withResolvedKc } from './toleranceKc';
 import type { CheckId, CheckStatus, GearboxInputs, GearboxResult, InnerPinSupport } from './types';
 
@@ -45,13 +48,15 @@ export type FixField =
   | 'D' | 'e' | 'L' | 'discs' | 'rr' | 'rw' | 'Zw' | 'bearing' | 'discMaterial' | 'innerPinSupport'
   | 'outerPin.material' | 'outerPin.boltYield' | 'innerPin.material' | 'Zp'
   | 'outerPin.housingMaterial' | 'outerPin.toolRadius'
+  /** Outer standoffs: a stronger standoff material (stainless / brass / aluminum) */
+  | 'outerPin.standoffMaterial'
   /** A tighter machining process (only with "use tolerance Kc" on): the tolerance spec of the next better preset */
   | 'tolerance';
 
 export const FIX_FIELDS: readonly FixField[] = [
   'D', 'e', 'L', 'discs', 'rr', 'rw', 'Zw', 'bearing', 'discMaterial', 'innerPinSupport',
   'outerPin.material', 'outerPin.boltYield', 'innerPin.material', 'Zp',
-  'outerPin.housingMaterial', 'outerPin.toolRadius', 'tolerance',
+  'outerPin.housingMaterial', 'outerPin.toolRadius', 'outerPin.standoffMaterial', 'tolerance',
 ];
 
 /** A gearbox check, or 'motor' (the motor torque / speed through the gearbox ratio). */
@@ -608,8 +613,28 @@ function* fixGen(inputsIn: GearboxInputs, o: Resolved): Generator<FixProgress, F
       }
     }
 
+    // ---------------------------------------------------------------- outer standoff size up (catalog, same unit system)
+    const standoffRing = inputs.outerPin.construction === 'standoff';
+    if (standoffRing) {
+      const cur = outerStandoffFor(inputs.rr, inputs.outerPin.standoffId);
+      // the next larger ODs; for one OD the smaller bore (the stronger section) first
+      const opts = outerStandoffsOf(cur?.system ?? 'metric').filter((p) => p.od > 2 * inputs.rr + 1e-9);
+      const patchOf = (p: (typeof opts)[number]): Partial<GearboxInputs> => ({ rr: p.od / 2, outerPin: { ...inputs.outerPin, standoffId: p.id } });
+      const r = listSearch(opts.map((p) => ({ ...inputs, ...patchOf(p) })), 'rr');
+      if (r) {
+        const p = opts[r.k];
+        push(finish({
+          field: 'rr', label: 'Outer standoff size', direction: 'up',
+          from: cur ? `${cur.label} standoff (${cur.thread})` : `${mm(2 * inputs.rr)} standoff`, to: `${p.label} standoff (${p.thread})`,
+          fromValue: 2 * inputs.rr, toValue: p.od,
+          short: `▲ standoffs → ${p.label} (${p.thread})`, patch: patchOf(p),
+          changeCost: 0.25 + 0.25 * (p.od - 2 * inputs.rr) / (2 * inputs.rr),
+        }, { ...inputs, ...patchOf(p) }));
+      }
+    }
+
     // ---------------------------------------------------------------- outer pin size up (catalog)
-    if (!integral && !shoulder) {
+    if (!integral && !shoulder && !standoffRing) {
       const opts = OUTER_PIN_OPTIONS.filter((p) => p.od > 2 * inputs.rr + 1e-9);
       const bolt = inputs.outerPin.construction === 'boltBushing';
       const patchOf = (p: (typeof OUTER_PIN_OPTIONS)[number]): Partial<GearboxInputs> => ({
@@ -764,7 +789,27 @@ function* fixGen(inputsIn: GearboxInputs, o: Resolved): Generator<FixProgress, F
         }, cands[r.k]));
       }
     }
-    if (outerGov && !integral) {
+    if (gov === 'boltBending' && inputs.outerPin.construction === 'standoff') {
+      // a stronger standoff material (bending limit min(0.4 Sy, sigma_f)): stainless 86, aluminum 6061 104, brass 124 MPa.
+      // The weakest one that passes is picked; aluminum is skipped on an aluminum disc (it galls).
+      const op = inputs.outerPin;
+      const curId = outerStandoffSpecOf(op).standoffMaterial;
+      const lim = (id: StandoffMaterialId) => { const m = standoffMaterialProps(id); return Math.min(0.4 * m.Sy, m.sigmaF); };
+      const ids = STANDOFF_MATERIAL_IDS.filter((id) => id !== curId && lim(id) > lim(curId) + 1e-9 &&
+        !standoffGalls({ discMaterial: inputs.discMaterial, outerPin: { construction: 'standoff', standoffMaterial: id } }));
+      const cands = ids.map((id) => ({ ...inputs, outerPin: { ...op, standoffMaterial: id } }));
+      const r = pickSearch(cands, 'outerPin.standoffMaterial', (k) => lim(ids[k]));
+      if (r) {
+        const id = ids[r.k];
+        push(finish({
+          field: 'outerPin.standoffMaterial', label: 'Standoff material', direction: 'change',
+          from: STANDOFF_MATERIAL_LABEL[curId], to: STANDOFF_MATERIAL_LABEL[id], fromValue: null, toValue: null,
+          short: `Standoffs → ${STANDOFF_MATERIAL_LABEL[id]}`, patch: { outerPin: { ...op, standoffMaterial: id } },
+          changeCost: 0.2,
+        }, cands[r.k]));
+      }
+    }
+    if (outerGov && !integral && inputs.outerPin.construction !== 'standoff') {
       const op = inputs.outerPin;
       if (op.construction === 'boltBushing') {
         const grades = BOLT_GRADES.filter((g) => g.yield > op.boltYield + 1e-9);
@@ -861,7 +906,27 @@ function* fixGen(inputsIn: GearboxInputs, o: Resolved): Generator<FixProgress, F
         }
       }
       // reamed / dowel-fit outer pin holes (the hole play usually dominates the spread of the pin gaps)
-      if (inputsIn.outerPin.construction !== 'integral' && cur.holePlay > REAMED_HOLE_PLAY + 1e-9) {
+      // outer standoffs: locate the ends in milled pockets (hole play 0.1 -> 0.02 mm)
+      if (inputsIn.outerPin.construction === 'standoff' && !outerStandoffSpecOf(inputsIn.outerPin).pocketLocated) {
+        const g2 = withStandoffPockets(inputsIn, true, true);
+        const t = toleranceOf(g2);
+        const tr = analyzeTolerance({ ...g2, tolerance: t }, { trials: o.processTrials, sensitivity: false });
+        if (tr.valid && tr.kc.strength.p95 > 0 && tr.kc.life.p95 > 0) {
+          const patch: Partial<GearboxInputs> = { outerPin: g2.outerPin, tolerance: t };
+          const at = { ...inputs, ...patch, Kc: tr.kc.strength.p95, KcLife: tr.kc.life.p95 };
+          note('tolerance', coarse(at));
+          const f = finish({
+            field: 'tolerance', label: 'Standoff location', direction: 'change', from: `clearance holes (${trim(cur.holePlay, 3)} mm hole play)`,
+            to: `milled pockets (${trim(t.holePlay, 3)} mm)`, fromValue: cur.holePlay, toValue: t.holePlay,
+            short: 'Locate the standoffs in pockets', patch, changeCost: 0.3,
+          }, at);
+          if (f) {
+            f.sideEffects.unshift(`tolerance Kc ${inputs.Kc.toFixed(2)} → ${at.Kc.toFixed(2)} (p95)`, 'DXF: pockets of the standoff OD in both plates');
+            push(f);
+          }
+        }
+      }
+      if (inputsIn.outerPin.construction !== 'integral' && inputsIn.outerPin.construction !== 'standoff' && cur.holePlay > REAMED_HOLE_PLAY + 1e-9) {
         // a preset's clearances are re-fitted to the smaller stack; custom clearances are kept
         const pid = matchProcess(cur, integralRing, cur.fitMode === 'statistical' ? fitClearances(inputsIn, cur) : null);
         const t = pid ? fitClearances(inputsIn, processSpec(pid, { integral: integralRing, holePlay: REAMED_HOLE_PLAY, keep: cur })) : { ...cur, holePlay: REAMED_HOLE_PLAY };

@@ -5,6 +5,7 @@ import {
   INNER_PIN_OPTIONS,
   OUTER_PIN_OPTIONS,
   SHOULDER_BOLT_OPTIONS,
+  OUTER_STANDOFF_OPTIONS,
   type AdvisorDesign,
   type BearingLock,
   type GearboxInputs,
@@ -179,8 +180,11 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
   const integral = eff.outerPin.construction === 'integral';
   // a shoulder bolt's catalog index points into SHOULDER_BOLT_OPTIONS
   const shoulder = eff.outerPin.construction === 'shoulderBolt';
+  // an outer standoff's catalog index points into OUTER_STANDOFF_OPTIONS
+  const standoffRing = eff.outerPin.construction === 'standoff';
   const outerList: readonly { od: number; shank: number }[] = shoulder
     ? SHOULDER_BOLT_OPTIONS.map((o) => ({ od: o.dia, shank: o.dia }))
+    : standoffRing ? OUTER_STANDOFF_OPTIONS.map((o) => ({ od: o.od, shank: o.od }))
     : OUTER_PIN_OPTIONS;
   const standoff = eff.innerPin.construction === 'standoff';
   const stock = discStockFor(eff.discMaterial);
@@ -211,12 +215,18 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
       const s = SHOULDER_BOLT_OPTIONS[i];
       return `${s.label} shoulder · ${s.thread}`;
     }
+    if (standoffRing) {
+      const s = OUTER_STANDOFF_OPTIONS[i];
+      return `${s.label} standoff · ${s.thread}`;
+    }
     const o = OUTER_PIN_OPTIONS[i];
     return bolt ? `${o.bolt} · ${L(o.od, 1)} bushing, ${L(o.shank, 1)} shank` : `${L(o.od, 1)} solid pin`;
   };
   // shoulder bolts are listed metric first, then inch, each by diameter
   const outerOrder = shoulder
     ? SHOULDER_BOLT_OPTIONS.map((s, i) => ({ s, i })).sort((a, b) => (a.s.system === b.s.system ? a.s.dia - b.s.dia : a.s.system === 'metric' ? -1 : 1)).map((x) => x.i)
+    : standoffRing
+    ? OUTER_STANDOFF_OPTIONS.map((s, i) => ({ s, i })).sort((a, b) => (a.s.system === b.s.system ? a.s.od - b.s.od || a.s.bore - b.s.bore : a.s.system === 'metric' ? -1 : 1)).map((x) => x.i)
     : OUTER_PIN_OPTIONS.map((_, i) => i);
   const innerLabel = (i: number) => {
     const o = INNER_PIN_OPTIONS[i];
@@ -266,6 +276,8 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
     ? `${L(c.outerPinOD, 1)} solid pin`
     : shoulder
     ? `${L(c.outerPinOD, 3)} shoulder bolt${c.outerBolt ? ` · ${c.outerBolt}` : ''}`
+    : standoffRing
+    ? `${L(c.outerPinOD, 3)} standoff${c.outerBolt ? ` · ${c.outerBolt}` : ''}`
     : `${c.outerBolt ?? 'bolt'} · ${L(c.outerPinOD, 1)} bushing, ${L(c.shankDia ?? 0, 1)} shank`);
   const innerChosen = c && (eff.innerPin.construction === 'solid'
     ? `${L(c.innerPinOD, 1)} solid pin`
@@ -314,14 +326,14 @@ export function AdvisorLocksPanel({ slot, eff, chosen, running, canRun, onRun, o
           invalid={!!err('outerPin')} describedBy="lv-msg-outerPin" />
       ),
     } : {
-      k: 'outerPin', name: shoulder ? 'Shoulder bolt size' : 'Outer pin size', sym: 'rr',
+      k: 'outerPin', name: shoulder ? 'Shoulder bolt size' : standoffRing ? 'Standoff size' : 'Outer pin size', sym: 'rr',
       control: (
         <div className="lv-stack">
-          <SelectBox label={shoulder ? 'Shoulder bolt size' : 'Outer pin size'} value={outerSel} onChange={setOuter} describedBy="lv-msg-outerPin"
+          <SelectBox label={shoulder ? 'Shoulder bolt size' : standoffRing ? 'Standoff size' : 'Outer pin size'} value={outerSel} onChange={setOuter} describedBy="lv-msg-outerPin"
             options={[...outerOrder.map((i) => ({ value: String(i), label: outerLabel(i) })), { value: 'custom', label: 'Custom…' }]} />
           {co && (
             <div className="lv-minis">
-              <Mini label={bolt ? 'Bushing OD' : shoulder ? 'Shoulder dia' : 'Pin OD'}>
+              <Mini label={bolt ? 'Bushing OD' : shoulder ? 'Shoulder dia' : standoffRing ? 'Standoff OD' : 'Pin OD'}>
                 <BareNumber label="Custom outer pin OD" quantity="length" value={co.od} step={0.5} onChange={(v) => patchOuter({ od: v ?? 0 })} invalid={!!err('outerPin')} />
               </Mini>
               {bolt && (

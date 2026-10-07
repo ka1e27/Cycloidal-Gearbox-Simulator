@@ -1,7 +1,7 @@
 // Material library (CLAUDE.md Addition 2) and contact-mechanics helpers.
 // Units: MPa, g/cm^3. Values are approximate: check supplier data.
 
-import { DISC_STOCK_PLATE, DISC_STOCK_PRINTED } from './catalog';
+import { DISC_STOCK_PLATE, DISC_STOCK_PRINTED, outerStandoffBore } from './catalog';
 
 export type MaterialKind = 'metal' | 'polymer';
 /**
@@ -276,9 +276,11 @@ export const POLYMER_WARNING_LINES: readonly string[] = [
  * 'integral': no pins, the teeth are machined into the housing (CLAUDE.md Addition 12).
  * 'shoulderBolt': a ground shoulder screw is the pin (no bushing): it bends and contacts as a solid pin of d = 2 rr
  * made of SHOULDER_BOLT_STEEL; the size comes from SHOULDER_BOLT_OPTIONS (catalog.ts).
+ * 'standoff': a round female-female standoff is the pin (no bushing): it bends as a hollow round (OD 2 rr, the tapped bore
+ * from OUTER_STANDOFF_OPTIONS) of the chosen standoff material (`standoffMaterial`) and contacts with that material.
  */
-export type OuterPinConstruction = 'boltBushing' | 'solid' | 'shoulderBolt' | 'integral';
-export const OUTER_PIN_CONSTRUCTIONS: readonly OuterPinConstruction[] = ['boltBushing', 'solid', 'shoulderBolt', 'integral'];
+export type OuterPinConstruction = 'boltBushing' | 'solid' | 'shoulderBolt' | 'standoff' | 'integral';
+export const OUTER_PIN_CONSTRUCTIONS: readonly OuterPinConstruction[] = ['boltBushing', 'solid', 'shoulderBolt', 'standoff', 'integral'];
 
 /**
  * Alloy steel of a class 12.9 shoulder screw (ground shoulder): fixed, independent of the library.
@@ -287,6 +289,36 @@ export const OUTER_PIN_CONSTRUCTIONS: readonly OuterPinConstruction[] = ['boltBu
 export const SHOULDER_BOLT_STEEL: MaterialProps = {
   E: 205000, nu: 0.29, Sy: 1080, sigmaF: 450, density: 7.85, kind: 'metal', form: 'plate',
 };
+
+/** Materials of a round outer standoff ('standoff' construction). */
+export type StandoffMaterialId = 'stainless' | 'aluminum' | 'brass';
+export const STANDOFF_MATERIAL_IDS: readonly StandoffMaterialId[] = ['stainless', 'aluminum', 'brass'];
+export const DEFAULT_STANDOFF_MATERIAL: StandoffMaterialId = 'stainless';
+/** Stainless 303/304 standoff stock (annealed bar): E 193 GPa, Sy 215, sigma_f 240. */
+export const STANDOFF_STAINLESS: MaterialProps = {
+  E: 193000, nu: 0.29, Sy: 215, sigmaF: 240, density: 8.0, kind: 'metal', form: 'plate',
+};
+/** Free-machining brass C360: E 97 GPa, Sy 310, sigma_f 140. */
+export const STANDOFF_BRASS: MaterialProps = {
+  E: 97000, nu: 0.31, Sy: 310, sigmaF: 140, density: 8.5, kind: 'metal', form: 'plate',
+};
+export const STANDOFF_MATERIAL_LABEL: Record<StandoffMaterialId, string> = {
+  stainless: 'Stainless steel 303/304',
+  aluminum: 'Aluminum 6061-T6',
+  brass: 'Brass C360',
+};
+
+export function isStandoffMaterialId(x: unknown): x is StandoffMaterialId {
+  return typeof x === 'string' && (STANDOFF_MATERIAL_IDS as readonly string[]).includes(x);
+}
+
+/** The properties of a standoff material (a missing or unknown id = stainless). Fresh copy each call. */
+export function standoffMaterialProps(id: StandoffMaterialId | string | undefined | null): MaterialProps {
+  const k = isStandoffMaterialId(id) ? id : DEFAULT_STANDOFF_MATERIAL;
+  if (k === 'aluminum') return materialProps('al-6061');
+  return { ...(k === 'brass' ? STANDOFF_BRASS : STANDOFF_STAINLESS) };
+}
+
 export type InnerPinConstruction = 'standoff' | 'solid';
 
 export interface OuterPinSpec {
@@ -307,6 +339,15 @@ export interface OuterPinSpec {
   rootClearance?: number;
   /** integral: end-mill radius, which leaves a fillet where each tooth meets the root circle, mm. Missing = 1.5. */
   toolRadius?: number;
+  /** standoff: the catalog entry (OUTER_STANDOFF_OPTIONS id; it tells two threads of one OD apart). Missing = first of that OD. */
+  standoffId?: string;
+  /** standoff: its material. Missing = stainless. */
+  standoffMaterial?: StandoffMaterialId;
+  /**
+   * standoff: the ends sit in milled pockets of the standoff OD in both plates (true, the default) or the standoff is only
+   * screwed on through clearance holes (false). Sets the default bolt hole play (0.02 vs 0.1 mm) and the DXF.
+   */
+  pocketLocated?: boolean;
 }
 
 export interface InnerPinSpec {
@@ -326,12 +367,39 @@ export function outerPinBendingDia(p: OuterPinSpec, rr: number): number {
   return p.construction === 'boltBushing' ? p.shankDia : 2 * rr;
 }
 
-/** The material of the outer pin body (bending and contact): the shoulder bolt steel, else `material`. */
-export function outerPinMaterial(p: Pick<OuterPinSpec, 'construction' | 'material'>): MaterialProps {
-  return p.construction === 'shoulderBolt' ? SHOULDER_BOLT_STEEL : p.material;
+/** The material of the outer pin body (bending and contact): the shoulder bolt steel, the standoff material, else `material`. */
+export function outerPinMaterial(p: Pick<OuterPinSpec, 'construction' | 'material' | 'standoffMaterial'>): MaterialProps {
+  if (p.construction === 'shoulderBolt') return SHOULDER_BOLT_STEEL;
+  if (p.construction === 'standoff') return standoffMaterialProps(p.standoffMaterial);
+  return p.material;
 }
 
-/** Outer pin bending stress limit, MPa: 0.4*Sy_bolt, or min(0.4*Sy, sigmaF) for a solid pin or a shoulder bolt. */
+/** Outer standoff fields with their defaults filled (stainless, located in pockets). */
+export function outerStandoffSpecOf(p: Pick<OuterPinSpec, 'standoffId' | 'standoffMaterial' | 'pocketLocated'>): {
+  standoffId: string | null; standoffMaterial: StandoffMaterialId; pocketLocated: boolean;
+} {
+  return {
+    standoffId: typeof p.standoffId === 'string' ? p.standoffId : null,
+    standoffMaterial: isStandoffMaterialId(p.standoffMaterial) ? p.standoffMaterial : DEFAULT_STANDOFF_MATERIAL,
+    pocketLocated: p.pocketLocated !== false,
+  };
+}
+
+/** An aluminum alloy by its numbers (metal, E 60 to 80 GPa): 6061, 7075 or an edited copy. */
+export function isAluminumLike(m: Pick<MaterialProps, 'kind' | 'E'>): boolean {
+  return m.kind === 'metal' && m.E >= 60000 && m.E <= 80000;
+}
+
+export const STANDOFF_GALLING_WARNING =
+  'Aluminum standoffs on an aluminum disc gall (like metals slide and pick up). Use stainless or brass standoffs, a plastic disc, or hard-anodize the disc.';
+
+/** Aluminum outer standoffs sliding on an aluminum disc: the pair galls. */
+export function standoffGalls(inp: { discMaterial: Pick<MaterialProps, 'kind' | 'E'>; outerPin: Pick<OuterPinSpec, 'construction' | 'standoffMaterial'> }): boolean {
+  return inp.outerPin.construction === 'standoff' && outerStandoffSpecOf(inp.outerPin).standoffMaterial === 'aluminum' &&
+    isAluminumLike(inp.discMaterial);
+}
+
+/** Outer pin bending stress limit, MPa: 0.4*Sy_bolt, or min(0.4*Sy, sigmaF) for a solid pin, a shoulder bolt or a standoff. */
 export function outerPinBendingLimit(p: OuterPinSpec): number {
   if (p.construction === 'boltBushing') return 0.4 * p.boltYield;
   const m = outerPinMaterial(p);
@@ -351,8 +419,19 @@ export function innerPinBendingLimit(p: InnerPinSpec): number {
     : 0.5 * p.standoffYield;
 }
 
-/** Outer pin section modulus, mm^3 (solid round of the bending diameter). */
+/** Outer pin section modulus, mm^3: solid round of the bending diameter; a standoff: hollow, pi (OD^4 - bore^4) / (32 OD). */
 export function outerPinSectionModulus(p: OuterPinSpec, rr: number): number {
   const d = outerPinBendingDia(p, rr);
+  if (p.construction === 'standoff') {
+    const b = outerStandoffBore(rr, p.standoffId);
+    return (Math.PI * (d ** 4 - b ** 4)) / (32 * d);
+  }
   return (Math.PI * d * d * d) / 32;
+}
+
+/** Outer pin second moment of area, mm^4 (pin bending stiffness): pi d^4 / 64, hollow for a standoff. */
+export function outerPinSecondMoment(p: OuterPinSpec, rr: number): number {
+  const d = outerPinBendingDia(p, rr);
+  const b = p.construction === 'standoff' ? outerStandoffBore(rr, p.standoffId) : 0;
+  return (Math.PI * (d ** 4 - b ** 4)) / 64;
 }

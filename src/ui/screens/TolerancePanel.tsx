@@ -17,7 +17,7 @@ import { DASH, fixed, num } from '../format';
 import { useApplyFix, useFixes, fixResultText } from '../fixes';
 import { CUSTOM, type Slot } from '../session';
 import { useStore } from '../store';
-import { useAllTolerance, useStatFit, useTolerance, type SlotTolerance } from '../tolerance';
+import { useAllTolerance, useStandoffPockets, useStatFit, useTolerance, type SlotTolerance } from '../tolerance';
 import type { U } from '../units';
 import '../../styles/tolerance.css';
 
@@ -75,6 +75,9 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
   const ring = ringTolOf(eff);
   const integral = ring.integral;
   const shoulder = ring.shoulder;
+  // round outer standoffs: no bushing play, the hole play follows the pocket switch
+  const standoffR = ring.standoff ?? null;
+  const setPockets = useStandoffPockets(slot);
   const specE = effectiveSpec(spec, ring);
   const statistical = spec.fitMode === 'statistical';
   // the statistical fit of the last analysis, when it was made for these process values (it does not depend on the clearances)
@@ -100,7 +103,7 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
       onChange={(v) => set({ [d.k]: v ?? 0 })} defaultValue={processSpec(proc ?? 'mill', { integral: ring, holePlay: spec.holePlay })[d.k]} step={0.005}
       help={HELP[d.help]} error={errs[d.k]} note={d.note} />
   );
-  const shown = (list: FieldDef[]) => list.filter((d) => !(integral && INTEGRAL_UNUSED_TERMS.includes(d.k)) && !(shoulder && d.k === 'bushingPlay'));
+  const shown = (list: FieldDef[]) => list.filter((d) => !(integral && INTEGRAL_UNUSED_TERMS.includes(d.k)) && !((shoulder || standoffR) && d.k === 'bushingPlay'));
 
   /**
    * Apply a preset spec: the worst-case fit right away; in statistical mode the worker's fit replaces the clearances when
@@ -113,7 +116,7 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
   const pickProcess = (id: string) => {
     if (id === 'custom') return;
     // a reamed hole fit is kept
-    applyPreset(processSpec(id as ProcessId, { integral: ring, holePlay: reamed && !integral ? spec.holePlay : undefined, keep: spec }));
+    applyPreset(processSpec(id as ProcessId, { integral: ring, holePlay: (reamed || standoffR) && !integral ? spec.holePlay : undefined, keep: spec }));
   };
   /** Change a setting the fit depends on: a preset re-fits its clearances, custom clearances stay as typed. */
   const refit = (patch: Partial<ToleranceSpec>) => {
@@ -163,7 +166,11 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
           onChange={(v) => refit({ bindTarget: (v ?? 1) / 100 })} defaultValue={1} step={0.5} help={HELP.tolBindTarget}
           error={errs.bindTarget} note={`${BIND_TARGET_RANGE[0] * 100}% to ${BIND_TARGET_RANGE[1] * 100}%`} />
       )}
-      {!integral && (
+      {standoffR ? (
+        <Switch checked={standoffR.pocketLocated} onChange={(v) => setPockets(eff, v)}
+          label="Standoffs located in pockets" help={HELP.standoffPockets}
+          description={standoffR.pocketLocated ? 'Milled pockets of the standoff OD: hole play 0.02 mm' : 'Screwed on through clearance holes: hole play 0.1 mm'} />
+      ) : !integral && (
         <Switch checked={reamed} onChange={setReamed}
           label="Reamed / dowel-fit holes" description={reamed ? 'Hole play 0.005 mm; DXF pin holes + 0.01 mm' : 'Plain clearance holes'} help={HELP.tolReamed} />
       )}
@@ -296,7 +303,7 @@ function ToleranceResults({ slot, eff, result, tol, lever, u, onUseKc, onClearan
       ) : null}
       <DataTable columns={1} rows={[
         bwRow('Design (no errors)', bl.design.total,
-          `Perfect parts: only the clearances you chose. Disc on the outer pins ${arcmin(bl.design.ring)} + output pins in their holes ${arcmin(bl.design.inner)}; ${eff.outerPin.construction === 'shoulderBolt' ? 'shoulders at their mean undersize' : r.integral ? 'no pins or plays' : 'bushing play at its average'}.`),
+          `Perfect parts: only the clearances you chose. Disc on the outer pins ${arcmin(bl.design.ring)} + output pins in their holes ${arcmin(bl.design.inner)}; ${eff.outerPin.construction === 'shoulderBolt' ? 'shoulders at their mean undersize' : eff.outerPin.construction === 'standoff' ? 'no bushing play (standoffs)' : r.integral ? 'no pins or plays' : 'bushing play at its average'}.`),
         ...(r.statsShown ? [
           bwRow('Typical build (p50)', bl.mc.p50, `Half of real builds have less play than this (from ${r.freeBuilds} simulated builds with random machining errors).`),
           bwRow('Most builds (p95)', bl.mc.p95, '95 of 100 builds have less play than this. Use this number to plan.'),

@@ -27,8 +27,9 @@ interface GearboxInputs {
   wall: number;                                     // housing wall for housingOD, default 4 mm
   innerPinSupport: 'ringClamped' | 'ringPinned' | 'cantilever';   // inner pin bending model, default 'ringClamped'
   discMaterial: MaterialProps;                      // {E, nu, Sy, sigmaF, density, kind}
-  outerPin: { construction: 'boltBushing' | 'solid' | 'integral'; shankDia; boltYield; material: MaterialProps;
-              housingMaterial?; rootClearance?; toolRadius? };   // the last three: integral ring only (section 2b)
+  outerPin: { construction: 'boltBushing' | 'solid' | 'shoulderBolt' | 'standoff' | 'integral'; shankDia; boltYield; material: MaterialProps;
+              housingMaterial?; rootClearance?; toolRadius?;      // integral ring only (section 2b)
+              standoffId?; standoffMaterial?; pocketLocated? };  // outer standoff only (section 2d)
   innerPin: { construction: 'standoff' | 'solid'; od; bore; standoffYield; material: MaterialProps };
   Treq; Tdes; Kc; KcLife;                           // N·m, factors
   discShare: number | null;                         // null = 1.0 (1 disc) / 0.55 (2 discs)
@@ -165,6 +166,38 @@ not used: the pin is always `SHOULDER_BOLT_STEEL` (class 12.9: E 205000, ν 0.29
 * **DXF**: housing "make 2": the shoulder plate (left, holes 2·rr + pin hole clearance = 2·holePlay, 0.01 reamed) and the far plate
   (right, tap-drill holes) side by side; notes "Far plate: tap for <thread>; set plate spacing with the housing ring, not the shoulder
   length". The pins sheet lists the shoulder bolts.
+
+## 2d. Round standoff outer pins (`'standoff'`)
+
+A plain round female-female standoff is the pin (no bushing, the disc slides on the OD); a screw goes into each end. `outerPin.material`,
+`shankDia` and `boltYield` are not used. Optional fields (older sessions have none; `outerStandoffSpecOf(p)` fills the defaults,
+`normalizeGearboxInputs` keeps valid values and drops garbage): `standoffId` (an `OUTER_STANDOFF_OPTIONS` id; it tells two threads of
+one OD apart), `standoffMaterial: 'stainless' | 'aluminum' | 'brass'` (default stainless), `pocketLocated` (default true).
+* **Materials** (`standoffMaterialProps(id)`, `STANDOFF_MATERIAL_LABEL`): stainless 303/304 E 193000, ν 0.29, Sy 215, σf 240, ρ 8.0
+  (`STANDOFF_STAINLESS`); aluminum = library 6061-T6; brass C360 E 97000, ν 0.31, Sy 310, σf 140, ρ 8.5 (`STANDOFF_BRASS`).
+  `outerPinMaterial(p)` returns it, so ring E\* and the contact limits (weaker of disc and standoff) use it. Annealed stainless (Sy 215)
+  is weaker than 6061-T6, so on an aluminum disc the standoff sets the ring contact limits.
+* **Checks**: `boltBending` is labelled "Outer standoff bending": the same simply-supported value with the hollow section
+  Z = π(OD⁴ − bore⁴)/(32·OD) (`outerPinSectionModulus`; OD = 2·rr, bore = the catalog tap drill, or 0.5·OD for a non-catalog OD, which
+  warns), limit min(0.4·Sy, σf) of the standoff material (stainless 86, aluminum 104, brass 124 MPa). The load-sharing pin spring uses the
+  hollow I (`outerPinSecondMoment`). Galling: `standoffGalls(inputs)` (aluminum standoffs on an aluminum-like disc: metal, E 60 to 80 GPa)
+  adds the warning `STANDOFF_GALLING_WARNING`; an unknown `standoffMaterial` is an input error.
+* **Catalog** `OUTER_STANDOFF_OPTIONS` (append-only; `id, system, od, label, thread, bore, clearanceHole`): metric 4.5/M2.5, 5/M3, 6/M4,
+  8/M5 (bores as `INNER_PIN_OPTIONS`); inch 3/16" #4-40, 1/4" #6-32, 1/4" #8-32, 5/16" #10-32 (number tap drills). `outerStandoffFor(rr, id?)`,
+  `outerStandoffsOf(system)`, `outerStandoffBore(rr, id?)`.
+* **Tolerances**: `RingTol.standoff = {pocketLocated}`. `effectiveSpec` sets bushingPlay 0 only (the pin diameter tolerance stays
+  editable). Presets / defaults: pinDiaTol `STANDOFF_DIA_TOL` = 0.05 (± on the diameter), hole play `standoffHolePlay(pocketLocated)` = 0.02
+  (`STANDOFF_POCKET_HOLE_PLAY`) or 0.1. `withStandoffPockets(g, located, fit?)` flips the switch and moves the hole play (a matched preset is
+  re-fitted; with `fit` also statistically). The sensitivity has no bushing play term. The sliding-contact η note is the shoulder bolt's.
+* **Advisor**: standoff sizes of `AdvisorOptions.shoulderSystem` (the UI passes the length unit's system); the material stays as chosen;
+  a catalog lock indexes `OUTER_STANDOFF_OPTIONS`; `AdvisorDesign.outerBolt` = the thread, `inputs.outerPin.standoffId` is set.
+* **Fixes**: the next larger standoffs of the same system (field `rr`, the patch also sets `standoffId`); a stronger standoff material when
+  bending governs (field `outerPin.standoffMaterial`, never aluminum on an aluminum disc); "Locate the standoffs in pockets" (field
+  `tolerance`, label "Standoff location") with the tolerance Kc. No bushing material, bolt grade or reamed-hole fix.
+* **DXF**: housing make 2 (plates alike). In pockets: `Zp` pocket circles of OD + pin hole clearance (2·holePlay = 0.04) with the screw
+  clearance hole in each centre; the pocket depth is a note, `ExportOptions.standoffPocketDepth` (null = 1.5 mm, 1/16" in an inch file).
+  Otherwise clearance holes only. Notes: "Standoff length sets plate spacing (±0.1 mm typical); check the axial gaps or set spacing with the
+  housing ring", "Round standoffs only, not hex". The pins sheet lists the standoffs (hollow section).
 
 ## 3. The gearbox check
 

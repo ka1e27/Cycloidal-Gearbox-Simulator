@@ -78,7 +78,7 @@
 
 import { computeProfile } from './kernel';
 import { deriveGeometry, discShareOf, validateGearboxInputs } from './gearbox';
-import { effectiveModulus, outerPinMaterial, SPEC_STEEL } from './materials';
+import { effectiveModulus, outerPinMaterial, outerPinSecondMoment, SPEC_STEEL } from './materials';
 import { shoulderBandOf } from './catalog';
 import { ringContactMaterial } from './integral';
 import { nextNonRoll, firstPitchIndex, type ArmInputs } from './arm';
@@ -177,6 +177,23 @@ export const SHOULDER_FIXED_TERMS: readonly ToleranceTerm[] = ['bushingPlay', 'p
 export interface RingTol {
   integral: boolean;
   shoulder: { pinDiaTol: number; undersize: number } | null;
+  /**
+   * Round outer standoffs (no bushing): no bushing play; the pin diameter tolerance stays editable (default
+   * STANDOFF_DIA_TOL) and the default hole play follows `pocketLocated` (pockets 0.02, clearance holes 0.1 mm).
+   */
+  standoff?: { pocketLocated: boolean } | null;
+}
+
+/** Commercial round standoffs: ± 0.05 mm on the diameter (pinDiaTol default). */
+export const STANDOFF_DIA_TOL = 0.05;
+/** Standoff ends located in milled pockets of the standoff OD: radial hole play, mm. */
+export const STANDOFF_POCKET_HOLE_PLAY = 0.02;
+/** Standoffs only screwed on through clearance holes: radial hole play, mm. */
+export const STANDOFF_CLEARANCE_HOLE_PLAY = 0.1;
+
+/** Default bolt hole play of an outer standoff: pockets or clearance holes. */
+export function standoffHolePlay(pocketLocated: boolean): number {
+  return pocketLocated ? STANDOFF_POCKET_HOLE_PLAY : STANDOFF_CLEARANCE_HOLE_PLAY;
 }
 export type RingArg = boolean | RingTol | undefined;
 
@@ -186,9 +203,10 @@ export function asRing(x: RingArg): RingTol {
 }
 
 /** The ring kind of a gearbox's outer construction (the shoulder band from its rr). */
-export function ringTolOf(inputs: { rr?: number; outerPin?: { construction?: string } } | undefined): RingTol {
+export function ringTolOf(inputs: { rr?: number; outerPin?: { construction?: string; pocketLocated?: boolean } } | undefined): RingTol {
   const c = inputs?.outerPin?.construction;
   if (c === 'integral') return { integral: true, shoulder: null };
+  if (c === 'standoff') return { integral: false, shoulder: null, standoff: { pocketLocated: inputs?.outerPin?.pocketLocated !== false } };
   if (c === 'shoulderBolt') {
     const rr = inputs?.rr;
     const b = shoulderBandOf(fin(rr) ? rr : 0);
@@ -200,6 +218,7 @@ export function ringTolOf(inputs: { rr?: number; outerPin?: { construction?: str
 /** The spec the analysis uses: a shoulder bolt has no bushing play and its catalog diameter band. */
 export function effectiveSpec(t: ToleranceSpec, ring: RingArg): ToleranceSpec {
   const r = asRing(ring);
+  if (r.standoff) return { ...t, bushingPlay: 0 };
   if (!r.shoulder) return t;
   return { ...t, bushingPlay: 0, pinDiaTol: r.shoulder.pinDiaTol };
 }
@@ -250,11 +269,13 @@ export function processSpec(id: ProcessId, opts: ProcessSpecOptions = {}): Toler
     profileClearance: 0,
     innerHoleClearance: 0,
     bushingPlay: PRESET_COMMON.bushingPlay,
-    holePlay: fin(opts.holePlay) && opts.holePlay >= 0 ? opts.holePlay : ring.shoulder ? REAMED_HOLE_PLAY : PRESET_COMMON.holePlay,
+    holePlay: fin(opts.holePlay) && opts.holePlay >= 0 ? opts.holePlay
+      : ring.shoulder ? REAMED_HOLE_PLAY : ring.standoff ? standoffHolePlay(ring.standoff.pocketLocated) : PRESET_COMMON.holePlay,
     bearingClearance: PRESET_COMMON.bearingClearance,
     profileError: p.profileError,
     pinPosition: p.pinPosition,
-    pinDiaTol: PRESET_COMMON.pinDiaTol,
+    // commercial standoffs hold the diameter to about ± 0.05 mm
+    pinDiaTol: ring.standoff ? STANDOFF_DIA_TOL : PRESET_COMMON.pinDiaTol,
     eccError: p.eccError,
     innerHolePosition: p.innerHolePosition,
     innerPinDiaTol: PRESET_COMMON.innerPinDiaTol,
@@ -620,9 +641,9 @@ export function pinStiffness(inputs: GearboxInputs, F: number, kappaA: number, s
   let kb = Infinity, deltaB = 0;
   if (inputs.outerPin.construction !== 'integral') {
     const bolt = inputs.outerPin.construction === 'boltBushing';
-    const d = bolt ? inputs.outerPin.shankDia : 2 * inputs.rr;
     const E = bolt ? SPEC_STEEL.E : outerPinMaterial(inputs.outerPin).E;
-    const I = (Math.PI * d ** 4) / 64;
+    // solid round of the shank / 2 rr; a standoff is hollow (its tapped bore)
+    const I = outerPinSecondMoment(inputs.outerPin, inputs.rr);
     kb = (48 * E * I) / span ** 3;
     deltaB = Fs / kb;
   }
@@ -1177,7 +1198,7 @@ function* toleranceGen(inputs: GearboxInputs, opts: ToleranceOptions = {}): Gene
   const sens = opts.sensitivity !== false;
   const sTrials = fin(opts.sensitivityTrials) ? Math.max(2, Math.floor(opts.sensitivityTrials)) : Math.min(100, trials);
   const kcTerms: ToleranceTerm[] = (['bushingPlay', 'holePlay', 'profileError', 'pinPosition', 'pinDiaTol', 'eccError'] as ToleranceTerm[])
-    .filter((x) => !(integral && INTEGRAL_UNUSED_TERMS.includes(x)) && !(ring.shoulder && x === 'bushingPlay'));
+    .filter((x) => !(integral && INTEGRAL_UNUSED_TERMS.includes(x)) && !((ring.shoulder || ring.standoff) && x === 'bushingPlay'));
   const totalWork = trials + (sens ? kcTerms.length * sTrials : 0);
   let done = 0;
   let slice = now();
@@ -1212,7 +1233,7 @@ function* toleranceGen(inputs: GearboxInputs, opts: ToleranceOptions = {}): Gene
   if (sens) {
     const zero: ToleranceSpec = { ...spec };
     for (const k of TOLERANCE_MM_FIELDS) zero[k] = 0;
-    const blTerms = TOLERANCE_MM_FIELDS.filter((x) => !(integral && INTEGRAL_UNUSED_TERMS.includes(x)) && !(ring.shoulder && x === 'bushingPlay'));
+    const blTerms = TOLERANCE_MM_FIELDS.filter((x) => !(integral && INTEGRAL_UNUSED_TERMS.includes(x)) && !((ring.shoulder || ring.standoff) && x === 'bushingPlay'));
     const bItems: SensitivityItem[] = blTerms.map((term) => {
       const s1 = { ...zero, [term]: spec[term] };
       // a shoulder bolt's mean undersize belongs to the pin diameter term (the shoulder band)
@@ -1309,6 +1330,24 @@ export async function analyzeToleranceAsync(inputs: GearboxInputs, opts?: Tolera
 /** The patch that applies a profile clearance (keeps the rest of the spec). */
 export function withTolerance(inputs: GearboxInputs, patch: Partial<ToleranceSpec>): GearboxInputs {
   return { ...inputs, tolerance: { ...toleranceOf(inputs), ...patch } };
+}
+
+/**
+ * Outer standoffs located in milled pockets (true) or only screwed on through clearance holes (false). The bolt hole play
+ * follows (0.02 / 0.1 mm): a stored preset spec is re-fitted (worst case; with `fit` also a statistical one, via
+ * fitClearances), a custom or not-yet-fitted statistical spec only gets the new hole play. A missing spec stays missing
+ * (the default spec already follows the switch).
+ */
+export function withStandoffPockets(g: GearboxInputs, located: boolean, fit = false): GearboxInputs {
+  const next: GearboxInputs = { ...g, outerPin: { ...g.outerPin, pocketLocated: located } };
+  if (g.tolerance === undefined || g.tolerance === null) return next;
+  const cur = toleranceOf(g);
+  const holePlay = standoffHolePlay(located);
+  const statistical = cur.fitMode === 'statistical';
+  const pid = matchProcess(cur, ringTolOf(g), fit && statistical ? fitClearances(g, cur) : null);
+  if (!pid || (statistical && !fit)) return { ...next, tolerance: { ...cur, holePlay } };
+  const t = processSpec(pid, { integral: ringTolOf(next), holePlay, keep: cur });
+  return { ...next, tolerance: fit ? fitClearances(next, t) : t };
 }
 
 // ---------------------------------------------------------------------------

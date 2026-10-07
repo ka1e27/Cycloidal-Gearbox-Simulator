@@ -8,6 +8,8 @@ import {
   INNER_PIN_OPTIONS,
   OUTER_PIN_OPTIONS,
   SHOULDER_BOLT_OPTIONS,
+  OUTER_STANDOFF_OPTIONS,
+  outerStandoffFor,
   validateAdvisorLocks,
   type AdvisorLockKey,
   type AdvisorLocks,
@@ -77,6 +79,12 @@ export function outerPinFromInputs(g: GearboxInputs): OuterPinLock {
   if (g.outerPin.construction === 'shoulderBolt') {
     // index into SHOULDER_BOLT_OPTIONS
     const j = SHOULDER_BOLT_OPTIONS.findIndex((p) => Math.abs(p.dia - od) < 2e-3);
+    return j >= 0 ? { kind: 'catalog', index: j } : { kind: 'custom', od, shank: od };
+  }
+  if (g.outerPin.construction === 'standoff') {
+    // index into OUTER_STANDOFF_OPTIONS (the stored id tells two threads of one OD apart)
+    const so = outerStandoffFor(g.rr, g.outerPin.standoffId);
+    const j = so ? OUTER_STANDOFF_OPTIONS.indexOf(so) : -1;
     return j >= 0 ? { kind: 'catalog', index: j } : { kind: 'custom', od, shank: od };
   }
   const bolt = g.outerPin.construction === 'boltBushing';
@@ -240,8 +248,8 @@ const idx = (x: unknown, n: number): number | null => (typeof x === 'number' && 
 
 function normOuter(x: unknown): OuterPinLock | null {
   if (!isObj(x)) return null;
-  // the index points into OUTER_PIN_OPTIONS or (shoulder bolts) SHOULDER_BOLT_OPTIONS; the advisor checks the range per construction
-  if (x.kind === 'catalog') { const i = idx(x.index, Math.max(OUTER_PIN_OPTIONS.length, SHOULDER_BOLT_OPTIONS.length)); return i === null ? null : { kind: 'catalog', index: i }; }
+  // the index points into OUTER_PIN_OPTIONS, SHOULDER_BOLT_OPTIONS (shoulder bolts) or OUTER_STANDOFF_OPTIONS (standoffs); the advisor checks the range per construction
+  if (x.kind === 'catalog') { const i = idx(x.index, Math.max(OUTER_PIN_OPTIONS.length, SHOULDER_BOLT_OPTIONS.length, OUTER_STANDOFF_OPTIONS.length)); return i === null ? null : { kind: 'catalog', index: i }; }
   if (x.kind === 'custom') {
     const od = num(x.od), shank = num(x.shank);
     return od === null ? null : { kind: 'custom', od, shank: shank ?? od * 0.6 };

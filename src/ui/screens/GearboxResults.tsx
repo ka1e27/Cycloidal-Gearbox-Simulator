@@ -129,17 +129,18 @@ export function PolymerCard() {
 export const INTEGRAL_ETA = 0.78;
 
 /** The sliding-contact notice of a machined ring (kind 'integral') or a shoulder bolt ring without bushings ('shoulder'). */
-export function IntegralCard({ slot, kind = 'integral' }: { slot: Slot | null; kind?: 'integral' | 'shoulder' }) {
+export function IntegralCard({ slot, kind = 'integral' }: { slot: Slot | null; kind?: 'integral' | 'shoulder' | 'standoff' }) {
   const { state, updateArm } = useStore();
   const joint = slot && slot !== CUSTOM ? state.arm.joints.find((j) => j.id === slot) : undefined;
   const motor = joint?.drive === 'cycloidal' ? joint.motor : undefined;
   const eta = motor?.efficiency;
   const shoulder = kind === 'shoulder';
+  const standoff = kind === 'standoff';
   return (
-    <Notice kind="info" title={shoulder ? 'Shoulder bolts: the disc slides on the ground shoulders' : 'Machined ring: the disc slides on the teeth'}>
+    <Notice kind="info" title={shoulder ? 'Shoulder bolts: the disc slides on the ground shoulders' : standoff ? 'Round standoffs: the disc slides on the standoffs' : 'Machined ring: the disc slides on the teeth'}>
       <ul className="plain-list">
-        <li>{shoulder
-          ? 'Sliding contact (no rolling bushings): grease the shoulders, and expect more wear and a lower efficiency, about 0.75 to 0.8.'
+        <li>{shoulder || standoff
+          ? `Sliding contact (no rolling bushings): grease the ${standoff ? 'standoffs' : 'shoulders'}, and expect more wear and a lower efficiency, about 0.75 to 0.8.`
           : 'Sliding contact (no rolling bushings): grease the teeth, and expect more wear and a lower efficiency, about 0.75 to 0.8.'}</li>
         <li>
           Set the motor efficiency to match, so the recommended ratio has enough torque.
@@ -154,7 +155,12 @@ export function IntegralCard({ slot, kind = 'integral' }: { slot: Slot | null; k
             </>
           ) : ' Enter a motor under Motor & ratio to use it.'}
         </li>
-        {shoulder ? (
+        {standoff ? (
+          <>
+            <li>A Delrin disc on stainless or brass standoffs is a good pair; aluminum standoffs on an aluminum disc gall.</li>
+            <li>Round standoffs only (not hex). The standoff length sets the plate spacing (±0.1 mm typical): check the axial gaps or set the spacing with the housing ring.</li>
+          </>
+        ) : shoulder ? (
           <>
             <li>A Delrin or acetal disc on the steel shoulders is an excellent pair: low friction, quiet, no galling.</li>
             <li>An aluminum disc on steel needs grease, or hard-anodize the disc.</li>

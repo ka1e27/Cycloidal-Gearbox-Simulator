@@ -5,6 +5,7 @@ import {
   DEFAULT_EXPORT_OPTIONS,
   buildDxf,
   buildParts,
+  defaultPocketDepth,
   normalizeExportOptions,
   validateExportOptions,
   type ExportOptions,
@@ -112,6 +113,8 @@ export function ExportDxfPanel({
   const byId = (id: string): PartDrawing | undefined => res.parts.find((p) => p.id === id);
   const integral = inputs.outerPin.construction === 'integral';
   const shoulder = inputs.outerPin.construction === 'shoulderBolt';
+  const standoffRing = inputs.outerPin.construction === 'standoff';
+  const pockets = standoffRing && inputs.outerPin.pocketLocated !== false;
 
   return (
     <Card
@@ -160,8 +163,10 @@ export function ExportDxfPanel({
                   {integral && id === 'housing' ? 'Internal teeth with tool fillets, outline and mounting holes'
                     : integral && id === 'pins' ? 'Inner standoff or pin section (no outer pins)'
                     : shoulder && id === 'housing' ? 'Shoulder plate (reamed holes) and far plate (tapped), side by side'
-                    : shoulder && id === 'pins' ? 'Shoulder bolt and standoff sections' : PART_BLURB[id]}
-                  {p && <span className="dxf-qty"> · make {p.id === 'pins' ? (integral ? String(inputs.Zw) : shoulder ? `${inputs.Zp} + ${inputs.Zw}` : `${inputs.Zp} + ${inputs.Zp} + ${inputs.Zw}`) : shoulder && id === 'housing' ? '1 + 1' : p.quantity}</span>}
+                    : shoulder && id === 'pins' ? 'Shoulder bolt and standoff sections'
+                    : standoffRing && id === 'housing' ? (pockets ? 'Two plates alike: standoff pockets with screw clearance holes' : 'Two plates alike: screw clearance holes for the standoffs')
+                    : standoffRing && id === 'pins' ? 'Outer and inner standoff sections' : PART_BLURB[id]}
+                  {p && <span className="dxf-qty"> · make {p.id === 'pins' ? (integral ? String(inputs.Zw) : shoulder || standoffRing ? `${inputs.Zp} + ${inputs.Zw}` : `${inputs.Zp} + ${inputs.Zp} + ${inputs.Zw}`) : shoulder && id === 'housing' ? '1 + 1' : p.quantity}</span>}
                 </span>
               </div>
               <Button
@@ -372,6 +377,18 @@ export function ExportDxfPanel({
               error={fieldErrors.housingHoleDia}
             />
           </>
+        )}
+        {pockets && (
+          <NumberField
+            label="Standoff pocket depth"
+            quantity="length"
+            help={DXF_HELP.standoffPocketDepth}
+            value={opts.standoffPocketDepth ?? defaultPocketDepth(opts.units)}
+            onChange={(v) => patch({ standoffPocketDepth: v ?? null })}
+            defaultValue={defaultPocketDepth(opts.units)}
+            step={0.1}
+            error={fieldErrors.standoffPocketDepth}
+          />
         )}
         {modified && (
           <div className="dxf-reset">

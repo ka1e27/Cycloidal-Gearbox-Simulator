@@ -1,7 +1,8 @@
 // Default inputs and the SPEC.md joint presets.
 
 import { DEFAULT_ROOT_CLEARANCE, DEFAULT_TOOL_RADIUS, defaultHousingMaterial } from './integral';
-import { materialForm, materialProps, SPEC_STEEL, type MaterialProps } from './materials';
+import { isStandoffMaterialId, materialForm, materialProps, SPEC_STEEL, type MaterialProps } from './materials';
+import { OUTER_STANDOFF_OPTIONS } from './catalog';
 import { DEFAULT_INNER_PIN_SUPPORT, INNER_PIN_SUPPORTS } from './types';
 import { normalizeToleranceSpec } from './tolerance';
 import type { GearboxInputs, InnerPinSupport } from './types';
@@ -137,6 +138,13 @@ export function normalizeGearboxInputs(partial: unknown): GearboxInputs {
   fixForm(out.outerPin.material, rawMat(rawMat(p.outerPin)?.material));
   if (out.outerPin.housingMaterial) fixForm(out.outerPin.housingMaterial, rawMat(rawMat(p.outerPin)?.housingMaterial));
   fixForm(out.innerPin.material, rawMat(rawMat(p.innerPin)?.material));
+  // outer standoff fields (optional: older sessions have none, and defaults fill them in outerStandoffSpecOf)
+  const rawOp = rawMat(p.outerPin);
+  if (rawOp) {
+    if (typeof rawOp.standoffId === 'string' && OUTER_STANDOFF_OPTIONS.some((o) => o.id === rawOp.standoffId)) out.outerPin.standoffId = rawOp.standoffId;
+    if (isStandoffMaterialId(rawOp.standoffMaterial)) out.outerPin.standoffMaterial = rawOp.standoffMaterial;
+    if (typeof rawOp.pocketLocated === 'boolean') out.outerPin.pocketLocated = rawOp.pocketLocated;
+  }
   // machining tolerances (Addition 13): optional; a missing spec stays missing (= the default spec, profile clearance 0)
   if (p.tolerance !== undefined && p.tolerance !== null) out.tolerance = normalizeToleranceSpec(p.tolerance);
   if (typeof p.useToleranceKc === 'boolean') out.useToleranceKc = p.useToleranceKc;

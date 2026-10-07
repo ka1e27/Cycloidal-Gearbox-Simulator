@@ -22,6 +22,7 @@ import {
   INNER_PIN_OPTIONS,
   OUTER_PIN_OPTIONS,
   SHOULDER_BOLT_OPTIONS,
+  OUTER_STANDOFF_OPTIONS,
   ZP_OPTIONS,
   ZW_OPTIONS,
 } from './catalog';
@@ -143,8 +144,8 @@ export interface AdvisorOptions {
   /** When nothing meets the target, compute the relax hints (one re-run per released lock). Default true. */
   hints?: boolean;
   /**
-   * Shoulder bolt construction: which SHOULDER_BOLT_OPTIONS the search uses. Default 'metric' (the UI passes 'inch' when
-   * the length unit is inches).
+   * Shoulder bolt / outer standoff constructions: which SHOULDER_BOLT_OPTIONS / OUTER_STANDOFF_OPTIONS the search uses.
+   * Default 'metric' (the UI passes 'inch' when the length unit is inches).
    */
   shoulderSystem?: 'metric' | 'inch' | 'both';
 }
@@ -262,7 +263,7 @@ export interface AdvisorResult {
 // Search space
 // ---------------------------------------------------------------------------
 
-interface OuterOpt { od: number; shank: number; bolt: string | null; custom: boolean }
+interface OuterOpt { od: number; shank: number; bolt: string | null; custom: boolean; /** outer standoff catalog id */ standoffId?: string }
 interface InnerOpt { od: number; bore: number; thread: string | null; custom: boolean }
 interface BrgOpt { name: string; bore: number | null; OD: number; C: number; C0: number; custom: boolean }
 
@@ -345,6 +346,10 @@ const catalogOuter = (i: number): OuterOpt => ({
 const catalogShoulder = (i: number): OuterOpt => ({
   od: SHOULDER_BOLT_OPTIONS[i].dia, shank: SHOULDER_BOLT_OPTIONS[i].dia, bolt: SHOULDER_BOLT_OPTIONS[i].thread, custom: false,
 });
+const catalogStandoff = (i: number): OuterOpt => ({
+  od: OUTER_STANDOFF_OPTIONS[i].od, shank: OUTER_STANDOFF_OPTIONS[i].od, bolt: OUTER_STANDOFF_OPTIONS[i].thread, custom: false,
+  standoffId: OUTER_STANDOFF_OPTIONS[i].id,
+});
 const catalogInner = (i: number): InnerOpt => ({
   od: INNER_PIN_OPTIONS[i].od, bore: INNER_PIN_OPTIONS[i].bore, thread: INNER_PIN_OPTIONS[i].thread, custom: false,
 });
@@ -374,7 +379,8 @@ export function validateAdvisorLocks(inputs: GearboxInputs, locks: AdvisorLocks 
   const o = locks.outerPin;
   if (o) {
     if (o.kind === 'catalog') {
-      const n = inputs.outerPin?.construction === 'shoulderBolt' ? SHOULDER_BOLT_OPTIONS.length : OUTER_PIN_OPTIONS.length;
+      const n = inputs.outerPin?.construction === 'shoulderBolt' ? SHOULDER_BOLT_OPTIONS.length
+        : inputs.outerPin?.construction === 'standoff' ? OUTER_STANDOFF_OPTIONS.length : OUTER_PIN_OPTIONS.length;
       if (!Number.isInteger(o.index) || o.index < 0 || o.index >= n) errors.push('Locked outer pin is not in the catalog');
     } else {
       posIn(o.od, 'outer pin OD', 2 * M.rr, 'mm');
@@ -426,10 +432,11 @@ function buildSpace(inputs: GearboxInputs, o: ResolvedOptions): Space {
   let outer: OuterOpt[];
   const integral = inputs.outerPin.construction === 'integral';
   const shoulder = inputs.outerPin.construction === 'shoulderBolt';
+  const standoffRing = inputs.outerPin.construction === 'standoff';
   if (lk.outerPin) {
     outer = [lk.outerPin.kind === 'catalog'
       ? (integral ? { ...catalogOuter(lk.outerPin.index), bolt: null }
-        : shoulder ? catalogShoulder(lk.outerPin.index) : catalogOuter(lk.outerPin.index))
+        : shoulder ? catalogShoulder(lk.outerPin.index) : standoffRing ? catalogStandoff(lk.outerPin.index) : catalogOuter(lk.outerPin.index))
       : { od: lk.outerPin.od, shank: lk.outerPin.shank, bolt: null, custom: true }];
   } else if (integral) {
     // a machined ring has no catalog: the tooth radius is searched on a continuous grid
@@ -441,6 +448,14 @@ function buildSpace(inputs: GearboxInputs, o: ResolvedOptions): Space {
       .filter((x) => sys === 'both' || x.p.system === sys)
       .sort((a, b) => a.p.dia - b.p.dia)
       .map((x) => catalogShoulder(x.i));
+  } else if (standoffRing) {
+    // round standoffs of the chosen unit system (the shoulderSystem setting), OD ascending; for one OD the smaller bore
+    // (stronger) first
+    const sys = o.shoulderSystem;
+    outer = OUTER_STANDOFF_OPTIONS.map((p, i) => ({ p, i }))
+      .filter((x) => sys === 'both' || x.p.system === sys)
+      .sort((a, b) => a.p.od - b.p.od || a.p.bore - b.p.bore)
+      .map((x) => catalogStandoff(x.i));
   } else outer = OUTER_PIN_OPTIONS.map((_, i) => catalogOuter(i));
 
   let inner: InnerOpt[];
@@ -498,6 +513,7 @@ function buildInputs(base: GearboxInputs, sp: Space, c: Cand): GearboxInputs {
     outerPin: {
       ...base.outerPin,
       shankDia: base.outerPin.construction === 'boltBushing' ? outer.shank : base.outerPin.shankDia,
+      ...(base.outerPin.construction === 'standoff' && outer.standoffId ? { standoffId: outer.standoffId } : {}),
     },
     innerPin: {
       ...base.innerPin,
@@ -527,7 +543,7 @@ function makeDesign(slot: AdvisorSlot, base: GearboxInputs, sp: Space, c: Cand, 
     e: c.e,
     K1: result.derived.K1,
     outerPinOD: outer.od,
-    outerBolt: bolt || shoulderBolt ? outer.bolt : null,
+    outerBolt: bolt || shoulderBolt || base.outerPin.construction === 'standoff' ? outer.bolt : null,
     shankDia: bolt ? outer.shank : null,
     outerCustom: outer.custom,
     innerPinOD: inner.od,
@@ -656,7 +672,7 @@ function* searchGen(
   // Per-option precomputation
   const outerRr = sp.outer.map((p) => p.od / 2);
   const outerZ = sp.outer.map((p) =>
-    outerPinSectionModulus({ ...base.outerPin, shankDia: p.shank }, p.od / 2));
+    outerPinSectionModulus({ ...base.outerPin, shankDia: p.shank, ...(p.standoffId ? { standoffId: p.standoffId } : {}) }, p.od / 2));
   const innerRw = sp.inner.map((p) => p.od / 2);
   const innerZ = sp.inner.map((p) =>
     innerPinSectionModulus({ ...base.innerPin, od: p.od, bore: p.bore }, p.od / 2));
@@ -994,6 +1010,8 @@ function hintFor(key: AdvisorLockKey | 'maxHousingOD', d: AdvisorDesign): { valu
     ? `${trimNum(d.outerPinOD, 2)} mm solid pins`
     : d.inputs.outerPin.construction === 'shoulderBolt'
     ? `${trimNum(d.outerPinOD, 3)} mm shoulder bolts${d.outerBolt ? ` (${d.outerBolt})` : ''}`
+    : d.inputs.outerPin.construction === 'standoff'
+    ? `${trimNum(d.outerPinOD, 3)} mm round standoffs${d.outerBolt ? ` (${d.outerBolt})` : ''}`
     : d.outerBolt ? `${trimNum(d.outerPinOD, 2)} mm bushings on ${d.outerBolt} bolts` : `${trimNum(d.outerPinOD, 2)} mm bushings`;
   const inner = d.inputs.innerPin.construction === 'solid'
     ? `${trimNum(d.innerPinOD, 2)} mm solid pins`

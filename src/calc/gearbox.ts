@@ -8,9 +8,12 @@ import {
   outerPinBendingLimit,
   outerPinSectionModulus,
   OUTER_PIN_CONSTRUCTIONS,
+  STANDOFF_GALLING_WARNING,
+  isStandoffMaterialId,
+  standoffGalls,
   type MaterialProps,
 } from './materials';
-import { shoulderBoltFor } from './catalog';
+import { outerStandoffFor, shoulderBoltFor } from './catalog';
 import {
   bearingUnitLoad,
   computeProfile,
@@ -158,6 +161,10 @@ export function validateGearboxInputs(inp: GearboxInputs): { errors: string[]; w
         checkMaterial('Housing material', ig.housingMaterial, errors);
         num(ig.rootClearance, 'Root clearance', (x) => x >= 0, 'must be >= 0 mm', M.gap, 'mm');
         num(ig.toolRadius, 'Tool radius', (x) => x > 0, 'must be > 0 mm', M.rr, 'mm');
+      } else if (inp.outerPin.construction === 'standoff') {
+        // the standoff material comes from its id (stainless / aluminum / brass); the stored material is not used
+        const sm = (inp.outerPin as { standoffMaterial?: unknown }).standoffMaterial;
+        if (sm !== undefined && !isStandoffMaterialId(sm)) errors.push('Standoff material must be stainless, aluminum or brass');
       } else if (inp.outerPin.construction !== 'shoulderBolt') {
         // a shoulder bolt is always SHOULDER_BOLT_STEEL: its stored material is not used
         checkMaterial('Outer pin material', inp.outerPin.material, errors);
@@ -166,7 +173,7 @@ export function validateGearboxInputs(inp: GearboxInputs): { errors: string[]; w
         num(inp.outerPin.shankDia, 'Bolt shank diameter', (x) => x > 0, 'must be > 0 mm', M.pinDia, 'mm');
         num(inp.outerPin.boltYield, 'Bolt yield', (x) => x > 0, 'must be > 0 MPa', M.strengthMPa, 'MPa');
       } else if (!OUTER_PIN_CONSTRUCTIONS.includes(inp.outerPin.construction)) {
-        errors.push('Outer pin construction must be boltBushing, solid, shoulderBolt or integral');
+        errors.push('Outer pin construction must be boltBushing, solid, shoulderBolt, standoff or integral');
       }
     }
     if (!inp.innerPin) errors.push('Inner pin spec missing');
@@ -205,6 +212,12 @@ export function validateGearboxInputs(inp: GearboxInputs): { errors: string[]; w
     if (inp.Kc < 1 || inp.KcLife < 1) warnings.push('Kc below 1 assumes better than perfect load sharing.');
     if (inp.outerPin.construction === 'shoulderBolt' && !shoulderBoltFor(inp.rr)) {
       warnings.push(`rr = ${inp.rr} mm is not a catalog shoulder bolt (shoulder ${(2 * inp.rr).toFixed(3)} mm): pick a size so the thread and the tolerance band are known.`);
+    }
+    if (inp.outerPin.construction === 'standoff') {
+      if (!outerStandoffFor(inp.rr, inp.outerPin.standoffId)) {
+        warnings.push(`rr = ${inp.rr} mm is not a catalog round standoff (OD ${(2 * inp.rr).toFixed(3)} mm): bending assumes a bore of half the OD. Pick a size so the thread and bore are known.`);
+      }
+      if (standoffGalls(inp)) warnings.push(STANDOFF_GALLING_WARNING);
     }
     if (inp.outerPin.construction !== 'integral' && 2 * inp.rr > 2 * Rp * Math.sin(Math.PI / inp.Zp) - 1) {
       warnings.push('Neighbouring outer pins are less than 1 mm apart edge to edge.');
@@ -411,10 +424,13 @@ export function buildChecks(
     checks.push(
       mkCheck('boltBending',
         inp.outerPin.construction === 'solid' ? 'Outer pin bending'
-          : inp.outerPin.construction === 'shoulderBolt' ? 'Shoulder bolt bending' : 'Outer bolt bending',
+          : inp.outerPin.construction === 'shoulderBolt' ? 'Shoulder bolt bending'
+          : inp.outerPin.construction === 'standoff' ? 'Outer standoff bending' : 'Outer bolt bending',
         l.boltBendingSimple, boltLim, 'MPa', 'max',
         inp.outerPin.construction === 'solid'
           ? 'Simply-supported value vs min(0.4 Sy, sigma_f) of the pin material'
+          : inp.outerPin.construction === 'standoff'
+            ? 'Simply-supported value on the hollow standoff (OD 2 rr, tapped bore) vs min(0.4 Sy, sigma_f) of the standoff material'
           : inp.outerPin.construction === 'shoulderBolt'
             ? 'Simply-supported value on the shoulder (d = 2 rr) vs min(0.4 Sy, sigma_f) of the class 12.9 shoulder bolt steel'
             : 'Simply-supported value vs 0.4 x bolt yield (fatigue)',

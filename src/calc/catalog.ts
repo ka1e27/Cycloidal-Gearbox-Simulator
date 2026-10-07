@@ -139,6 +139,62 @@ export function shoulderBandOf(rr: number): { meanUndersize: number; halfBand: n
   return { meanUndersize: -(upper + lower) / 2, halfBand: (upper - lower) / 2, option: o };
 }
 
+export interface OuterStandoffOption {
+  /** Stable id, e.g. 'so-m3' or 'so-in-1/4-8' */
+  id: string;
+  system: UnitSystem;
+  /** Nominal round OD, mm (the checks use this; rr = od / 2) */
+  od: number;
+  /** OD label, e.g. '5 mm' or '1/4"' */
+  label: string;
+  /** Female thread at both ends, e.g. 'M3' or '#8-32' */
+  thread: string;
+  /** Tapped bore (tap drill), mm: the hollow bending section */
+  bore: number;
+  /** Screw clearance hole for the thread (normal fit), mm */
+  clearanceHole: number;
+}
+
+/**
+ * Round female-female standoffs used as OUTER pins (no bushing): OD -> thread, with the tapped bore so bending uses a
+ * hollow section. Metric bores match INNER_PIN_OPTIONS; inch bores are the number tap drills. Append only (advisor locks
+ * may store an index).
+ */
+export const OUTER_STANDOFF_OPTIONS: readonly OuterStandoffOption[] = [
+  { id: 'so-m2.5', system: 'metric', od: 4.5, label: '4.5 mm', thread: 'M2.5', bore: 2.05, clearanceHole: 2.9 },
+  { id: 'so-m3', system: 'metric', od: 5, label: '5 mm', thread: 'M3', bore: 2.46, clearanceHole: 3.4 },
+  { id: 'so-m4', system: 'metric', od: 6, label: '6 mm', thread: 'M4', bore: 3.24, clearanceHole: 4.5 },
+  { id: 'so-m5', system: 'metric', od: 8, label: '8 mm', thread: 'M5', bore: 4.13, clearanceHole: 5.5 },
+  { id: 'so-in-3/16', system: 'inch', od: 4.763, label: '3/16"', thread: '#4-40', bore: 2.261, clearanceHole: 3.264 },
+  { id: 'so-in-1/4-6', system: 'inch', od: 6.35, label: '1/4"', thread: '#6-32', bore: 2.705, clearanceHole: 3.797 },
+  { id: 'so-in-1/4-8', system: 'inch', od: 6.35, label: '1/4"', thread: '#8-32', bore: 3.454, clearanceHole: 4.496 },
+  { id: 'so-in-5/16', system: 'inch', od: 7.938, label: '5/16"', thread: '#10-32', bore: 4.039, clearanceHole: 5.105 },
+];
+
+/** Outer standoffs of one unit system, OD ascending (then the larger thread). */
+export function outerStandoffsOf(system: UnitSystem): OuterStandoffOption[] {
+  return OUTER_STANDOFF_OPTIONS.filter((o) => o.system === system).sort((a, b) => a.od - b.od || a.bore - b.bore);
+}
+
+/**
+ * The outer standoff of a gearbox: the stored id when its OD is 2 rr (to 0.002 mm), else the first catalog entry of that
+ * OD, else null (a non-catalog size).
+ */
+export function outerStandoffFor(rr: number, id?: string | null): OuterStandoffOption | null {
+  const byId = id ? OUTER_STANDOFF_OPTIONS.find((o) => o.id === id) : undefined;
+  if (byId && Math.abs(byId.od - 2 * rr) < 2e-3) return byId;
+  return OUTER_STANDOFF_OPTIONS.find((o) => Math.abs(o.od - 2 * rr) < 2e-3) ?? null;
+}
+
+/** Bore of a non-catalog outer standoff, as a fraction of its OD (about M3 in 5 mm). */
+export const STANDOFF_FALLBACK_BORE_RATIO = 0.5;
+
+/** Tapped bore of the outer standoff, mm: the catalog bore, or 0.5 OD for a non-catalog size. */
+export function outerStandoffBore(rr: number, id?: string | null): number {
+  const o = outerStandoffFor(rr, id);
+  return o ? o.bore : STANDOFF_FALLBACK_BORE_RATIO * 2 * rr;
+}
+
 export interface InnerPinOption {
   /** Standoff / pin outer diameter, mm */
   od: number;

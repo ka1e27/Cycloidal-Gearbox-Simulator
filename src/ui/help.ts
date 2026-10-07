@@ -174,7 +174,7 @@ export const HELP: Record<string, HelpEntry> = {
     typical: 'Plate for metals and machined plastics, printed for PETG, PLA and the other printed plastics.',
   },
   outerConstruction: {
-    what: 'How the outer ring is built: a bolt with a free-spinning bushing, one solid pin, a ground shoulder bolt (the shoulder is the pin), or teeth machined straight into the housing (no pins at all).',
+    what: 'How the outer ring is built: a bolt with a free-spinning bushing, one solid pin, a ground shoulder bolt (the shoulder is the pin), a plain round standoff (the standoff is the pin), or teeth machined straight into the housing (no pins at all).',
     why: 'A spinning bushing rolls on the lobes instead of sliding, which cuts friction and wear. Machined teeth save parts and space but slide.',
     typical: 'Bolt + bushing (M3 bolt with a 5 mm bushing).',
   },
@@ -221,6 +221,45 @@ export const HELP: Record<string, HelpEntry> = {
     up: 'A wider band: more backlash and less even load sharing.',
     down: 'A tighter band: more even pins.',
     typical: 'Metric: mean undersize 0.0255 mm (0.0128 mm gap at each pin), ± 0.0125 mm random.',
+  },
+  outerStandoff: {
+    title: 'Round standoff (no bushing)',
+    what: 'Each outer pin is a plain round female-female standoff: it spans the two housing plates and a screw goes into each end. No bushing: the disc slides on the standoff OD.',
+    why: 'The cheapest pin you can buy: an off-the-shelf standoff and two screws, no bushings, no turned parts. It bends as a hollow tube (the tapped bore runs through), so it is weaker than a solid pin of the same OD.',
+    up: 'Compared with bolt + bushing: fewer parts and lower cost, and the full OD bends instead of a thin bolt shank.',
+    down: 'Sliding contact: grease it, expect more wear and an efficiency of about 0.75 to 0.8. The diameter is only held to about ±0.05 mm, the material is soft (stainless 303/304 or brass), and the length sets the plate spacing.',
+    typical: '5 mm M3 stainless standoffs in 1.5 mm pockets, with a Delrin disc.',
+    formula: 'bending: σ = F·span/4 / (π·(OD⁴ − bore⁴)/(32·OD))  vs  min(0.4·Sy, σf)',
+  },
+  outerStandoffSize: {
+    what: 'Catalog round standoff: the OD (the pin, 2·rr) and the thread tapped through it. Metric and inch sizes; 1/4" comes with a #6-32 or #8-32 thread.',
+    why: 'The OD sets the contact stress and the bending; the tapped bore weakens the section (a larger thread in the same OD bends more). The thread sets the screw clearance holes.',
+    up: 'Lower contact stress and less bending, but the pins take more room around the ring (a larger D or housing).',
+    down: 'A tighter ring, but higher contact stress and bending.',
+    typical: '5 mm M3 or 6 mm M4 metric; 1/4" #6-32 or 5/16" #10-32 inch.',
+  },
+  outerStandoffMaterial: {
+    what: 'What the standoffs are made of: stainless steel 303/304, aluminum 6061-T6 or brass C360. It sets the bending limit and the metal side of the contact pair.',
+    why: 'Standoff metals are soft: annealed stainless yields at only about 215 MPa, so on a metal disc the standoff, not the disc, often sets the contact limit.',
+    up: 'Brass bends best here (limit about 124 MPa) and slides well on plastic; aluminum is light (limit 104 MPa).',
+    down: 'Stainless is the stiffest and resists corrosion but has the lowest bending limit (86 MPa). Aluminum standoffs gall on an aluminum disc.',
+    typical: 'Stainless (E 193 GPa, Sy 215, fatigue 240 MPa): bending limit min(0.4·Sy, σf) = 86 MPa.',
+  },
+  standoffPockets: {
+    title: 'Standoffs located in pockets',
+    what: 'On: the standoff ends sit in shallow milled pockets of the standoff OD (about 1.5 mm or 1/16" deep) in both plates, so the pocket locates the pin. Off: the standoffs are only screwed on through clearance holes, so the screw play sets the pin position.',
+    why: 'The pin position error drives backlash and uneven load sharing. A pocket holds the standoff to about 0.02 mm; a screw in a clearance hole lets it wander about 0.1 mm.',
+    up: 'Pockets: much less backlash (J2 with a Delrin disc: about 26′ vs 39′ p95) and more even pins, for one extra milling op.',
+    down: 'Clearance holes only: no pockets to mill, but more backlash and a higher tolerance Kc.',
+    typical: 'On: pockets of OD + 0.04 mm, 1.5 mm deep, with the screw clearance hole through the centre.',
+  },
+  standoffPairing: {
+    title: 'Disc material on a standoff',
+    what: 'The disc slides on the standoffs, so the pair decides friction, wear and galling.',
+    why: 'Like metals (aluminum on aluminum) gall: they weld and tear at the contact when they slide.',
+    up: 'A Delrin (acetal) disc on stainless or brass standoffs is a good pair: low friction, quiet, no galling.',
+    down: 'Aluminum standoffs on an aluminum disc gall: avoid the pair, or hard-anodize the disc. An aluminum disc on stainless needs grease.',
+    typical: 'Delrin disc, greased, on stainless standoffs.',
   },
   integralRing: {
     title: 'Machined into housing (integral ring)',
@@ -904,6 +943,13 @@ export const DXF_HELP: Record<string, HelpEntry> = {
   outputCentre: {
     what: 'Optional hole through the middle of the output and tie plates.',
     typical: 'Off.',
+  },
+  standoffPocketDepth: {
+    what: 'How deep the pockets that locate the outer standoff ends are milled into each plate. It is written as a note on the housing drawing (a DXF has no depth).',
+    why: 'The pocket wall holds the standoff in place; the screw then only clamps it.',
+    up: 'Deeper: a firmer location, but a thicker plate and less length between the plates.',
+    down: 'Shallower: easier to mill, but less wall to locate the standoff.',
+    typical: '1.5 mm (or 1/16") in a 4 to 6 mm plate. The standoff length is then the plate spacing plus both pocket depths.',
   },
   housingHoles: {
     what: 'Mounting holes through the wall of a machined ring housing, evenly spaced on a circle in the middle of the wall. They bolt the end covers to it. 0 leaves them out.',

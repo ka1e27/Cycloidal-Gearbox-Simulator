@@ -320,7 +320,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const engine = toEngineLocks(lockState, inputs, plan.mode === 'motor' ? plan.zps : null);
     const { locks, ratioVary, zpSet } = engine;
     const shoulderSystem = shoulderSystemFor(s.units);
-    const key = advisorKey(inputs, o, inputs.outerPin.construction === 'shoulderBolt' ? { ...engine, shoulderSystem } : engine);
+    const key = advisorKey(inputs, o, inputs.outerPin.construction === 'shoulderBolt' || inputs.outerPin.construction === 'standoff' ? { ...engine, shoulderSystem } : engine);
     setAdvisorRun((r) => ({ ...r, status: 'running', slot, progress: null, usedTarget: o.target }));
     const job = getCalcClient().advise(
       inputs,
