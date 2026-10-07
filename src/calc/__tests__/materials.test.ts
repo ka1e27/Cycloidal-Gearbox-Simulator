@@ -13,6 +13,7 @@ describe('material library', () => {
       'g10',
       'hdpe', 'uhmw', 'pom', 'delrin150', 'pa66',
       'petg', 'pla', 'abs', 'asa', 'pc', 'pa12', 'pa6cf',
+      'fl-rigid10k', 'fl-tough2000', 'fl-tough1500',
     ]);
     const al = getMaterial('al-6061');
     expect([al.E, al.nu, al.Sy, al.sigmaF, al.density]).toEqual([69000, 0.33, 276, 104, 2.7]);
@@ -143,6 +144,9 @@ describe('added plastics (machined and 3D printed)', () => {
     ['pc', 2300, 0.37, 55, 15, 1.20, 'printed'],
     ['pa12', 1700, 0.40, 45, 14, 1.01, 'printed'],
     ['pa6cf', 6000, 0.35, 70, 20, 1.15, 'printed'],
+    ['fl-rigid10k', 10000, 0.32, 50, 15, 1.6, 'printed'],
+    ['fl-tough2000', 1800, 0.38, 32, 10, 1.2, 'printed'],
+    ['fl-tough1500', 1460, 0.4, 27, 8, 1.2, 'printed'],
   ];
   it('property table: numbers, kind polymer, stock form, family, machined / printed in the name, a note', () => {
     for (const [id, E, nu, Sy, sf, rho, form] of table) {

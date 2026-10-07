@@ -54,7 +54,10 @@ export type MaterialId =
   | 'asa'
   | 'pc'
   | 'pa12'
-  | 'pa6cf';
+  | 'pa6cf'
+  | 'fl-rigid10k'
+  | 'fl-tough2000'
+  | 'fl-tough1500';
 
 export const MATERIALS: readonly Material[] = [
   {
@@ -162,6 +165,27 @@ export const MATERIALS: readonly Material[] = [
     name: 'Nylon PA6-CF (3D printed, carbon fiber)',
     E: 6000, nu: 0.35, Sy: 70, sigmaF: 20, density: 1.15, kind: 'polymer', family: 'printed', form: 'printed',
     note: 'Stiff along the print layers, much weaker across them.',
+  },
+  // Formlabs SLA resins, post-cured. E and tensile strength from the Formlabs data sheets; the resins have no yield
+  // point or published fatigue data, so Sy (about 0.75-0.8 x tensile strength), sigmaF (about 0.2-0.25 x), nu and the
+  // density are conservative estimates.
+  {
+    id: 'fl-rigid10k',
+    name: 'Formlabs Rigid 10K resin (3D printed, SLA, glass-filled)',
+    E: 10000, nu: 0.32, Sy: 50, sigmaF: 15, density: 1.6, kind: 'polymer', family: 'printed', form: 'printed',
+    note: 'Very stiff (10 GPa) glass-filled SLA resin with high heat resistance, but brittle (1% elongation): it chips or cracks rather than bending. Data sheet: tensile 65 MPa, E 10 GPa; yield, fatigue, nu and density are estimates.',
+  },
+  {
+    id: 'fl-tough2000',
+    name: 'Formlabs Tough 2000 resin (3D printed, SLA)',
+    E: 1800, nu: 0.38, Sy: 32, sigmaF: 10, density: 1.2, kind: 'polymer', family: 'printed', form: 'printed',
+    note: 'ABS-like SLA resin: stiff for a resin and tough (79% elongation). Softens from about 60 C. Data sheet: tensile 40.4 MPa, E 1.8 GPa; yield, fatigue, nu and density are estimates.',
+  },
+  {
+    id: 'fl-tough1500',
+    name: 'Formlabs Tough 1500 resin (3D printed, SLA)',
+    E: 1460, nu: 0.4, Sy: 27, sigmaF: 8, density: 1.2, kind: 'polymer', family: 'printed', form: 'printed',
+    note: 'PP-like SLA resin: flexible and very tough (155% elongation), but soft. Better for bushings or snap parts than a loaded disc. Data sheet: tensile 34 MPa, E 1.46 GPa; yield, fatigue, nu and density are estimates.',
   },
 ];
 

@@ -27,6 +27,9 @@ describe('audit: material library matches CLAUDE.md', () => {
     pc: [2300, 0.37, 55, 15, 1.20, 'polymer'],
     pa12: [1700, 0.40, 45, 14, 1.01, 'polymer'],
     pa6cf: [6000, 0.35, 70, 20, 1.15, 'polymer'],
+    'fl-rigid10k': [10000, 0.32, 50, 15, 1.6, 'polymer'],
+    'fl-tough2000': [1800, 0.38, 32, 10, 1.2, 'polymer'],
+    'fl-tough1500': [1460, 0.4, 27, 8, 1.2, 'polymer'],
     // composite laminate (in-plane values)
     g10: [18600, 0.12, 240, 60, 1.85, 'polymer'],
   };
