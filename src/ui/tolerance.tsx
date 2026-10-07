@@ -5,10 +5,11 @@
 // the model caches (useSlotModel, rail statuses, fixes, summary) depend on.
 // Outside a ToleranceProvider (static renders, tests) there are no results and the version stays 0.
 import {
-  createContext, useContext, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode,
+  createContext, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react';
 import {
-  getCalcClient, setToleranceKc, toleranceKey, type CalcJob, type GearboxInputs, type ToleranceResult,
+  getCalcClient, setToleranceKc, statFitKey, toleranceKey, toleranceOf, withTolerance,
+  type CalcJob, type GearboxInputs, type StatisticalFit, type ToleranceResult, type ToleranceSpec,
 } from '../calc';
 import { CUSTOM, computeArmResult, effectiveInputs, type Session, type Slot } from './session';
 import { useStore } from './store';
@@ -39,6 +40,9 @@ interface ToleranceValue {
   running: { key: string; fraction: number } | null;
   /** Bumps whenever a result enters the engine's tolerance-Kc cache */
   version: number;
+  /** Slots whose statistical clearance fit is running in the worker */
+  fitting: Record<string, boolean>;
+  requestFit: (slot: Slot, inputs: GearboxInputs, spec: ToleranceSpec) => void;
 }
 
 const Ctx = createContext<ToleranceValue | null>(null);
@@ -50,7 +54,7 @@ function remember(res: ToleranceResult, inputs: GearboxInputs) {
 }
 
 export function ToleranceProvider({ children }: { children: ReactNode }) {
-  const { state } = useStore();
+  const { state, updateGearbox } = useStore();
   const d = useDeferredValue(state);
   const { arm: armIn, gearboxes, useArmLoads, presetBase } = d;
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -101,12 +105,38 @@ export function ToleranceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => () => { job.current?.job.cancel(); }, []);
 
+  // Statistical clearance fits: the stored spec already holds the worst-case fit; when the worker's fit returns, the
+  // clearances are replaced, unless the process values changed or the user edited a clearance in the meantime.
+  const [fitting, setFitting] = useState<Record<string, boolean>>({});
+  const fitJobs = useRef<Record<string, CalcJob<StatisticalFit | null>>>({});
+  const requestFit = useCallback((slot: Slot, inputs: GearboxInputs, spec: ToleranceSpec) => {
+    fitJobs.current[slot]?.cancel();
+    const key = statFitKey(inputs, spec);
+    const applied = { p: spec.profileClearance, i: spec.innerHoleClearance };
+    const j = getCalcClient().statFit(inputs, spec);
+    fitJobs.current[slot] = j;
+    setFitting((f) => ({ ...f, [slot]: true }));
+    void j.promise.then((f) => {
+      if (fitJobs.current[slot] !== j) return;
+      delete fitJobs.current[slot];
+      setFitting((x) => ({ ...x, [slot]: false }));
+      if (!f || !Number.isFinite(f.profileClearance) || !Number.isFinite(f.innerHoleClearance)) return;
+      updateGearbox(slot, (g) => {
+        const cur = toleranceOf(g);
+        if (cur.fitMode !== 'statistical' || statFitKey(g, cur) !== key) return g;
+        if (Math.abs(cur.profileClearance - applied.p) > 1e-9 || Math.abs(cur.innerHoleClearance - applied.i) > 1e-9) return g;
+        return withTolerance(g, { profileClearance: f.profileClearance, innerHoleClearance: f.innerHoleClearance });
+      });
+    });
+  }, [updateGearbox]);
+  useEffect(() => () => { for (const j of Object.values(fitJobs.current)) j.cancel(); }, []);
+
   const keys = useMemo(() => {
     const o: Record<string, string> = {};
     for (const w of list) o[w.slot] = w.key;
     return o;
   }, [list]);
-  const value = useMemo(() => ({ keys, results, last, running, version }), [keys, results, last, running, version]);
+  const value = useMemo(() => ({ keys, results, last, running, version, fitting, requestFit }), [keys, results, last, running, version, fitting, requestFit]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
@@ -147,4 +177,13 @@ export function useAllTolerance(): Record<string, ToleranceResult | null> {
 /** Changes whenever a tolerance Kc enters the engine cache (add it to memos that call checkGearbox). 0 outside the provider. */
 export function useToleranceVersion(): number {
   return useContext(Ctx)?.version ?? 0;
+}
+
+/** Start the statistical clearance fit of a slot in the worker (no-op outside the provider), and whether one is running. */
+export function useStatFit(slot: Slot | null): { fitting: boolean; request: (inputs: GearboxInputs, spec: ToleranceSpec) => void } {
+  const v = useContext(Ctx);
+  return {
+    fitting: !!(v && slot && v.fitting[slot]),
+    request: (inputs, spec) => { if (v && slot) v.requestFit(slot, inputs, spec); },
+  };
 }

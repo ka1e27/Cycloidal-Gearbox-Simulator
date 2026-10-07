@@ -28,7 +28,7 @@
 //   psi+ = max psi >= 0 such that some t exists (psi- the same with -arm). For a fixed psi the set of t is a 2D convex set
 //   (half-planes n_i . t >= -g_i - arm_i psi intersected with the disc |t| <= c_b); it is decided exactly by testing
 //   t = 0, the points c_b n_i, the line-circle intersections and the pairwise line intersections (if the set is not
-//   empty, one of these lies in it). psi is bisected to 1e-9 rad between the t = 0 answer and min (g_i + c_b)/(-arm_i).
+//   empty, one of these lies in it). psi is bisected to 1e-8 rad between the t = 0 answer and min (g_i + c_b)/(-arm_i).
 //   Empty at psi = 0 = interference (the disc binds). Ring backlash = psi+ + psi-.
 // Inner holes (output relative to the disc): with the hole centre at the pin centre + e u, an output rotation phi moves
 //   pin k by Rw phi t_k and to first order closes the gap along u: gin_k + Rw phi (t_k . u) >= 0 for one direction.
@@ -122,7 +122,9 @@ export const PRESET_COMMON = {
 } as const;
 
 export const DEFAULT_PROCESS: ProcessId = 'mill';
-export const DEFAULT_MC_TRIALS = 400;
+export const DEFAULT_MC_TRIALS = 1000;
+/** The default before 2026-10: specs that still carry it move to DEFAULT_MC_TRIALS (any other typed value is kept). */
+export const OLD_DEFAULT_MC_TRIALS = 400;
 export const DEFAULT_SEED = 1;
 /** Accepted binding probability of the statistical clearance fit, and its range */
 export const DEFAULT_BIND_TARGET = 0.01;
@@ -263,7 +265,7 @@ export function normalizeToleranceSpec(raw: unknown): ToleranceSpec {
   const r = raw as Record<string, unknown>;
   const out = { ...d };
   for (const k of TOLERANCE_MM_FIELDS) if (fin(r[k])) out[k] = r[k] as number;
-  if (fin(r.mcTrials)) out.mcTrials = r.mcTrials as number;
+  if (fin(r.mcTrials)) out.mcTrials = r.mcTrials === OLD_DEFAULT_MC_TRIALS ? DEFAULT_MC_TRIALS : r.mcTrials as number;
   if (fin(r.seed)) out.seed = r.seed as number;
   out.fitMode = r.fitMode === 'statistical' ? 'statistical' : 'worst';
   if (fin(r.bindTarget)) out.bindTarget = r.bindTarget as number;
@@ -351,8 +353,8 @@ export function toleranceGeometryAt(Zp: number, Rp: number, e: number, rr: numbe
 // ---------------------------------------------------------------------------
 
 const ARM_EPS = 1e-12;
-/** Bisection tolerance on psi, rad */
-export const PSI_TOL = 1e-9;
+/** Bisection tolerance on psi, rad (3e-5 arcmin; the read-outs show 0.1 arcmin) */
+export const PSI_TOL = 1e-8;
 
 /**
  * Is there a t with |t| <= c and n_i . t >= b_i for every i? Exact for the 2D convex set (half-planes and a disc):
@@ -736,6 +738,9 @@ export interface FittedValues { profileClearance: number; innerHoleClearance: nu
 export interface StatisticalFit extends FittedValues {
   /** Monte Carlo binding probability at the fitted values (ring / inner holes) and the target */
   ringProb: number;
+  /** Probabilities one grid step (0.005 mm) below the fitted values (> target unless the fit is 0) */
+  ringProbBelow: number;
+  innerProbBelow: number;
   innerProb: number;
   target: number;
   trials: number;
@@ -913,7 +918,7 @@ function invalidTolerance(errors: string[], spec: ToleranceSpec, integral: boole
     sensitivity: null,
     fit: {
       worst: { profileClearance: n, innerHoleClearance: n },
-      statistical: { profileClearance: n, innerHoleClearance: n, ringProb: n, innerProb: n, target: n, trials: 0, elapsedMs: 0 },
+      statistical: { profileClearance: n, innerHoleClearance: n, ringProb: n, innerProb: n, ringProbBelow: n, innerProbBelow: n, target: n, trials: 0, elapsedMs: 0 },
     },
     elapsedMs: 0,
   };
@@ -932,13 +937,43 @@ function invalidTolerance(errors: string[], spec: ToleranceSpec, integral: boole
  * value is the smallest grid point that at most target x trials builds exceed. Never above the worst-case fit.
  */
 export function statisticalFitFor(inputs: GearboxInputs, spec: ToleranceSpec, opts: { trials?: number; seed?: number; nBacklash?: number } = {}): StatisticalFit {
+  const target = fin(spec.bindTarget) ? spec.bindTarget : DEFAULT_BIND_TARGET;
+  const trials = fin(opts.trials) ? Math.max(1, Math.floor(opts.trials)) : fitTrialsFor(target);
+  const seed = fin(opts.seed) ? Math.floor(opts.seed) : spec.seed;
+  const nB = fin(opts.nBacklash) ? Math.max(1, Math.floor(opts.nBacklash)) : 24;
+  const key = statFitKey(inputs, spec, trials, seed, nB);
+  const hit = fitCache.get(key);
+  if (hit) return hit;
+  const r = statisticalFitRaw(inputs, spec, trials, seed, nB, target);
+  fitCache.set(key, r);
+  if (fitCache.size > 64) fitCache.delete(fitCache.keys().next().value as string);
+  return r;
+}
+
+function notFitted(spec: ToleranceSpec): StatisticalFit {
+  const n = NaN;
+  return { profileClearance: n, innerHoleClearance: n, ringProb: n, innerProb: n, ringProbBelow: n, innerProbBelow: n, target: spec.bindTarget, trials: 0, elapsedMs: 0 };
+}
+
+/** Sample size of the statistical fit: 50 builds expected in the tail, 2000..25000 (5000 for 1%). */
+export function fitTrialsFor(target: number): number {
+  return Math.min(25000, Math.max(2000, Math.ceil(50 / (fin(target) && target > 0 ? target : DEFAULT_BIND_TARGET) - 1e-9)));
+}
+
+/** Everything the statistical fit depends on (not the clearances, the torques or the materials). */
+export function statFitKey(inputs: GearboxInputs, spec: ToleranceSpec, trials = fitTrialsFor(spec.bindTarget), seed = spec.seed, nB = 24): string {
+  const t = spec;
+  return JSON.stringify([inputs.Zp, inputs.D, inputs.e, inputs.rr, inputs.rw, inputs.Zw, inputs.Db, inputs.tMin, inputs.RwOverride,
+    inputs.outerPin?.construction === 'integral', t.profileError, t.pinPosition, t.pinDiaTol, t.eccError, t.innerHolePosition,
+    t.innerPinDiaTol, t.bushingPlay, t.holePlay, t.bearingClearance, t.bindTarget, trials, seed, nB]);
+}
+
+const fitCache = new Map<string, StatisticalFit>();
+
+function statisticalFitRaw(inputs: GearboxInputs, spec: ToleranceSpec, trials: number, seed: number, nB: number, target: number): StatisticalFit {
   const t0 = now();
   const integral = inputs.outerPin?.construction === 'integral';
   const worst = fittedClearances(spec, integral);
-  const trials = fin(opts.trials) ? Math.max(1, Math.floor(opts.trials)) : spec.mcTrials;
-  const seed = fin(opts.seed) ? Math.floor(opts.seed) : spec.seed;
-  const nB = fin(opts.nBacklash) ? Math.max(1, Math.floor(opts.nBacklash)) : 24;
-  const target = fin(spec.bindTarget) ? spec.bindTarget : DEFAULT_BIND_TARGET;
   const gd = deriveGeometry(inputs);
   const Zp = inputs.Zp, Zw = inputs.Zw;
   const geo: ToleranceGeometry[] = [];
@@ -955,21 +990,31 @@ export function statisticalFitFor(inputs: GearboxInputs, spec: ToleranceSpec, op
     let ni = 0;
     for (const gm of geo) { innerGaps(d, gm, gi); for (let k = 0; k < Zw; k++) ni = Math.max(ni, -gi[k]); }
     needInner[n] = 2 * ni;
-    // ring: smallest added gap with a translation within c_b at every theta
-    const fits = (cl: number) => {
-      for (const gm of geo) {
-        ringGaps(d, gm, g);
+    // ring: smallest added gap with a translation within c_b, max over theta. Per theta the need lies in
+    // [max(0, m - c_b), m] with m = -min gap (t = 0 fits at m), so a theta whose m is below the running max is skipped.
+    const order: { j: number; m: number }[] = [];
+    for (let j = 0; j < geo.length; j++) {
+      ringGaps(d, geo[j], g);
+      let m = 0;
+      for (let i = 0; i < Zp; i++) m = Math.max(m, -g[i]);
+      order.push({ j, m });
+    }
+    order.sort((x, y) => y.m - x.m);
+    let need = 0;
+    for (const { j, m } of order) {
+      if (m <= need) break;
+      const gm = geo[j];
+      ringGaps(d, gm, g);
+      const fitsAt = (cl: number) => {
         for (let i = 0; i < Zp; i++) b[i] = -(g[i] + cl);
-        if (!feasibleTranslation(gm.nx, gm.ny, b, c)) return false;
-      }
-      return true;
-    };
-    let hi = 0;
-    for (const gm of geo) { ringGaps(d, gm, g); for (let i = 0; i < Zp; i++) hi = Math.max(hi, -g[i]); }
-    if (fits(0)) { needRing[n] = 0; continue; }
-    let lo = 0;
-    while (hi - lo > 1e-7) { const mid = 0.5 * (lo + hi); if (fits(mid)) hi = mid; else lo = mid; }
-    needRing[n] = hi;
+        return feasibleTranslation(gm.nx, gm.ny, b, c);
+      };
+      let lo = Math.max(need, m - c), hi = m;
+      if (fitsAt(lo)) { need = lo; continue; }
+      while (hi - lo > 1e-5) { const mid = 0.5 * (lo + hi); if (fitsAt(mid)) hi = mid; else lo = mid; }
+      need = hi;
+    }
+    needRing[n] = need;
   }
   const allowed = Math.floor(target * trials + 1e-9);
   /** smallest grid value v with #(need > v) <= allowed */
@@ -982,7 +1027,16 @@ export function statisticalFitFor(inputs: GearboxInputs, spec: ToleranceSpec, op
   const innerHoleClearance = gridFit(needInner, worst.innerHoleClearance);
   let rb = 0, ib = 0;
   for (let n = 0; n < trials; n++) { if (needRing[n] > profileClearance + 1e-9) rb++; if (needInner[n] > innerHoleClearance + 1e-9) ib++; }
-  return { profileClearance, innerHoleClearance, ringProb: rb / trials, innerProb: ib / trials, target, trials, elapsedMs: now() - t0 };
+  let rb1 = 0, ib1 = 0;
+  for (let n = 0; n < trials; n++) {
+    if (needRing[n] > profileClearance - 0.005 + 1e-9) rb1++;
+    if (needInner[n] > innerHoleClearance - 0.005 + 1e-9) ib1++;
+  }
+  return {
+    profileClearance, innerHoleClearance, ringProb: rb / trials, innerProb: ib / trials,
+    ringProbBelow: profileClearance >= 0.005 - 1e-12 ? rb1 / trials : NaN, innerProbBelow: innerHoleClearance >= 0.005 - 1e-12 ? ib1 / trials : NaN,
+    target, trials, elapsedMs: now() - t0,
+  };
 }
 
 /** The spec with its clearances fitted for its fit mode (worst case, or the statistical Monte Carlo fit). Pure. */
@@ -1169,7 +1223,7 @@ function* toleranceGen(inputs: GearboxInputs, opts: ToleranceOptions = {}): Gene
       Kt_Nm_per_rad: KtRad, Kt_Nm_per_arcmin: KtRad / ARCMIN_PER_RAD, twistReq: twist, twistReq_arcmin: twist * ARCMIN_PER_RAD,
     },
     sensitivity,
-    fit: { worst: fittedClearances(spec, integral), statistical: statisticalFitFor(inputs, spec, { trials, seed, nBacklash: nB }) },
+    fit: { worst: fittedClearances(spec, integral), statistical: spec.fitMode === 'statistical' ? statisticalFitFor(inputs, spec, { nBacklash: nB }) : notFitted(spec) },
     elapsedMs: now() - t0,
   };
 }

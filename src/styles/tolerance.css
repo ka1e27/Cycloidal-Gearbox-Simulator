@@ -24,3 +24,8 @@
   .tol-sens-v { grid-column: 1 / -1; }
 }
 .tol-fit { display: block; margin-top: 4px; font-size: 12px; line-height: 1.45; }
+
+/* backlash explainer */
+.tol-h { display: flex; align-items: center; gap: 6px; }
+.tol-explain { font-size: 12.5px; color: var(--ink-2); margin: 2px 0 10px; max-width: 70ch; line-height: 1.5; }
+.tol-explain strong { color: var(--ink); font-weight: 600; }

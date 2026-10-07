@@ -68,7 +68,7 @@ describe('results view', () => {
     expect(html).toMatch(/Inner hole clearance → 0\.070 mm/);
     expect(html).toContain('Custom (edited values)');
     expect(html).toContain('Use the fitted clearances');
-    for (const t of ['Backlash at the output', 'Design (no errors)', 'Monte Carlo p95', 'Worst (full play', 'before run-in', 'Kc strength', 'Kc life', 'Torsional stiffness', 'Twist at T_req', 'Tool tip slop', 'What drives it']) {
+    for (const t of ['Backlash at the output', 'Design (no errors)', 'Most builds (p95)', 'Typical build (p50)', 'Worst case', 'arcminutes', '1/60 of a degree', 'before run-in', 'Kc strength', 'Kc life', 'Torsional stiffness', 'Twist at T_req', 'Tool tip slop', 'What drives it']) {
       expect(html, t).toContain(t);
     }
     expect(html).toContain('The checks use the typed Kc');
@@ -79,7 +79,7 @@ describe('results view', () => {
     const html = view(withTolerance(s.gearboxes.J2, { ...processSpec('waterjet'), profileClearance: 0.05, innerHoleClearance: 0.05 }));
     expect(html).toMatch(/\d+% of the random builds bind/);
     expect(html).toContain('Most builds bind: raise the clearance');
-    expect(html).not.toContain('Monte Carlo p95');
+    expect(html).not.toContain('Most builds (p95)');
     expect(html).toMatch(/Profile clearance → 0\.335 mm/);
   });
 

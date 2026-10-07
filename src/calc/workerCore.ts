@@ -4,7 +4,7 @@ import { adviseDesignAsync } from './advisor';
 import { suggestFixesAsync } from './fixes';
 import type { WorkerRequest, WorkerResponse } from './messages';
 import { solveMinimumSizeAsync } from './solver';
-import { analyzeToleranceAsync } from './tolerance';
+import { analyzeToleranceAsync, statisticalFitFor } from './tolerance';
 
 export interface WorkerHost {
   post(msg: WorkerResponse): void;
@@ -47,6 +47,9 @@ export function createWorkerHandler(host: WorkerHost) {
           shouldCancel: () => cancelled.has(id),
         });
         host.post({ type: 'result', id, kind: 'tolerance', result });
+      } else if (msg.type === 'statFit') {
+        // binding-only Monte Carlo, 0.2-1 s; not sliced (a cancel simply drops the answer)
+        host.post({ type: 'result', id, kind: 'statFit', result: statisticalFitFor(msg.inputs, msg.spec) });
       }
     } catch (err) {
       host.post({ type: 'error', id, message: err instanceof Error ? err.message : String(err) });

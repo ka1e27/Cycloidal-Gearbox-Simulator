@@ -4,7 +4,7 @@ import {
   ARCMIN_PER_RAD, PRESETS, SPEC_STEEL, analyzeTolerance, armTipLevers, armTipSlop, checkGearbox, clearToleranceKc,
   defaultArmInputs, defaultToleranceSpec, deriveGeometry, feasibleTranslation, freeRotation, getToleranceKc,
   hertzLineApproach, innerFreeRotation, loadShare, materialProps, matchProcess, normalizeGearboxInputs,
-  normalizeToleranceSpec, pinStiffness, processSpec, fittedClearances, REAMED_HOLE_PLAY, fitClearances, statisticalFitFor, resolveKc, setToleranceKc, suggestFixes, tighterProcesses,
+  normalizeToleranceSpec, pinStiffness, processSpec, fittedClearances, REAMED_HOLE_PLAY, fitClearances, statisticalFitFor, fitTrialsFor, resolveKc, setToleranceKc, suggestFixes, tighterProcesses,
   toleranceGeometryAt, toleranceKey, toleranceOf, validateToleranceSpec, withTolerance, type GearboxInputs,
   type ToleranceSpec,
 } from '..';
@@ -32,7 +32,7 @@ describe('spec, presets and old sessions', () => {
     expect(t).toEqual(processSpec('mill'));
     expect(matchProcess(t)).toBe('mill');
     expect(t.holePlay).toBe(0.1);
-    expect(t.mcTrials).toBe(400);
+    expect(t.mcTrials).toBe(1000);
     // 0.02 + 0.02 + 0.1 (hole play, a position error) + 0.005 + 0.01; inner 2 x (0.02 + 0.005 + 0.01)
     expect(t.profileClearance).toBe(0.155);
     expect(t.innerHoleClearance).toBe(0.07);
@@ -180,7 +180,7 @@ describe('free rotation (backlash)', () => {
       expect(Math.abs(r.plus - bp) / bp).toBeLessThan(0.01);
       expect(Math.abs(r.minus - bm) / bm).toBeLessThan(0.01);
       // the exact solver is never below the grid (the grid is a subset of the disc)
-      expect(r.plus).toBeGreaterThanOrEqual(bp * (1 - 1e-6));
+      expect(r.plus).toBeGreaterThanOrEqual(bp * (1 - 1e-6) - 2e-8); // bisection tolerance PSI_TOL
     }
   });
 
@@ -457,6 +457,30 @@ describe('statistical clearance fit', () => {
     expect(normalizeToleranceSpec({ fitMode: 'odd' }).fitMode).toBe('worst');
     expect(validateToleranceSpec({ ...defaultToleranceSpec(), bindTarget: 0.5 }).bindTarget).toBeTruthy();
     expect(validateToleranceSpec({ ...defaultToleranceSpec(), bindTarget: 0.001 }).bindTarget).toBeUndefined();
+    // the old default 400 trials moves to 1000; a typed value is kept
+    expect(normalizeToleranceSpec({ mcTrials: 400 }).mcTrials).toBe(1000);
+    expect(normalizeToleranceSpec({ mcTrials: 300 }).mcTrials).toBe(300);
+  });
+
+  it('uses its own sample size: 50 / target builds, 2000..25000', () => {
+    expect(fitTrialsFor(0.01)).toBe(5000);
+    expect(fitTrialsFor(0.1)).toBe(2000);
+    expect(fitTrialsFor(0.001)).toBe(25000);
+    expect(statisticalFitFor(J3, statSpec()).trials).toBe(5000);
+  });
+
+  it('the default sample size is within one grid step of a 20,000-build fit, and its probability is <= target', () => {
+    for (const inp of [J2, J3]) {
+      for (const hp of [undefined, REAMED_HOLE_PLAY]) {
+        const s = statSpec(0.01, hp);
+        const a = statisticalFitFor(inp, s);
+        const big = statisticalFitFor(inp, s, { trials: 20000 });
+        expect(Math.abs(a.profileClearance - big.profileClearance)).toBeLessThanOrEqual(0.005 + 1e-9);
+        expect(Math.abs(a.innerHoleClearance - big.innerHoleClearance)).toBeLessThanOrEqual(0.005 + 1e-9);
+        expect(a.ringProb).toBeLessThanOrEqual(0.01);
+        expect(a.innerProb).toBeLessThanOrEqual(0.01);
+      }
+    }
   });
 
   it('is at most the worst-case fit, deterministic, and monotone in the target', () => {
@@ -465,14 +489,15 @@ describe('statistical clearance fit', () => {
         const worst = processSpec('mill', { holePlay: hp });
         let prevP = Infinity, prevI = Infinity;
         for (const target of [0.001, 0.005, 0.01, 0.05, 0.2]) {
-          const a = statisticalFitFor(inp, statSpec(target, hp));
+          const a = statisticalFitFor(inp, statSpec(target, hp), { trials: 2000 });
           expect(a.profileClearance).toBeLessThanOrEqual(worst.profileClearance + 1e-12);
           expect(a.innerHoleClearance).toBeLessThanOrEqual(worst.innerHoleClearance + 1e-12);
           expect(a.profileClearance).toBeLessThanOrEqual(prevP + 1e-12);
           expect(a.innerHoleClearance).toBeLessThanOrEqual(prevI + 1e-12);
           prevP = a.profileClearance; prevI = a.innerHoleClearance;
         }
-        const x = statisticalFitFor(inp, statSpec(0.01, hp)), y = statisticalFitFor(inp, statSpec(0.01, hp));
+        // deterministic: a second, uncached run (another sample size key) gives the same as the first
+        const x = statisticalFitFor(inp, statSpec(0.01, hp), { trials: 2001 }), y = statisticalFitFor(inp, statSpec(0.01, hp), { trials: 2001, nBacklash: 24 });
         expect({ ...x, elapsedMs: 0 }).toEqual({ ...y, elapsedMs: 0 });
       }
     }
@@ -482,20 +507,18 @@ describe('statistical clearance fit', () => {
 
   it('the Monte Carlo binding probability at the fitted value is <= target, one grid step below it is > target', () => {
     for (const target of [0.01, 0.05]) {
+      const f = statisticalFitFor(J3, statSpec(target));
+      expect(f.ringProb).toBeLessThanOrEqual(target);
+      expect(f.innerProb).toBeLessThanOrEqual(target);
+      if (f.profileClearance >= 0.005) expect(f.ringProbBelow).toBeGreaterThan(target);
+      if (f.innerHoleClearance >= 0.005) expect(f.innerProbBelow).toBeGreaterThan(target);
+      // the analysis draws its builds the same way: at the fitted values it reports the fit, and with the
+      // (smaller) analysis sample the binding share is close to the target
       const spec = fitClearances(J3, statSpec(target));
       expect(spec.fitMode).toBe('statistical');
       const at = analyzeTolerance({ ...J3, tolerance: spec }, { sensitivity: false });
-      expect(at.binding.interferenceProb).toBeLessThanOrEqual(target + 1e-12);
-      expect(at.binding.innerInterferenceProb).toBeLessThanOrEqual(target + 1e-12);
       expect(at.fit.statistical.profileClearance).toBe(spec.profileClearance);
-      if (spec.profileClearance >= 0.005) {
-        const below = analyzeTolerance({ ...J3, tolerance: { ...spec, profileClearance: spec.profileClearance - 0.005 } }, { sensitivity: false });
-        expect(below.binding.interferenceProb).toBeGreaterThan(target);
-      }
-      if (spec.innerHoleClearance >= 0.005) {
-        const below = analyzeTolerance({ ...J3, tolerance: { ...spec, innerHoleClearance: spec.innerHoleClearance - 0.005 } }, { sensitivity: false });
-        expect(below.binding.innerInterferenceProb).toBeGreaterThan(target);
-      }
+      expect(at.binding.interferenceProb).toBeLessThanOrEqual(target * 2.5);
     }
   });
 

@@ -5,23 +5,27 @@
 import { useMemo, type ReactNode } from 'react';
 import {
   ARCMIN_PER_RAD, DRILLED_HOLE_PLAY, INTEGRAL_UNUSED_TERMS, PROCESS_PRESETS, REAMED_HOLE_PLAY, armTipLevers, armTipSlop,
-  BIND_TARGET_RANGE, fitClearances, fittedClearances, matchProcess, processSpec, toleranceOf, toleranceStacks, validateToleranceSpec, withTolerance,
+  BIND_TARGET_RANGE, fitTrialsFor, fittedClearances, matchProcess, processSpec, toleranceOf, toleranceStacks, validateToleranceSpec, withTolerance,
   type Fix, type GearboxInputs, type GearboxResult, type ProcessId, type ToleranceSpec, type ToleranceTerm,
 } from '../../calc';
 import { NumberField } from '../components/NumberField';
 import { Advanced, Button, DataTable, FieldRow, Notice, ProgressBar, Segmented, SelectField, Switch } from '../components/primitives';
+import { InfoTip } from '../components/InfoTip';
 import { HELP } from '../help';
 import { DASH, fixed, num } from '../format';
 import { useApplyFix, useFixes, fixResultText } from '../fixes';
 import { CUSTOM, type Slot } from '../session';
 import { useStore } from '../store';
-import { useAllTolerance, useTolerance, type SlotTolerance } from '../tolerance';
+import { useAllTolerance, useStatFit, useTolerance, type SlotTolerance } from '../tolerance';
 import type { U } from '../units';
 import '../../styles/tolerance.css';
 
 const fin = (x: number | null | undefined): x is number => typeof x === 'number' && Number.isFinite(x);
-/** arcmin text: 14.2′ */
+/** arcmin text: 14.2′ (′ = arcminute, 1/60 of a degree) */
 export const arcmin = (rad: number | null | undefined, dp = 1): string => (fin(rad) ? `${fixed(rad * ARCMIN_PER_RAD, dp)}′` : DASH);
+/** arcmin with degrees for readers who think in degrees: 51.5′ (0.86°) */
+export const arcminDeg = (rad: number | null | undefined, dp = 1): string =>
+  (fin(rad) ? `${arcmin(rad, dp)} (${fixed((rad * 180) / Math.PI, (rad * 180) / Math.PI < 0.1 ? 3 : 2)}°)` : DASH);
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 /** target percentage: 1%, 0.5%, 2.5% */
 const pctT = (x: number) => `${parseFloat((x * 100).toFixed(2))}%`;
@@ -70,7 +74,9 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
   const statistical = spec.fitMode === 'statistical';
   // the statistical fit of the last analysis, when it was made for these process values (it does not depend on the clearances)
   const shownFit = tol.shown && tol.shown.valid && sameProcess(tol.shown.spec, spec) ? tol.shown.fit : null;
-  const proc = matchProcess(spec, integral, statistical ? shownFit?.statistical ?? null : null);
+  const statFitJob = useStatFit(slot);
+  // while a fit runs the clearances are the worst-case ones: compare the process values only
+  const proc = matchProcess(spec, integral, statistical && !statFitJob.fitting ? shownFit?.statistical ?? null : null);
   const reamed = spec.holePlay <= REAMED_HOLE_PLAY + 1e-9;
   const set = (patch: Partial<ToleranceSpec>) => updateGearbox(slot, (g) => withTolerance(g, patch));
   const lever = slot !== CUSTOM && index >= 0 ? armTipLevers(state.arm)[index] ?? null : null;
@@ -86,22 +92,28 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
   );
   const shown = (list: FieldDef[]) => list.filter((d) => !(integral && INTEGRAL_UNUSED_TERMS.includes(d.k)));
 
+  /**
+   * Apply a preset spec: the worst-case fit right away; in statistical mode the worker's fit replaces the clearances when
+   * it returns (the previous fitted values stay on show, marked "fitting…").
+   */
+  const applyPreset = (next: ToleranceSpec) => {
+    updateGearbox(slot, (g) => ({ ...g, tolerance: next }));
+    if (next.fitMode === 'statistical') statFitJob.request({ ...eff, tolerance: next }, next);
+  };
   const pickProcess = (id: string) => {
     if (id === 'custom') return;
-    // the preset's errors with clearances fitted for the fit mode (statistical: a 20-50 ms Monte Carlo, once per click);
     // a reamed hole fit is kept
-    const next = processSpec(id as ProcessId, { integral, holePlay: reamed && !integral ? spec.holePlay : undefined, keep: spec });
-    updateGearbox(slot, (g) => ({ ...g, tolerance: fitClearances(g, next) }));
+    applyPreset(processSpec(id as ProcessId, { integral, holePlay: reamed && !integral ? spec.holePlay : undefined, keep: spec }));
   };
   /** Change a setting the fit depends on: a preset re-fits its clearances, custom clearances stay as typed. */
   const refit = (patch: Partial<ToleranceSpec>) => {
-    if (proc) updateGearbox(slot, (g) => ({ ...g, tolerance: fitClearances(g, { ...processSpec(proc, { integral, holePlay: patch.holePlay ?? spec.holePlay, keep: { ...spec, ...patch } }) }) }));
+    if (proc) applyPreset(processSpec(proc, { integral, holePlay: patch.holePlay ?? spec.holePlay, keep: { ...spec, ...patch } }));
     else set(patch);
   };
   const setReamed = (v: boolean) => refit({ holePlay: v ? REAMED_HOLE_PLAY : DRILLED_HOLE_PLAY });
   const st = toleranceStacks(spec, integral);
   const worstFit = fittedClearances(spec, integral);
-  const statFit = shownFit?.statistical ?? null;
+  const statFit = shownFit && Number.isFinite(shownFit.statistical.profileClearance) ? shownFit.statistical : null;
   const fit = statistical ? statFit : worstFit;
   const mm3 = (x: number) => x.toFixed(3);
   const why = integral
@@ -111,7 +123,7 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
     <span className="tol-fit">
       {u.text(`Fitted clearances: profile worst case ${mm3(worstFit.profileClearance)} mm${statFit ? ` · ${pctT(spec.bindTarget)}: ${mm3(statFit.profileClearance)} mm` : ''}; inner holes worst case ${mm3(worstFit.innerHoleClearance)} mm${statFit ? ` · ${pctT(spec.bindTarget)}: ${mm3(statFit.innerHoleClearance)} mm` : ''}.`)}{' '}
       {u.text(`Worst case = the stack rounded up to 0.005 mm, so no build can bind: profile ${why} = ${mm3(st.profile)} mm; inner holes 2 × (hole position ${mm3(spec.innerHolePosition)} + pin diameter ${mm3(spec.innerPinDiaTol / 2)} + eccentricity ${mm3(spec.eccError)}).`)}
-      {statistical && ` Statistical = the smallest value (0.005 mm steps) at which at most ${pctT(spec.bindTarget)} of the ${spec.mcTrials} random builds bind${statFit ? ` (fit ${Math.round(statFit.elapsedMs)} ms)` : ': computing…'}.`}
+      {statistical && ` Statistical = the smallest value (0.005 mm steps) at which at most ${pctT(spec.bindTarget)} of ${statFit?.trials ?? fitTrialsFor(spec.bindTarget)} random builds bind${statFitJob.fitting ? ': fitting…' : statFit ? ` (fit ${Math.round(statFit.elapsedMs)} ms)` : ': computing…'}.`}
       {!proc && fit && (Math.abs(fit.profileClearance - spec.profileClearance) > 1e-9 || Math.abs(fit.innerHoleClearance - spec.innerHoleClearance) > 1e-9) && (
         <> <button type="button" className="linkish" onClick={() => set({ profileClearance: fit.profileClearance, innerHoleClearance: fit.innerHoleClearance })}>Use the fitted clearances</button></>
       )}
@@ -159,7 +171,7 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
         : field(d)))}
       <Advanced label="Monte Carlo">
         <NumberField label="Random builds" unit="builds" value={spec.mcTrials} onChange={(v) => set({ mcTrials: v ?? spec.mcTrials })}
-          defaultValue={400} step={100} help={HELP.tolTrials} error={errs.mcTrials} />
+          defaultValue={1000} step={100} help={HELP.tolTrials} error={errs.mcTrials} />
         <NumberField label="Seed" value={spec.seed} onChange={(v) => set({ seed: v ?? 0 })} defaultValue={1} step={1}
           help={HELP.tolSeed} error={errs.seed} />
       </Advanced>
@@ -216,6 +228,7 @@ function ToleranceResults({ slot, eff, result, tol, lever, u, onUseKc, onClearan
   const sugP = stat && fin(stat.profileClearance) ? stat.profileClearance : b.suggestedProfileClearance;
   const sugI = stat && fin(stat.innerHoleClearance) ? stat.innerHoleClearance : b.suggestedInnerHoleClearance;
   const why = stat ? `so at most ${pctT(r.spec.bindTarget)} of builds bind` : 'so the worst-case stack cannot bind';
+  // the statistical share comes from the fit's own large sample (the analysis sample is too small for a 1% tail)
   const needP = b.binds && r.spec.profileClearance < sugP - 1e-9;
   const needI = b.innerBinds && r.spec.innerHoleClearance < sugI - 1e-9;
   const fixButtons = (
@@ -233,16 +246,15 @@ function ToleranceResults({ slot, eff, result, tol, lever, u, onUseKc, onClearan
     </>
   );
   const bwRow = (label: string, rad: number, note?: ReactNode) => ({
-    label, value: <>{arcmin(rad)}{tip(rad) && <span className="tol-tip"> · {tip(rad)} at the tip</span>}</>, note,
+    label, value: <>{arcminDeg(rad)}{tip(rad) && <span className="tol-tip"> · {tip(rad)} at the tip</span>}</>, note,
   });
 
   return (
     <div className="tol-results" aria-live="polite">
       {tol.pending && <div className="tol-updating">{tol.progress != null ? <ProgressBar fraction={tol.progress} label="Tolerance Monte Carlo" /> : null}<span className="muted">Updating…</span></div>}
 
-      {(b.binds || b.innerBinds) && r.spec.fitMode === 'statistical'
-        && b.interferenceProb <= r.spec.bindTarget + 1e-12 && b.innerInterferenceProb <= r.spec.bindTarget + 1e-12 ? (
-        <Notice kind="info" title={`About ${pctT(Math.max(b.interferenceProb, b.innerInterferenceProb))} of builds may bind at assembly`}>
+      {(b.binds || b.innerBinds) && stat && !needP && !needI ? (
+        <Notice kind="info" title={`About ${pctT(Math.max(stat.ringProb, stat.innerProb))} of builds may bind at assembly`}>
           <p>{u.text(`Statistical fit (target ${pctT(r.spec.bindTarget)}): the worst-case stack (${b.requiredProfileClearance.toFixed(3)} mm at the pins, ${b.requiredInnerHoleClearance.toFixed(3)} mm in the inner holes) is not covered. Select parts or lap the disc on the builds that bind.`)}</p>
         </Notice>
       ) : (b.binds || b.innerBinds) ? (
@@ -259,19 +271,25 @@ function ToleranceResults({ slot, eff, result, tol, lever, u, onUseKc, onClearan
         <p className="tol-ok"><span className="st st-ok"><i className="st-sq" aria-hidden="true" />NO BINDING</span> {u.text(`Worst-case gap ${z3(b.minGapWorst)} mm at the pins, ${z3(b.innerMinGapWorst)} mm in the inner holes.`)}</p>
       )}
 
-      <h4 className="subgroup-h">Backlash at the output</h4>
+      <h4 className="subgroup-h tol-h">Backlash at the output <InfoTip help={HELP.tolBacklash} label="Backlash" /></h4>
+      <p className="tol-explain">
+        Backlash is the free play at the output: how far you can rock the output back and forth by hand while the motor
+        holds still, before the gears push back. It is measured in <strong>arcminutes (′)</strong>: 1′ = 1/60 of a degree,
+        so 60′ = 1°. One degree of play moves a point 1 m away by about 17.5 mm.
+      </p>
       {!r.statsShown ? (
         <Notice kind="error" title="Most builds bind: raise the clearance" actions={fixButtons}>
           <p>Only {r.freeBuilds} of {r.trials} random builds fit and turn, too few for backlash and Kc statistics.</p>
         </Notice>
       ) : null}
       <DataTable columns={1} rows={[
-        bwRow('Design (no errors)', bl.design.total, `ring ${arcmin(bl.design.ring)} + inner holes ${arcmin(bl.design.inner)}; bushing play at its mean`),
+        bwRow('Design (no errors)', bl.design.total,
+          `Perfect parts: only the clearances you chose. Disc on the outer pins ${arcmin(bl.design.ring)} + output pins in their holes ${arcmin(bl.design.inner)}; bushing play at its average.`),
         ...(r.statsShown ? [
-          bwRow('Monte Carlo p50', bl.mc.p50),
-          bwRow('Monte Carlo p95', bl.mc.p95, `${r.freeBuilds} builds`),
+          bwRow('Typical build (p50)', bl.mc.p50, `Half of real builds have less play than this (from ${r.freeBuilds} simulated builds with random machining errors).`),
+          bwRow('Most builds (p95)', bl.mc.p95, '95 of 100 builds have less play than this. Use this number to plan.'),
         ] : []),
-        bwRow('Worst (full play, every error loosening)', bl.worst.total),
+        bwRow('Worst case', bl.worst.total, 'Every error and every play lined up the loose way at once: an upper bound that real builds almost never reach.'),
       ]} />
       {r.statsShown && bl.mc.p50 < bl.design.total && (
         <p className="tol-note muted">Random errors usually leave less play than the design: the tightest of the scattered pins stops the disc first.</p>
@@ -300,10 +318,10 @@ function ToleranceResults({ slot, eff, result, tol, lever, u, onUseKc, onClearan
       <h4 className="subgroup-h">Stiffness and tip</h4>
       <DataTable columns={1} rows={[
         { label: 'Torsional stiffness', value: `${u.fu('torque', r.stiffness.Kt_Nm_per_arcmin, { dp: 2 })} per arcmin`, note: `pin spring ${num(r.stiffness.life.k / 1000, 1)} kN/mm (contact ${num(r.stiffness.life.kc / 1000, 1)}${Number.isFinite(r.stiffness.life.kb) ? `, bending ${num(r.stiffness.life.kb / 1000, 1)}` : ', rigid teeth'})` },
-        { label: 'Twist at T_req', value: arcmin(twist, 2) },
+        { label: 'Twist at T_req', value: arcminDeg(twist, 2), note: 'How far the output winds up elastically under the working torque, on top of the backlash.' },
         ...(lever != null ? [{
           label: 'Tool tip slop', value: tipTotal != null ? u.fu('length', tipTotal, { dp: u.prefs.length === 'in' ? 2 : 3 }) : DASH,
-          note: u.text(`(p95 backlash + twist) × ${lever.toFixed(0)} mm lever to the tip`),
+          note: u.text(`How far the tool tip can move from this joint's play alone: (p95 backlash + twist) × ${lever.toFixed(0)} mm from this joint to the tip, in the straight-out pose.`),
         }] : []),
       ]} />
       <p className="tol-note muted">Stiffness counts the outer pin contact and bending only; the inner pins, standoffs, bearing and housing make the real gearbox softer.</p>
@@ -347,7 +365,7 @@ export function ToleranceSummary({ slot }: { slot: Slot }) {
   if (!r.valid) return <>check the tolerance inputs</>;
   if (!r.statsShown) return <>MOST BUILDS BIND ({pct(r.bindProb)}) · raise the clearance</>;
   const bind = r.binding.binds || r.binding.innerBinds ? `CAN BIND (${pct(r.bindProb)}) · ` : '';
-  return <>{bind}Backlash {arcmin(r.backlash.mc.p95)} (p95) · Kc {fixed(r.kc.strength.p95, 2)}</>;
+  return <>{bind}Backlash {arcminDeg(r.backlash.mc.p95)} p95 · Kc {fixed(r.kc.strength.p95, 2)}</>;
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +415,7 @@ export function ArmSlopCard() {
                 <td data-label="Lever">{u.fu('length', s.lever, { dp: 0 })}</td>
                 {state2 ? <td colSpan={3} className="muted">{state2}</td> : (
                   <>
-                    <td data-label="Backlash p95">{arcmin(s.backlash)}</td>
+                    <td data-label="Backlash p95">{arcminDeg(s.backlash)}</td>
                     <td data-label="Twist">{arcmin(s.twist, 2)}</td>
                     <td data-label="Tip">{s.tip != null ? u.fu('length', s.tip, { dp: u.prefs.length === 'in' ? 2 : 3 }) : DASH}</td>
                   </>

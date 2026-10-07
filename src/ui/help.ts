@@ -346,6 +346,14 @@ export const HELP: Record<string, HelpEntry> = {
     down: 'A tighter process (CNC mill, wire EDM) allows small clearances: less backlash and better load sharing, at a higher cost.',
     typical: 'CNC mill for aluminum discs; waterjet or laser for plate; SLS/MJF or FDM for printed prototypes.',
   },
+  tolBacklash: {
+    what: 'Free play at the output: how far the output can be rocked back and forth by hand while the motor holds still. Shown in arcminutes (′): 1′ = 1/60 of a degree, 60′ = 1°.',
+    why: 'Play shows up as wobble at the tool tip and as lost motion every time the joint reverses. It adds up over every joint of the arm, and the farther the tip is from the joint, the more it moves.',
+    up: 'More slop at the tip and less precise positioning (it comes from bigger clearances, loose bolt holes or a coarser process).',
+    down: 'A tighter arm. Use smaller clearances (with a tighter process so the disc still does not bind), reamed or dowel-fit pin holes, or a bigger pin circle, which spreads the same clearance over a longer lever.',
+    typical: 'Industrial cycloidal reducers: under 1′. A well-machined hobby gearbox: about 10′ to 30′. 3D printed: about 1° to 3° (60′ to 180′).',
+    formula: '1° of play moves a point 1 m away by about 17.5 mm (tip slop = play in radians × distance to the tip).',
+  },
   tolProfileClearance: {
     what: 'How much the disc outline is shrunk, all the way round, so it runs freely against the outer pins. The DXF export cuts the disc with this same value.',
     why: 'Real parts are never exact. Without enough clearance the worst-made pins and lobes overlap and the disc jams.',
@@ -448,7 +456,7 @@ export const HELP: Record<string, HelpEntry> = {
     why: 'More builds give steadier p50 / p95 numbers.',
     up: 'Steadier statistics, but a slower update.',
     down: 'Faster, noisier numbers.',
-    typical: '400.',
+    typical: '1000 (about a quarter of a second in the background).',
   },
   tolSeed: {
     what: 'Starting number of the random draws. The same seed always gives the same results.',

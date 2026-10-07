@@ -648,13 +648,17 @@ With the switch on, `suggestFixes` adds field `'tolerance'` ("Process → CNC mi
 own Monte Carlo Kc (`processTrials`, default 200), keeping the user's hole play.
 
 **Statistical clearance fit.** `ToleranceSpec.fitMode: 'worst' | 'statistical'` (default and old specs: 'worst') and `bindTarget`
-(0.001..0.2, default 0.01). `statisticalFitFor(inputs, spec)` returns the smallest profile / inner hole clearances on the 0.005 mm grid
-whose Monte Carlo binding probability (ring / inner holes separately) is <= bindTarget, never above the worst-case fit: the builds are
-drawn exactly as the analysis draws them (common random numbers: same seed and order of draws; a clearance only adds to every gap), per
-build the smallest clearance that fits at all theta samples is found (inner holes exact; ring bisected to 1e-7 mm with
-`feasibleTranslation`), and the fitted value is the smallest grid point at most floor(target x trials) builds exceed. So it is
-deterministic, monotone in the target, and the analysis at the fitted value reports a probability <= target. About 25-45 ms at 400
-trials. `fitClearances(inputs, spec)` applies the spec's mode; `ToleranceResult.fit = { worst, statistical }` (the analysis also runs
-the statistical fit for the current process values, in the worker). `matchProcess(spec, integral, statFit)` compares against the
-statistical values in that mode. The UI computes `fitClearances` synchronously when a preset, the mode, the target or the hole fit
-is changed (one click, 25-45 ms); everything else runs in the worker.
+(0.001..0.2, default 0.01). `statisticalFitFor(inputs, spec, { trials? })` returns the smallest profile / inner hole clearances on the
+0.005 mm grid whose Monte Carlo binding probability (ring / inner holes separately) is <= bindTarget, never above the worst-case fit. It
+uses its own sample, independent of `mcTrials`: n = `fitTrialsFor(target)` = clamp(ceil(50 / target), 2000, 25000) binding-only builds
+(5000 for 1%). The builds are drawn as the analysis draws them (same seed and order of draws, so the first mcTrials builds are the
+analysis's own builds; a clearance only adds to every gap): deterministic and monotone in the target. Per build the smallest clearance
+that fits at every theta sample is found (inner holes exact; ring bisected to 1e-5 mm with `feasibleTranslation`, skipping theta samples
+that cannot raise it), and the fitted value is the smallest grid point at most floor(target x n) builds exceed. The result carries the
+probabilities at the fitted value and one grid step below (`ringProb`, `innerProb`, `ringProbBelow`, `innerProbBelow`). Results are
+cached by `statFitKey` (geometry, process values, hole play, target, n, seed). About 0.25-1 s on this machine for 5000 builds.
+`fitClearances(inputs, spec)` applies the spec's mode. The analysis runs the statistical fit only in statistical mode
+(`ToleranceResult.fit = { worst, statistical }`, NaN otherwise). Worker message `statFit` / `client.statFit(inputs, spec)`. In the UI the
+fit never runs on the main thread: a preset, mode, target or hole-fit change applies the worst-case fit at once and the provider
+(`useStatFit`) replaces the clearances when the worker's fit returns (unless the process values or the clearances changed meanwhile).
+`mcTrials` defaults to 1000 (a stored 400, the old default, is read as 1000).

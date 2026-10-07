@@ -6,9 +6,9 @@ import { adviseDesignAsync, cancelledAdvisorResult, invalidAdvisor, type Advisor
 import { cancelledFixReport, suggestFixesAsync, type FixOptions, type FixProgress, type FixReport } from './fixes';
 import type { WorkerRequest, WorkerResponse } from './messages';
 import { cancelledResult, solveMinimumSizeAsync, type SolverOptions, type SolverProgress, type SolverResult } from './solver';
-import { analyzeToleranceAsync, cancelledToleranceResult, type ToleranceOptions, type ToleranceProgress, type ToleranceResult } from './tolerance';
+import { analyzeToleranceAsync, cancelledToleranceResult, statisticalFitFor, type StatisticalFit, type ToleranceOptions, type ToleranceProgress, type ToleranceResult } from './tolerance';
 import { getToleranceKc } from './toleranceKc';
-import type { GearboxInputs } from './types';
+import type { GearboxInputs, ToleranceSpec } from './types';
 
 export interface CalcJob<R> {
   id: number;
@@ -34,7 +34,7 @@ const defaultFactory: WorkerFactory = () => {
 };
 
 interface Pending {
-  kind: 'solve' | 'advise' | 'fixes' | 'tolerance';
+  kind: 'solve' | 'advise' | 'fixes' | 'tolerance' | 'statFit';
   resolve: (r: never) => void;
   onProgress?: (p: never) => void;
   target: number;
@@ -86,6 +86,8 @@ export class CalcClient {
       (p.resolve as (r: SolverResult) => void)({ ...cancelledResult(p.Dmax), cancelled: false, errors: [message] });
     } else if (p.kind === 'fixes') {
       (p.resolve as (r: FixReport) => void)({ ...cancelledFixReport(p.target), cancelled: false, errors: [message] });
+    } else if (p.kind === 'statFit') {
+      (p.resolve as (r: StatisticalFit | null) => void)(null);
     } else if (p.kind === 'tolerance') {
       (p.resolve as (r: ToleranceResult) => void)({ ...cancelledToleranceResult(), cancelled: false, errors: [message] });
     } else {
@@ -108,7 +110,7 @@ export class CalcClient {
   }
 
   private start<R, P>(
-    kind: 'solve' | 'advise' | 'fixes' | 'tolerance',
+    kind: 'solve' | 'advise' | 'fixes' | 'tolerance' | 'statFit',
     req: (id: number) => WorkerRequest,
     fallback: (hooks: { onProgress?: (p: P) => void; shouldCancel: () => boolean }) => Promise<R>,
     cancelledValue: () => R,
@@ -209,6 +211,23 @@ export class CalcClient {
       (hooks) => analyzeToleranceAsync(inputs, options, hooks),
       () => cancelledToleranceResult(inputs),
       onProgress, 0.85, 120,
+    );
+  }
+
+  /**
+   * Statistical clearance fit (src/calc/tolerance.ts statisticalFitFor) in the worker. Resolves with null when it fails
+   * or is cancelled.
+   */
+  statFit(inputs: GearboxInputs, spec: ToleranceSpec): CalcJob<StatisticalFit | null> {
+    return this.start<StatisticalFit | null, never>(
+      'statFit',
+      (id) => ({ type: 'statFit', id, inputs, spec }),
+      async () => {
+        await new Promise((r) => setTimeout(r, 0));
+        try { return statisticalFitFor(inputs, spec); } catch { return null; }
+      },
+      () => null,
+      undefined, 0.85, 120,
     );
   }
 
