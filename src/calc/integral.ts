@@ -14,7 +14,7 @@
 // in the ring frame) to the fillet arcs: negative = the fillet material intrudes into the disc's path.
 
 import { computeProfile } from './kernel';
-import { materialProps, type MaterialProps, type OuterPinSpec } from './materials';
+import { materialProps, outerPinMaterial, type MaterialProps, type OuterPinSpec } from './materials';
 
 const TWO_PI = 2 * Math.PI;
 
@@ -48,9 +48,9 @@ export function isIntegral(p: Pick<OuterPinSpec, 'construction'> | undefined): b
   return p?.construction === 'integral';
 }
 
-/** The ring-contact partner of the disc: the housing for an integral ring, else the bushing / pin material. */
+/** The ring-contact partner of the disc: the housing for an integral ring, the shoulder bolt steel, else the bushing / pin material. */
 export function ringContactMaterial(p: OuterPinSpec): MaterialProps {
-  return p.construction === 'integral' ? integralSpecOf(p).housingMaterial : p.material;
+  return p.construction === 'integral' ? integralSpecOf(p).housingMaterial : outerPinMaterial(p);
 }
 
 /** Ring working length: the axial length of a tooth that the discs load, mm. */

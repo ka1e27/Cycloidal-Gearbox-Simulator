@@ -80,7 +80,7 @@ describe('integral ring geometry', () => {
     // the unused pin material is not validated for an integral ring
     expect(validateGearboxInputs(integral(J2, { material: { ...SPEC_STEEL, E: -1 } })).errors).toEqual([]);
     expect(validateGearboxInputs({ ...J2, outerPin: { ...J2.outerPin, construction: 'bogus' as never } }).errors)
-      .toContain('Outer pin construction must be boltBushing, solid or integral');
+      .toContain('Outer pin construction must be boltBushing, solid, shoulderBolt or integral');
   });
 
   it('teeth stand out of the wall and do not merge at the root for the presets', () => {

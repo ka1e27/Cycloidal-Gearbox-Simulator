@@ -5,6 +5,7 @@
 import { computeProfile, ringUnit } from './kernel';
 import { contactLimits, deriveGeometry, discShareOf, validateGearboxInputs, DEFAULT_NPF, DEFAULT_NTH } from './gearbox';
 import { effectiveModulus } from './materials';
+import { ringContactMaterial } from './integral';
 import { now, runAsync, runSync, SLICE_MS, type RunHooks } from './runner';
 import type { GearboxInputs } from './types';
 
@@ -86,9 +87,9 @@ function makeCtx(inp: GearboxInputs): Ctx {
   const s = discShareOf(inp.discs, inp.discShare);
   return {
     inp,
-    EsRing: effectiveModulus(inp.outerPin.material, inp.discMaterial),
+    EsRing: effectiveModulus(ringContactMaterial(inp.outerPin), inp.discMaterial),
     EsIn: effectiveModulus(inp.innerPin.material, inp.discMaterial),
-    limRing: contactLimits(inp.discMaterial, inp.outerPin.material),
+    limRing: contactLimits(inp.discMaterial, ringContactMaterial(inp.outerPin)),
     limIn: contactLimits(inp.discMaterial, inp.innerPin.material),
     sStr: Math.sqrt(inp.Kc * inp.Tdes * s),
     sLife: Math.sqrt(inp.KcLife * inp.Treq * s),

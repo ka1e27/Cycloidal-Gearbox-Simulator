@@ -111,6 +111,7 @@ export function ExportDxfPanel({
   const disabled = !res.ok || hasFieldErrors;
   const byId = (id: string): PartDrawing | undefined => res.parts.find((p) => p.id === id);
   const integral = inputs.outerPin.construction === 'integral';
+  const shoulder = inputs.outerPin.construction === 'shoulderBolt';
 
   return (
     <Card
@@ -157,8 +158,10 @@ export function ExportDxfPanel({
                 <strong className="dxf-part-name">{p?.title ?? id}</strong>
                 <span className="dxf-part-sub">
                   {integral && id === 'housing' ? 'Internal teeth with tool fillets, outline and mounting holes'
-                    : integral && id === 'pins' ? 'Inner standoff or pin section (no outer pins)' : PART_BLURB[id]}
-                  {p && <span className="dxf-qty"> · make {p.id === 'pins' ? (integral ? String(inputs.Zw) : `${inputs.Zp} + ${inputs.Zp} + ${inputs.Zw}`) : p.quantity}</span>}
+                    : integral && id === 'pins' ? 'Inner standoff or pin section (no outer pins)'
+                    : shoulder && id === 'housing' ? 'Shoulder plate (reamed holes) and far plate (tapped), side by side'
+                    : shoulder && id === 'pins' ? 'Shoulder bolt and standoff sections' : PART_BLURB[id]}
+                  {p && <span className="dxf-qty"> · make {p.id === 'pins' ? (integral ? String(inputs.Zw) : shoulder ? `${inputs.Zp} + ${inputs.Zw}` : `${inputs.Zp} + ${inputs.Zp} + ${inputs.Zw}`) : shoulder && id === 'housing' ? '1 + 1' : p.quantity}</span>}
                 </span>
               </div>
               <Button

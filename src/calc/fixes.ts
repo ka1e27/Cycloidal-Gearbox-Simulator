@@ -24,7 +24,7 @@
 // Searches run at the coarse resolution; every reported fix is re-checked at full SPEC resolution (newMaxUtil,
 // governing, statuses), and monotone searches are adjusted at full resolution so the next value down fails.
 
-import { BEARINGS, INNER_PIN_OPTIONS, OUTER_PIN_OPTIONS, ADVISOR_D_MAX, ZW_OPTIONS } from './catalog';
+import { BEARINGS, INNER_PIN_OPTIONS, OUTER_PIN_OPTIONS, ADVISOR_D_MAX, ZW_OPTIONS, shoulderBoltFor, shoulderBoltsOf } from './catalog';
 import { checkGearbox, GREEN_LIMIT, innerPinSupportOf, UTIL_CAP } from './gearbox';
 import {
   MATERIALS, SPEC_STEEL, discStockFor, materialProps, sameMaterialProps, type MaterialProps,
@@ -32,7 +32,7 @@ import {
 import { END_MILL_RADII, integralSpecOf } from './integral';
 import { checkMotor, K1_MAX, K1_MIN, recommendRatio, rescaleEForZp, type MotorSpec } from './motor';
 import { now, runAsync, runSync, type RunHooks } from './runner';
-import { REAMED_HOLE_PLAY, analyzeTolerance, fitClearances, matchProcess, processPreset, processSpec, tighterProcesses, toleranceOf } from './tolerance';
+import { REAMED_HOLE_PLAY, analyzeTolerance, fitClearances, matchProcess, processPreset, processSpec, ringTolOf, tighterProcesses, toleranceOf } from './tolerance';
 import { resolveKc, withResolvedKc } from './toleranceKc';
 import type { CheckId, CheckStatus, GearboxInputs, GearboxResult, InnerPinSupport } from './types';
 
@@ -590,8 +590,26 @@ function* fixGen(inputsIn: GearboxInputs, o: Resolved): Generator<FixProgress, F
       if (found.length) push(found[0]);
     }
 
+    // ---------------------------------------------------------------- shoulder bolt size up (catalog, same unit system)
+    const shoulder = inputs.outerPin.construction === 'shoulderBolt';
+    if (shoulder) {
+      const curSb = shoulderBoltFor(inputs.rr);
+      const opts = shoulderBoltsOf(curSb?.system ?? 'metric').filter((p) => p.dia > 2 * inputs.rr + 1e-9);
+      const r = listSearch(opts.map((p) => ({ ...inputs, rr: p.dia / 2 })), 'rr');
+      if (r) {
+        const p = opts[r.k];
+        push(finish({
+          field: 'rr', label: 'Shoulder bolt size', direction: 'up',
+          from: curSb ? `${curSb.label} shoulder (${curSb.thread})` : `${mm(2 * inputs.rr)} shoulder`, to: `${p.label} shoulder (${p.thread})`,
+          fromValue: 2 * inputs.rr, toValue: p.dia,
+          short: `▲ shoulder bolts → ${p.label} (${p.thread})`, patch: { rr: p.dia / 2 },
+          changeCost: 0.25 + 0.25 * (p.dia - 2 * inputs.rr) / (2 * inputs.rr),
+        }, { ...inputs, rr: p.dia / 2 }));
+      }
+    }
+
     // ---------------------------------------------------------------- outer pin size up (catalog)
-    if (!integral) {
+    if (!integral && !shoulder) {
       const opts = OUTER_PIN_OPTIONS.filter((p) => p.od > 2 * inputs.rr + 1e-9);
       const bolt = inputs.outerPin.construction === 'boltBushing';
       const patchOf = (p: (typeof OUTER_PIN_OPTIONS)[number]): Partial<GearboxInputs> => ({
@@ -763,9 +781,10 @@ function* fixGen(inputsIn: GearboxInputs, o: Resolved): Generator<FixProgress, F
           }, cands[r.k]));
         }
       }
-      // bushing (contact only) or solid pin (contact + bending) material; plastic pins only for a plastic disc
+      // bushing (contact only) or solid pin (contact + bending) material; plastic pins only for a plastic disc.
+      // A shoulder bolt's steel is fixed: no material fix.
       const plasticOk = inputs.discMaterial.kind === 'polymer';
-      const lib = [SPEC_STEEL, ...MATERIALS.map((x) => materialProps(x.id))]
+      const lib = op.construction === 'shoulderBolt' ? [] : [SPEC_STEEL, ...MATERIALS.map((x) => materialProps(x.id))]
         .filter((x) => !sameMaterialProps(x, op.material) && (plasticOk || x.E >= 150000));
       const cands = lib.map((x) => ({ ...inputs, outerPin: { ...op, material: x } }));
       const r = pickSearch(cands, 'outerPin.material', (k) => lib[k].Sy);
@@ -815,7 +834,7 @@ function* fixGen(inputsIn: GearboxInputs, o: Resolved): Generator<FixProgress, F
     // user chose is kept). Offered only when the checks run on the tolerance Kc.
     if (kcSource === 'tolerance') {
       const cur = toleranceOf(inputsIn);
-      const integralRing = inputsIn.outerPin.construction === 'integral';
+      const integralRing = ringTolOf(inputsIn);
       const presets = tighterProcesses(cur);
       // each with its own fitted clearances, keeping the user's hole fit (reamed or not)
       const specs = presets.map((pp) => fitClearances(inputsIn, processSpec(pp.id, { integral: integralRing, holePlay: cur.holePlay, keep: cur })));
@@ -845,7 +864,7 @@ function* fixGen(inputsIn: GearboxInputs, o: Resolved): Generator<FixProgress, F
       if (inputsIn.outerPin.construction !== 'integral' && cur.holePlay > REAMED_HOLE_PLAY + 1e-9) {
         // a preset's clearances are re-fitted to the smaller stack; custom clearances are kept
         const pid = matchProcess(cur, integralRing, cur.fitMode === 'statistical' ? fitClearances(inputsIn, cur) : null);
-        const t = pid ? fitClearances(inputsIn, processSpec(pid, { holePlay: REAMED_HOLE_PLAY, keep: cur })) : { ...cur, holePlay: REAMED_HOLE_PLAY };
+        const t = pid ? fitClearances(inputsIn, processSpec(pid, { integral: integralRing, holePlay: REAMED_HOLE_PLAY, keep: cur })) : { ...cur, holePlay: REAMED_HOLE_PLAY };
         const tr = analyzeTolerance({ ...inputsIn, tolerance: t }, { trials: o.processTrials, sensitivity: false });
         if (tr.valid && tr.kc.strength.p95 > 0 && tr.kc.life.p95 > 0) {
           const at = { ...inputs, tolerance: t, Kc: tr.kc.strength.p95, KcLife: tr.kc.life.p95 };

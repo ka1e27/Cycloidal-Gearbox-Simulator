@@ -129,6 +129,11 @@ export type ToastKind = 'info' | 'success' | 'error';
 export interface ToastAction { label: string; run: () => void }
 export interface Toast { id: number; kind: ToastKind; text: string; action?: ToastAction }
 
+/** Shoulder bolt sizes the advisor searches: inch when lengths show in inches, else metric. */
+export function shoulderSystemFor(units: { length?: string } | undefined): 'metric' | 'inch' {
+  return units?.length === 'in' ? 'inch' : 'metric';
+}
+
 export function advisorKey(inputs: GearboxInputs, opts: AdvisorUiOptions, locks?: unknown): string {
   // discShare is ignored by the advisor; Treq/Tdes matter. `locks` is what the advisor was given (toEngineLocks).
   const { discShare: _ignored, ...rest } = inputs;
@@ -314,11 +319,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const plan = ratioPlanFor(s.arm.joints.find((j) => j.id === slot), inputs, lockState);
     const engine = toEngineLocks(lockState, inputs, plan.mode === 'motor' ? plan.zps : null);
     const { locks, ratioVary, zpSet } = engine;
-    const key = advisorKey(inputs, o, engine);
+    const shoulderSystem = shoulderSystemFor(s.units);
+    const key = advisorKey(inputs, o, inputs.outerPin.construction === 'shoulderBolt' ? { ...engine, shoulderSystem } : engine);
     setAdvisorRun((r) => ({ ...r, status: 'running', slot, progress: null, usedTarget: o.target }));
     const job = getCalcClient().advise(
       inputs,
-      { target: o.target, ratioVary, zpSet, locks, Dmin: o.Dmin, Dmax: o.Dmax, minPinClearance: o.minPinClearance, altWindowMm: o.altWindowMm },
+      { target: o.target, ratioVary, zpSet, locks, Dmin: o.Dmin, Dmax: o.Dmax, minPinClearance: o.minPinClearance, altWindowMm: o.altWindowMm, shoulderSystem },
       (p) => setAdvisorRun((r) => (jobRef.current === job ? { ...r, progress: p } : r)),
     );
     jobRef.current = job;

@@ -89,6 +89,7 @@ function ChecksBody({ slot, sm }: SectionCtx) {
         <>
           {r.polymerWarning && <PolymerCard />}
           {r.derived.integral && <IntegralCard slot={slot} />}
+          {!r.derived.integral && sm.eff.outerPin.construction === 'shoulderBolt' && <IntegralCard slot={slot} kind="shoulder" />}
           <KeyData r={r} discs={sm.deferred.discs} />
           <CheckCards r={r} compact fixes={view} />
         </>

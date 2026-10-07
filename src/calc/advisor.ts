@@ -21,6 +21,7 @@ import {
   ADVISOR_K1_STEP,
   INNER_PIN_OPTIONS,
   OUTER_PIN_OPTIONS,
+  SHOULDER_BOLT_OPTIONS,
   ZP_OPTIONS,
   ZW_OPTIONS,
 } from './catalog';
@@ -67,7 +68,10 @@ export const ADVISOR_LOCK_KEYS: readonly AdvisorLockKey[] = [
   'Zp', 'D', 'e', 'outerPin', 'innerPin', 'Zw', 'L', 'discs', 'bearing',
 ];
 
-/** Outer pin: a catalog entry (index into OUTER_PIN_OPTIONS) or a custom OD (+ bolt shank for bolt + bushing). */
+/**
+ * Outer pin: a catalog entry (index into OUTER_PIN_OPTIONS; for a shoulder bolt, into SHOULDER_BOLT_OPTIONS) or a custom
+ * OD (+ bolt shank for bolt + bushing).
+ */
 export type OuterPinLock =
   | { kind: 'catalog'; index: number }
   | { kind: 'custom'; od: number; shank: number };
@@ -138,6 +142,11 @@ export interface AdvisorOptions {
   toleranceKc?: { Kc: number; KcLife: number } | null;
   /** When nothing meets the target, compute the relax hints (one re-run per released lock). Default true. */
   hints?: boolean;
+  /**
+   * Shoulder bolt construction: which SHOULDER_BOLT_OPTIONS the search uses. Default 'metric' (the UI passes 'inch' when
+   * the length unit is inches).
+   */
+  shoulderSystem?: 'metric' | 'inch' | 'both';
 }
 
 export interface AdvisorProgress {
@@ -169,7 +178,7 @@ export interface AdvisorDesign {
   K1: number;
   /** Outer pin / bushing OD, mm (integral ring: twice the tooth radius rr) */
   outerPinOD: number;
-  /** Bolt size label (bolt+bushing construction, catalog bolt only) */
+  /** Bolt size label (bolt+bushing construction, catalog bolt only); a shoulder bolt: its thread (e.g. 'M5') */
   outerBolt: string | null;
   /** Bolt shank diameter, mm (bolt+bushing only) */
   shankDia: number | null;
@@ -333,6 +342,9 @@ const finite = (x: unknown): x is number => typeof x === 'number' && Number.isFi
 const catalogOuter = (i: number): OuterOpt => ({
   od: OUTER_PIN_OPTIONS[i].od, shank: OUTER_PIN_OPTIONS[i].shank, bolt: OUTER_PIN_OPTIONS[i].bolt, custom: false,
 });
+const catalogShoulder = (i: number): OuterOpt => ({
+  od: SHOULDER_BOLT_OPTIONS[i].dia, shank: SHOULDER_BOLT_OPTIONS[i].dia, bolt: SHOULDER_BOLT_OPTIONS[i].thread, custom: false,
+});
 const catalogInner = (i: number): InnerOpt => ({
   od: INNER_PIN_OPTIONS[i].od, bore: INNER_PIN_OPTIONS[i].bore, thread: INNER_PIN_OPTIONS[i].thread, custom: false,
 });
@@ -362,7 +374,8 @@ export function validateAdvisorLocks(inputs: GearboxInputs, locks: AdvisorLocks 
   const o = locks.outerPin;
   if (o) {
     if (o.kind === 'catalog') {
-      if (!Number.isInteger(o.index) || o.index < 0 || o.index >= OUTER_PIN_OPTIONS.length) errors.push('Locked outer pin is not in the catalog');
+      const n = inputs.outerPin?.construction === 'shoulderBolt' ? SHOULDER_BOLT_OPTIONS.length : OUTER_PIN_OPTIONS.length;
+      if (!Number.isInteger(o.index) || o.index < 0 || o.index >= n) errors.push('Locked outer pin is not in the catalog');
     } else {
       posIn(o.od, 'outer pin OD', 2 * M.rr, 'mm');
       if (inputs.outerPin?.construction === 'boltBushing') {
@@ -412,13 +425,22 @@ function buildSpace(inputs: GearboxInputs, o: ResolvedOptions): Space {
 
   let outer: OuterOpt[];
   const integral = inputs.outerPin.construction === 'integral';
+  const shoulder = inputs.outerPin.construction === 'shoulderBolt';
   if (lk.outerPin) {
     outer = [lk.outerPin.kind === 'catalog'
-      ? (integral ? { ...catalogOuter(lk.outerPin.index), bolt: null } : catalogOuter(lk.outerPin.index))
+      ? (integral ? { ...catalogOuter(lk.outerPin.index), bolt: null }
+        : shoulder ? catalogShoulder(lk.outerPin.index) : catalogOuter(lk.outerPin.index))
       : { od: lk.outerPin.od, shank: lk.outerPin.shank, bolt: null, custom: true }];
   } else if (integral) {
     // a machined ring has no catalog: the tooth radius is searched on a continuous grid
     outer = INTEGRAL_RR_OPTIONS.map((rr) => ({ od: 2 * rr, shank: 0, bolt: null, custom: false }));
+  } else if (shoulder) {
+    // shoulder bolts of the chosen unit system (metric by default), diameter ascending
+    const sys = o.shoulderSystem;
+    outer = SHOULDER_BOLT_OPTIONS.map((p, i) => ({ p, i }))
+      .filter((x) => sys === 'both' || x.p.system === sys)
+      .sort((a, b) => a.p.dia - b.p.dia)
+      .map((x) => catalogShoulder(x.i));
   } else outer = OUTER_PIN_OPTIONS.map((_, i) => catalogOuter(i));
 
   let inner: InnerOpt[];
@@ -492,6 +514,7 @@ function makeDesign(slot: AdvisorSlot, base: GearboxInputs, sp: Space, c: Cand, 
   const brg = sp.brgs[c.brgIdx];
   const inputs = buildInputs(base, sp, c);
   const bolt = base.outerPin.construction === 'boltBushing';
+  const shoulderBolt = base.outerPin.construction === 'shoulderBolt';
   const standoff = base.innerPin.construction === 'standoff';
   return {
     slot,
@@ -504,7 +527,7 @@ function makeDesign(slot: AdvisorSlot, base: GearboxInputs, sp: Space, c: Cand, 
     e: c.e,
     K1: result.derived.K1,
     outerPinOD: outer.od,
-    outerBolt: bolt ? outer.bolt : null,
+    outerBolt: bolt || shoulderBolt ? outer.bolt : null,
     shankDia: bolt ? outer.shank : null,
     outerCustom: outer.custom,
     innerPinOD: inner.od,
@@ -559,6 +582,7 @@ interface ResolvedOptions {
   locks: AdvisorLocks;
   closest: boolean;
   hints: boolean;
+  shoulderSystem: 'metric' | 'inch' | 'both';
 }
 
 /** Scales the fraction a searchGen reports into the part of the whole run it occupies. */
@@ -968,6 +992,8 @@ function hintFor(key: AdvisorLockKey | 'maxHousingOD', d: AdvisorDesign): { valu
     ? `machined teeth of radius ${trimNum(d.outerPinOD / 2, 2)} mm`
     : d.inputs.outerPin.construction === 'solid'
     ? `${trimNum(d.outerPinOD, 2)} mm solid pins`
+    : d.inputs.outerPin.construction === 'shoulderBolt'
+    ? `${trimNum(d.outerPinOD, 3)} mm shoulder bolts${d.outerBolt ? ` (${d.outerBolt})` : ''}`
     : d.outerBolt ? `${trimNum(d.outerPinOD, 2)} mm bushings on ${d.outerBolt} bolts` : `${trimNum(d.outerPinOD, 2)} mm bushings`;
   const inner = d.inputs.innerPin.construction === 'solid'
     ? `${trimNum(d.innerPinOD, 2)} mm solid pins`
@@ -1087,6 +1113,7 @@ function resolveOptions(opts: AdvisorOptions): ResolvedOptions {
     locks: { ...(opts.locks ?? {}) },
     closest: opts.closest ?? true,
     hints: opts.hints ?? true,
+    shoulderSystem: opts.shoulderSystem === 'inch' || opts.shoulderSystem === 'both' ? opts.shoulderSystem : 'metric',
   };
 }
 

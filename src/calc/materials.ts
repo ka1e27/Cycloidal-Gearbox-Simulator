@@ -272,8 +272,21 @@ export const POLYMER_WARNING_LINES: readonly string[] = [
 // Pin construction options and their bending limits
 // ---------------------------------------------------------------------------
 
-/** 'integral': no pins, the teeth are machined into the housing (CLAUDE.md Addition 12). */
-export type OuterPinConstruction = 'boltBushing' | 'solid' | 'integral';
+/**
+ * 'integral': no pins, the teeth are machined into the housing (CLAUDE.md Addition 12).
+ * 'shoulderBolt': a ground shoulder screw is the pin (no bushing): it bends and contacts as a solid pin of d = 2 rr
+ * made of SHOULDER_BOLT_STEEL; the size comes from SHOULDER_BOLT_OPTIONS (catalog.ts).
+ */
+export type OuterPinConstruction = 'boltBushing' | 'solid' | 'shoulderBolt' | 'integral';
+export const OUTER_PIN_CONSTRUCTIONS: readonly OuterPinConstruction[] = ['boltBushing', 'solid', 'shoulderBolt', 'integral'];
+
+/**
+ * Alloy steel of a class 12.9 shoulder screw (ground shoulder): fixed, independent of the library.
+ * Sy 1080 MPa (12.9 yield), sigma_f 450 MPa (estimate), so the bending limit is min(0.4 Sy, sigma_f) = 432 MPa.
+ */
+export const SHOULDER_BOLT_STEEL: MaterialProps = {
+  E: 205000, nu: 0.29, Sy: 1080, sigmaF: 450, density: 7.85, kind: 'metal', form: 'plate',
+};
 export type InnerPinConstruction = 'standoff' | 'solid';
 
 export interface OuterPinSpec {
@@ -284,7 +297,8 @@ export interface OuterPinSpec {
   boltYield: number;
   /**
    * Contact material. For boltBushing this is the bushing (E, nu for E*); for solid it is the pin
-   * material and also supplies bending strength (Sy, sigmaF). Not used by an integral ring (see housingMaterial).
+   * material and also supplies bending strength (Sy, sigmaF). Not used by an integral ring (see housingMaterial) or a
+   * shoulder bolt (always SHOULDER_BOLT_STEEL).
    */
   material: MaterialProps;
   /** integral: the housing material the teeth are machined from (contact and tooth root). Missing = aluminum 6061-T6. */
@@ -312,11 +326,16 @@ export function outerPinBendingDia(p: OuterPinSpec, rr: number): number {
   return p.construction === 'boltBushing' ? p.shankDia : 2 * rr;
 }
 
-/** Outer pin bending stress limit, MPa: 0.4*Sy_bolt, or min(0.4*Sy, sigmaF) for a solid pin. */
+/** The material of the outer pin body (bending and contact): the shoulder bolt steel, else `material`. */
+export function outerPinMaterial(p: Pick<OuterPinSpec, 'construction' | 'material'>): MaterialProps {
+  return p.construction === 'shoulderBolt' ? SHOULDER_BOLT_STEEL : p.material;
+}
+
+/** Outer pin bending stress limit, MPa: 0.4*Sy_bolt, or min(0.4*Sy, sigmaF) for a solid pin or a shoulder bolt. */
 export function outerPinBendingLimit(p: OuterPinSpec): number {
-  return p.construction === 'boltBushing'
-    ? 0.4 * p.boltYield
-    : Math.min(0.4 * p.material.Sy, p.material.sigmaF);
+  if (p.construction === 'boltBushing') return 0.4 * p.boltYield;
+  const m = outerPinMaterial(p);
+  return Math.min(0.4 * m.Sy, m.sigmaF);
 }
 
 /** Inner pin section modulus, mm^3 (hollow standoff or solid round). */

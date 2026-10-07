@@ -128,15 +128,19 @@ export function PolymerCard() {
 /** Suggested gearbox efficiency for a sliding (pinless) ring. */
 export const INTEGRAL_ETA = 0.78;
 
-export function IntegralCard({ slot }: { slot: Slot | null }) {
+/** The sliding-contact notice of a machined ring (kind 'integral') or a shoulder bolt ring without bushings ('shoulder'). */
+export function IntegralCard({ slot, kind = 'integral' }: { slot: Slot | null; kind?: 'integral' | 'shoulder' }) {
   const { state, updateArm } = useStore();
   const joint = slot && slot !== CUSTOM ? state.arm.joints.find((j) => j.id === slot) : undefined;
   const motor = joint?.drive === 'cycloidal' ? joint.motor : undefined;
   const eta = motor?.efficiency;
+  const shoulder = kind === 'shoulder';
   return (
-    <Notice kind="info" title="Machined ring: the disc slides on the teeth">
+    <Notice kind="info" title={shoulder ? 'Shoulder bolts: the disc slides on the ground shoulders' : 'Machined ring: the disc slides on the teeth'}>
       <ul className="plain-list">
-        <li>Sliding contact (no rolling bushings): grease the teeth, and expect more wear and a lower efficiency, about 0.75 to 0.8.</li>
+        <li>{shoulder
+          ? 'Sliding contact (no rolling bushings): grease the shoulders, and expect more wear and a lower efficiency, about 0.75 to 0.8.'
+          : 'Sliding contact (no rolling bushings): grease the teeth, and expect more wear and a lower efficiency, about 0.75 to 0.8.'}</li>
         <li>
           Set the motor efficiency to match, so the recommended ratio has enough torque.
           {motor ? (
@@ -150,8 +154,18 @@ export function IntegralCard({ slot }: { slot: Slot | null }) {
             </>
           ) : ' Enter a motor under Motor & ratio to use it.'}
         </li>
-        <li>Aluminum on aluminum galls: pair different materials (steel or plastic discs) or hard-anodize the housing.</li>
-        <li>Plastic discs (POM, nylon) in a metal ring work well: low friction and quiet.</li>
+        {shoulder ? (
+          <>
+            <li>A Delrin or acetal disc on the steel shoulders is an excellent pair: low friction, quiet, no galling.</li>
+            <li>An aluminum disc on steel needs grease, or hard-anodize the disc.</li>
+            <li>The shoulder length is only held to about ±0.1 mm: set the plate spacing with the housing ring, not the bolt.</li>
+          </>
+        ) : (
+          <>
+            <li>Aluminum on aluminum galls: pair different materials (steel or plastic discs) or hard-anodize the housing.</li>
+            <li>Plastic discs (POM, nylon) in a metal ring work well: low friction and quiet.</li>
+          </>
+        )}
       </ul>
     </Notice>
   );

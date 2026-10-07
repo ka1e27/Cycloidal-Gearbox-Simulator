@@ -11,7 +11,7 @@ import { fixed, num, thickness, util } from '../format';
 import { defaultLockState, toEngineLocks, type AdvisorLockState } from '../advisorLocks';
 import { ratioPlanFor } from '../motorUi';
 import { gearboxOf, presetFor, slotLabel, type Slot } from '../session';
-import { advisorKey, defaultAdvisorOptions, useEffectiveInputs, useStore } from '../store';
+import { advisorKey, defaultAdvisorOptions, shoulderSystemFor, useEffectiveInputs, useStore } from '../store';
 import { DiscSvg } from '../viz/DiscFigure';
 import { AdvisorLocksPanel } from './AdvisorLocksPanel';
 
@@ -38,7 +38,8 @@ export function AdvisorPanel({ slot }: { slot: Slot }) {
   const otherRunning = advisorRun.status === 'running' && advisorRun.slot !== slot;
   // a result belongs to the slot it was run for
   const res = advisorRun.slot === slot ? advisorRun.result : null;
-  const stale = res != null && advisorRun.key !== advisorKey(eff, opts, engine);
+  const stale = res != null && advisorRun.key !== advisorKey(eff, opts,
+    eff.outerPin.construction === 'shoulderBolt' ? { ...engine, shoulderSystem: shoulderSystemFor(state.units) } : engine);
   const fromArmNow = fromArm(slot);
   const dOpts = defaultAdvisorOptions();
   // D min / max only matter while D is free
@@ -90,7 +91,8 @@ export function AdvisorPanel({ slot }: { slot: Slot }) {
 
         <div className="mat-summary">
           <div><span className="muted">Disc</span> {eff.discMaterial.kind === 'polymer' ? 'polymer' : 'metal'}, E {u.fu('stress', eff.discMaterial.E, { dp: 0 })}, Sy {u.fu('stress', eff.discMaterial.Sy, { dp: 0 })}</div>
-          <div><span className="muted">Outer pins</span> {eff.outerPin.construction === 'integral' ? 'machined into the housing (no pins)' : eff.outerPin.construction === 'solid' ? 'solid pins' : 'bolt + bushing'}</div>
+          <div><span className="muted">Outer pins</span> {eff.outerPin.construction === 'integral' ? 'machined into the housing (no pins)' : eff.outerPin.construction === 'solid' ? 'solid pins'
+            : eff.outerPin.construction === 'shoulderBolt' ? `shoulder bolts (${shoulderSystemFor(state.units) === 'inch' ? 'inch' : 'metric'} sizes searched)` : 'bolt + bushing'}</div>
           <div><span className="muted">Inner pins</span> {eff.innerPin.construction === 'solid' ? 'solid pins' : 'standoffs'}</div>
           <button type="button" className="linkish" onClick={() => openSection('design', slot)}>Materials and pin type come from Gearbox design</button>
         </div>
@@ -278,6 +280,8 @@ export function Hero({ d, target, elapsed, evaluated, joint, onApply, locked, cl
     ? `teeth machined into the housing, rr ${L(d.outerPinOD / 2, 2)}`
     : d.inputs.outerPin.construction === 'solid'
     ? `${L(d.outerPinOD, 1)} solid pin`
+    : d.inputs.outerPin.construction === 'shoulderBolt'
+    ? `${L(d.outerPinOD, 3)} shoulder bolt${d.outerBolt ? ` (${d.outerBolt} thread)` : ''}, no bushing`
     : `${L(d.outerPinOD, 1)} bushing on ${d.outerBolt ?? (d.outerCustom ? 'a custom bolt' : 'bolt')} (${L(d.shankDia ?? 0, 1)} shank)`;
   const innerDesc = d.inputs.innerPin.construction === 'solid'
     ? `${L(d.innerPinOD, 1)} solid pin`

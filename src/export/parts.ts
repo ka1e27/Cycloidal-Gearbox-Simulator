@@ -16,6 +16,8 @@ import {
   MATERIALS,
   createGearboxModel,
   dxfClearancesOf,
+  REAMED_HOLE_PLAY,
+  shoulderBoltFor,
   ringProfile,
   type GearboxInputs,
   type GearboxModel,
@@ -542,6 +544,44 @@ export function buildParts(
         'End covers: plain plates with the same outline and holes (not drawn). Grease the teeth.',
       ]);
       parts.push(b.finish('housing', 1));
+    } else if (inputs.outerPin.construction === 'shoulderBolt') {
+      // shoulder bolts: the shoulder sits in reamed holes of one plate, the thread screws into the far plate
+      const b = new PartBuilder('HOUSING');
+      const sb = shoulderBoltFor(rr);
+      const shoulderD = 2 * rr;
+      const holeD = shoulderD + o.pinHoleClearance;
+      const tapD = sb ? sb.tapDrill : null;
+      const thread = sb ? sb.thread : 'the shoulder bolt thread';
+      const R = d.housingOD / 2;
+      const off = d.housingOD + 10;
+      // plate 1 (shoulder side) at the origin, plate 2 (far, tapped) to its right
+      b.circle(0, 0, R);
+      ringOfCircles(b, Zp, Rp, holeD);
+      b.circle(off, 0, R);
+      if (tapD != null) for (let i = 0; i < Zp; i++) {
+        const a = (2 * Math.PI * i) / Zp;
+        b.circle(off + Rp * Math.cos(a), Rp * Math.sin(a), tapD / 2);
+      }
+      if (o.housingCentreHole) { b.circle(0, 0, o.housingCentreDia / 2); b.circle(off, 0, o.housingCentreDia / 2); }
+      b.summary.push(`Outline: circle dia ${fix(d.housingOD)} mm (D + 2*rr + 2*wall), two plates side by side`);
+      b.summary.push(`Plate 1 (shoulder side, left): ${Zp} holes dia ${fix(holeD, 3)} mm (shoulder ${fix(shoulderD, 3)} + ${fix(o.pinHoleClearance, 3)}, ream to fit) on dia ${fix(inputs.D)} mm`);
+      b.summary.push(tapD != null
+        ? `Plate 2 (far side, right): ${Zp} tap-drill holes dia ${fix(tapD, 3)} mm for ${thread} on dia ${fix(inputs.D)} mm`
+        : 'Plate 2 (far side, right): no tap holes drawn (the shoulder is not a catalog size, so the thread is unknown)');
+      if (o.housingCentreHole) b.summary.push(`Centre hole: dia ${fix(o.housingCentreDia)} mm (both plates)`);
+      if (o.pinHoleClearance > 2 * REAMED_HOLE_PLAY + 1e-9) b.warnings.push(`Housing plate: the shoulder holes get ${fix(o.pinHoleClearance, 3)} mm of clearance. Shoulder bolts want reamed holes (0.01 mm): set the bolt hole play to reamed under Tolerances & backlash.`);
+      if (R < Rp + holeD / 2 + 0.5) b.warnings.push('Housing plate: the outline leaves under 0.5 mm of material outside the pin holes. Increase the wall.');
+      if (o.housingCentreHole && o.housingCentreDia / 2 > Rp - holeD / 2 - 0.5) b.warnings.push('Housing plate: the centre hole runs into the pin holes. Make it smaller.');
+      if (!sb) b.warnings.push(`Housing plate: a ${fix(shoulderD, 3)} mm shoulder is not a catalog shoulder bolt, so the far plate has no tap holes. Pick a shoulder bolt size.`);
+      b.notes([
+        `${PART_META.housing.title.toUpperCase()}  ${label}  make 2 (1 shoulder plate + 1 tapped plate)`,
+        `Outline dia ${fix(d.housingOD)} = D ${fix(inputs.D)} + 2*rr ${fix(rr, 3)} + 2*wall ${fix(inputs.wall)}`,
+        `Left, shoulder plate: ${Zp} holes dia ${fix(holeD, 3)} on D ${fix(inputs.D)} (shoulder ${fix(shoulderD, 3)} + ${fix(o.pinHoleClearance, 3)}, reamed fit)`,
+        `Far plate: tap for ${thread}${tapD != null ? ` (tap drill ${fix(tapD, 3)})` : ''}; set plate spacing with the housing ring, not the shoulder length`,
+        `Shoulder bolts ${sb ? `${sb.label} x ${sb.thread}` : `${fix(shoulderD, 3)} mm`}: shoulder span ${fix(d.span, 3)} mm between plates`,
+        o.housingCentreHole ? `Centre hole dia ${fix(o.housingCentreDia)}` : 'No centre hole',
+      ]);
+      parts.push(b.finish('housing', 2));
     } else {
       const b = new PartBuilder('HOUSING');
       const outer = inputs.outerPin.construction === 'boltBushing';
@@ -636,6 +676,10 @@ export function buildParts(
       const items: { tag: string; od: number; id: number | null; text: string }[] = [];
       if (inputs.outerPin.construction === 'integral') {
         // no outer pins: the teeth are part of the housing
+      } else if (inputs.outerPin.construction === 'shoulderBolt') {
+        const sb = shoulderBoltFor(rr);
+        const band = sb ? ` (${fix(2 * rr + sb.lower, 3)} to ${fix(2 * rr + sb.upper, 3)})` : '';
+        items.push({ tag: '1', od: 2 * rr, id: null, text: `1  Shoulder bolt: shoulder dia ${fix(2 * rr, 3)}${band}  thread ${sb ? sb.thread : '?'}  ground shoulder, no bushing  shoulder span ${fix(d.span, 3)} between plates plus plate engagement  make ${Zp}` });
       } else if (boltBushing) {
         const bushId = inputs.outerPin.shankDia + o.pinHoleClearance;
         items.push({ tag: '1', od: 2 * rr, id: bushId, text: `1  Outer bushing: OD ${fix(2 * rr)}  ID ${fix(bushId)} (shank + ${fix(o.pinHoleClearance)})  disc stack ${fix(inputs.discs * inputs.L + (inputs.discs - 1) * inputs.gap, 2)}  make ${Zp}` });

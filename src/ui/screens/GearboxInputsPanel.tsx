@@ -9,6 +9,8 @@ import {
   MATERIALS,
   MATERIAL_FAMILIES,
   OUTER_PIN_OPTIONS,
+  REAMED_HOLE_PLAY,
+  SHOULDER_BOLT_STEEL,
   SPEC_STEEL,
   SUPPLIER_DATA_NOTE,
   bearingsBySeries,
@@ -16,7 +18,12 @@ import {
   integralSpecOf,
   materialForm,
   materialProps,
+  matchProcess,
+  processSpec,
+  ringTolOf,
   sameMaterialProps,
+  shoulderBoltFor,
+  shoulderBoltsOf,
   validateGearboxInputs,
   type Fix,
   type FixField,
@@ -31,6 +38,7 @@ import { FixBadge, FixChip } from '../components/FixChips';
 import { fixesByField, useApplyFix, useFixes } from '../fixes';
 import { Advanced, Button, FieldRow, Notice, Section, SelectField, Segmented, Switch } from '../components/primitives';
 import { NumberField } from '../components/NumberField';
+import { InfoTip } from '../components/InfoTip';
 import { HELP } from '../help';
 import { CUSTOM, armToggle, gearboxOf, presetFor, presetIdFor, type Slot } from '../session';
 import { useStore } from '../store';
@@ -248,9 +256,30 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
   const refSpec = integralSpecOf(ref.outerPin);
   const setOuter = (p: Partial<OuterPinSpec>) => set({ outerPin: { ...g.outerPin, ...p } });
   const maxTool = result.valid ? result.derived.integral?.maxToolRadius : undefined;
-  const setConstruction = (c: OuterPinConstruction) =>
+  const shoulder = g.outerPin.construction === 'shoulderBolt';
+  const shoulderMatch = shoulderBoltFor(g.rr);
+  const setConstruction = (c: OuterPinConstruction) => {
+    if (c === g.outerPin.construction) return;
     // switching to the machined ring fills its fields (older sessions have none), so they show and save
-    setOuter(c === 'integral' ? { ...integralSpecOf(g.outerPin), construction: c } : { construction: c });
+    const outerPin: OuterPinSpec = c === 'integral' ? { ...g.outerPin, ...integralSpecOf(g.outerPin), construction: c } : { ...g.outerPin, construction: c };
+    // a shoulder bolt snaps rr to the nearest catalog shoulder (inch sizes when the length unit is inches)
+    let rr = g.rr;
+    if (c === 'shoulderBolt' && !shoulderBoltFor(rr)) {
+      const list = shoulderBoltsOf(imperial ? 'inch' : 'metric');
+      rr = list.reduce((a, b) => (Math.abs(b.dia - 2 * g.rr) < Math.abs(a.dia - 2 * g.rr) ? b : a)).dia / 2;
+    }
+    // a stored process preset is re-fitted for the new construction (a shoulder bolt gets reamed holes); custom values stay
+    let tolerance = g.tolerance;
+    if (tolerance) {
+      const next = { ...g, rr, outerPin };
+      const pid = matchProcess(tolerance, ringTolOf(g));
+      const holePlay = c === 'shoulderBolt' ? REAMED_HOLE_PLAY : tolerance.holePlay;
+      tolerance = pid && tolerance.fitMode !== 'statistical'
+        ? processSpec(pid, { integral: ringTolOf(next), holePlay, keep: tolerance })
+        : { ...tolerance, holePlay };
+    }
+    set({ rr, outerPin, tolerance });
+  };
   const innerMatch = INNER_PIN_OPTIONS.find((o) => Math.abs(2 * g.rw - o.od) < 1e-9);
   const bearingMatch = BEARINGS.find((b) => b.name === g.bearing.name && b.C === g.bearing.C && b.C0 === g.bearing.C0);
   const stock = discStockFor(g.discMaterial);
@@ -419,17 +448,54 @@ export function GearboxInputsPanel({ slot, eff, result, part = 'all' }: { slot: 
           reference={ref.discMaterial} errors={v.errors} errPrefix="Disc material" full help={HELP.discMaterial} showForm
           fixClass={hl('discMaterial')} fixChip={chip('discMaterial')} />
 
-        <h4 className="subgroup-h">{integral ? 'Ring (machined into the housing)' : 'Outer pins (ring)'}</h4>
-        <FieldRow label="Construction" help={integral ? HELP.integralRing : HELP.outerConstruction} stacked>
+        <h4 className="subgroup-h">{integral ? 'Ring (machined into the housing)' : shoulder ? 'Outer pins (shoulder bolts)' : 'Outer pins (ring)'}</h4>
+        <FieldRow label="Construction" help={integral ? HELP.integralRing : shoulder ? HELP.shoulderBolt : HELP.outerConstruction} stacked>
           <Segmented label="Outer pin construction" value={g.outerPin.construction} fullWidth
             onChange={setConstruction}
             options={[
               { value: 'boltBushing', label: 'Bolt + bushing' },
               { value: 'solid', label: 'Solid pin' },
+              { value: 'shoulderBolt', label: 'Shoulder bolt' },
               { value: 'integral', label: 'Machined into housing' },
             ]} />
         </FieldRow>
-        {integral ? (
+        {shoulder ? (
+          <>
+            <SelectField
+              label="Shoulder bolt size"
+              help={HELP.shoulderBoltSize}
+              className={hl('rr')}
+              addon={chip('rr')}
+              value={shoulderMatch ? shoulderMatch.id : 'custom'}
+              onChange={(val) => {
+                const o = shoulderBoltsOf('metric').concat(shoulderBoltsOf('inch')).find((x) => x.id === val);
+                if (o) set({ rr: o.dia / 2 });
+              }}
+              options={[
+                ...(['metric', 'inch'] as const).flatMap((sys) => shoulderBoltsOf(sys).map((o) => ({
+                  value: o.id,
+                  group: sys === 'metric' ? 'Metric' : 'Inch',
+                  label: `${o.label} shoulder, ${o.thread} thread`,
+                  title: `Shoulder ${o.dia} mm, ${o.upper.toFixed(3)} / ${o.lower.toFixed(3)} mm; tap drill ${o.tapDrill} mm`,
+                }))),
+                { value: 'custom', label: `Not a catalog size (${u.fu('length', 2 * g.rr, { dp: 3, trim: true })}): pick one`, disabled: !!shoulderMatch },
+              ]}
+              note={shoulderMatch ? `Shoulder ${shoulderMatch.dia} mm (${(shoulderMatch.dia + shoulderMatch.lower).toFixed(3)} to ${(shoulderMatch.dia + shoulderMatch.upper).toFixed(3)} mm ground), ${shoulderMatch.thread} thread` : undefined}
+            />
+            <FieldRow label="Bolt steel" help={HELP.shoulderBoltSteel} stacked>
+              <p className="section-note">
+                Alloy steel, class 12.9 (fixed): E {u.fu('stress', SHOULDER_BOLT_STEEL.E, { dp: 0 })}, yield {u.fu('stress', SHOULDER_BOLT_STEEL.Sy, { dp: 0 })}, fatigue {u.fu('stress', SHOULDER_BOLT_STEEL.sigmaF, { dp: 0 })}; bending limit {u.fu('stress', Math.min(0.4 * SHOULDER_BOLT_STEEL.Sy, SHOULDER_BOLT_STEEL.sigmaF), { dp: 0 })}.
+              </p>
+            </FieldRow>
+            <Notice kind="info" title="Ground shoulder, no bushing: the disc slides on the pin">
+              <ul className="plain-list">
+                <li>Sliding contact like a machined ring: grease the shoulders. The Checks section suggests the efficiency (η ≈ 0.78).</li>
+                <li>Delrin or acetal discs on steel are excellent; an aluminum disc needs grease or hard anodizing. <InfoTip help={HELP.shoulderPairing} label="Disc material on a shoulder bolt" /></li>
+                <li>The shoulder length is only ±0.1 mm: set the plate spacing with the housing ring. <InfoTip help={HELP.shoulderLength} label="Shoulder length tolerance" /></li>
+              </ul>
+            </Notice>
+          </>
+        ) : integral ? (
           <>
             <NumberField label="Tooth radius" symbol="rr" quantity="length" value={g.rr} onChange={(x) => set({ rr: x ?? 0 })}
               defaultValue={ref.rr} error={E('rr ', 'Tooth radius', 'Ring teeth')} help={HELP.toothRadius} step={0.25}

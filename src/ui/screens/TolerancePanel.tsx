@@ -5,7 +5,8 @@
 import { useMemo, type ReactNode } from 'react';
 import {
   ARCMIN_PER_RAD, DRILLED_HOLE_PLAY, INTEGRAL_UNUSED_TERMS, PROCESS_PRESETS, REAMED_HOLE_PLAY, armTipLevers, armTipSlop,
-  BIND_TARGET_RANGE, fitTrialsFor, fittedClearances, matchProcess, processSpec, toleranceOf, toleranceStacks, validateToleranceSpec, withTolerance,
+  BIND_TARGET_RANGE, effectiveSpec, fitTrialsFor, fittedClearances, matchProcess, processSpec, ringTolOf, shoulderBoltFor, toleranceOf,
+  toleranceStacks, validateToleranceSpec, withTolerance,
   type Fix, type GearboxInputs, type GearboxResult, type ProcessId, type ToleranceSpec, type ToleranceTerm,
 } from '../../calc';
 import { NumberField } from '../components/NumberField';
@@ -70,13 +71,17 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
   const { state, updateGearbox, applyGearboxChange, u } = useStore();
   const spec = toleranceOf(eff);
   const errs = useMemo(() => validateToleranceSpec(spec), [spec]);
-  const integral = eff.outerPin.construction === 'integral';
+  // integral ring or shoulder bolt (no bushing play, the catalog shoulder band as the pin diameter tolerance)
+  const ring = ringTolOf(eff);
+  const integral = ring.integral;
+  const shoulder = ring.shoulder;
+  const specE = effectiveSpec(spec, ring);
   const statistical = spec.fitMode === 'statistical';
   // the statistical fit of the last analysis, when it was made for these process values (it does not depend on the clearances)
-  const shownFit = tol.shown && tol.shown.valid && sameProcess(tol.shown.spec, spec) ? tol.shown.fit : null;
+  const shownFit = tol.shown && tol.shown.valid && sameProcess(tol.shown.spec, specE) ? tol.shown.fit : null;
   const statFitJob = useStatFit(slot);
   // while a fit runs the clearances are the worst-case ones: compare the process values only
-  const proc = matchProcess(spec, integral, statistical && !statFitJob.fitting ? shownFit?.statistical ?? null : null);
+  const proc = matchProcess(spec, ring, statistical && !statFitJob.fitting ? shownFit?.statistical ?? null : null);
   const reamed = spec.holePlay <= REAMED_HOLE_PLAY + 1e-9;
   const set = (patch: Partial<ToleranceSpec>) => updateGearbox(slot, (g) => withTolerance(g, patch));
   const lever = slot !== CUSTOM && index >= 0 ? armTipLevers(state.arm)[index] ?? null : null;
@@ -85,12 +90,17 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
   const processFixes = (fx.report?.fixes ?? []).filter((f) => f.field === 'tolerance');
   const who = slot === CUSTOM ? 'Custom gearbox' : `J${index + 1}`;
 
-  const field = (d: FieldDef) => (
-    <NumberField key={d.k} label={d.label} symbol={d.symbol} quantity="length" value={spec[d.k]}
-      onChange={(v) => set({ [d.k]: v ?? 0 })} defaultValue={processSpec(proc ?? 'mill', { integral, holePlay: spec.holePlay })[d.k]} step={0.005}
+  const sb = shoulder ? shoulderBoltFor(eff.rr) : null;
+  const field = (d: FieldDef) => (shoulder && d.k === 'pinDiaTol'
+    // the shoulder band is fixed by the catalog: shown, not edited
+    ? <NumberField key={d.k} label="Shoulder diameter (half band)" symbol={d.symbol} quantity="length" value={specE.pinDiaTol}
+      onChange={() => undefined} disabled step={0.001} help={HELP.shoulderBand}
+      note={u.text(`Ground shoulder ${sb ? `${sb.label} (${(2 * eff.rr + sb.lower).toFixed(3)} to ${(2 * eff.rr + sb.upper).toFixed(3)} mm)` : `${(2 * eff.rr).toFixed(3)} mm (metric band assumed)`}: mean undersize ${(2 * shoulder.undersize).toFixed(4)} mm adds a ${shoulder.undersize.toFixed(4)} mm gap at every pin; ± ${(specE.pinDiaTol).toFixed(4)} mm on the diameter is random`)} />
+    : <NumberField key={d.k} label={d.label} symbol={d.symbol} quantity="length" value={spec[d.k]}
+      onChange={(v) => set({ [d.k]: v ?? 0 })} defaultValue={processSpec(proc ?? 'mill', { integral: ring, holePlay: spec.holePlay })[d.k]} step={0.005}
       help={HELP[d.help]} error={errs[d.k]} note={d.note} />
   );
-  const shown = (list: FieldDef[]) => list.filter((d) => !(integral && INTEGRAL_UNUSED_TERMS.includes(d.k)));
+  const shown = (list: FieldDef[]) => list.filter((d) => !(integral && INTEGRAL_UNUSED_TERMS.includes(d.k)) && !(shoulder && d.k === 'bushingPlay'));
 
   /**
    * Apply a preset spec: the worst-case fit right away; in statistical mode the worker's fit replaces the clearances when
@@ -103,21 +113,23 @@ export function ToleranceView({ slot, eff, result, index, tol }: {
   const pickProcess = (id: string) => {
     if (id === 'custom') return;
     // a reamed hole fit is kept
-    applyPreset(processSpec(id as ProcessId, { integral, holePlay: reamed && !integral ? spec.holePlay : undefined, keep: spec }));
+    applyPreset(processSpec(id as ProcessId, { integral: ring, holePlay: reamed && !integral ? spec.holePlay : undefined, keep: spec }));
   };
   /** Change a setting the fit depends on: a preset re-fits its clearances, custom clearances stay as typed. */
   const refit = (patch: Partial<ToleranceSpec>) => {
-    if (proc) applyPreset(processSpec(proc, { integral, holePlay: patch.holePlay ?? spec.holePlay, keep: { ...spec, ...patch } }));
+    if (proc) applyPreset(processSpec(proc, { integral: ring, holePlay: patch.holePlay ?? spec.holePlay, keep: { ...spec, ...patch } }));
     else set(patch);
   };
   const setReamed = (v: boolean) => refit({ holePlay: v ? REAMED_HOLE_PLAY : DRILLED_HOLE_PLAY });
-  const st = toleranceStacks(spec, integral);
-  const worstFit = fittedClearances(spec, integral);
+  const st = toleranceStacks(spec, ring);
+  const worstFit = fittedClearances(spec, ring);
   const statFit = shownFit && Number.isFinite(shownFit.statistical.profileClearance) ? shownFit.statistical : null;
   const fit = statistical ? statFit : worstFit;
   const mm3 = (x: number) => x.toFixed(3);
   const why = integral
     ? `profile error ${mm3(spec.profileError)} × 2 (disc and teeth) + eccentricity ${mm3(spec.eccError)}`
+    : shoulder
+    ? `profile error ${mm3(spec.profileError)} + pin position ${mm3(spec.pinPosition)} + hole play ${mm3(spec.holePlay)} + shoulder band ${mm3(specE.pinDiaTol / 2)} + eccentricity ${mm3(spec.eccError)} − mean shoulder undersize ${mm3(shoulder.undersize)}`
     : `profile error ${mm3(spec.profileError)} + pin position ${mm3(spec.pinPosition)} + hole play ${mm3(spec.holePlay)} + pin diameter ${mm3(spec.pinDiaTol / 2)} + eccentricity ${mm3(spec.eccError)}`;
   const fitNote = (
     <span className="tol-fit">
@@ -284,7 +296,7 @@ function ToleranceResults({ slot, eff, result, tol, lever, u, onUseKc, onClearan
       ) : null}
       <DataTable columns={1} rows={[
         bwRow('Design (no errors)', bl.design.total,
-          `Perfect parts: only the clearances you chose. Disc on the outer pins ${arcmin(bl.design.ring)} + output pins in their holes ${arcmin(bl.design.inner)}; bushing play at its average.`),
+          `Perfect parts: only the clearances you chose. Disc on the outer pins ${arcmin(bl.design.ring)} + output pins in their holes ${arcmin(bl.design.inner)}; ${eff.outerPin.construction === 'shoulderBolt' ? 'shoulders at their mean undersize' : r.integral ? 'no pins or plays' : 'bushing play at its average'}.`),
         ...(r.statsShown ? [
           bwRow('Typical build (p50)', bl.mc.p50, `Half of real builds have less play than this (from ${r.freeBuilds} simulated builds with random machining errors).`),
           bwRow('Most builds (p95)', bl.mc.p95, '95 of 100 builds have less play than this. Use this number to plan.'),

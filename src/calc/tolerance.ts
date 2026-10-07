@@ -21,7 +21,11 @@
 //   play is a two-sided position error, not a gap; eps_r ~ U(+-pinDiaTol/2);
 //   de ~ U(+-eccError), one draw per trial for every pin (and the inner holes).
 //   Integral ring: g_i = drp + U(+-profileError) (disc) + U(+-profileError) (tooth) - de (n_i . u); no plays, position or
-//   diameter terms. All per-pin draws are fixed for a trial (the same part at every theta).
+//   diameter terms.
+//   Shoulder bolt (no bushing): the bushing play is 0 and the pin diameter is the ground shoulder band, uniform in
+//   [nominal + lower, nominal + upper] (both deviations negative). Its mean undersize adds the deterministic radial gap
+//   s0 = meanUndersize/2 to every pin (design, worst and Monte Carlo), and pinDiaTol is replaced by the half band (so
+//   eps_r ~ U(+-halfBand/2)). The binding stack subtracts s0 (the shoulder is never oversize). See ringTolOf(). All per-pin draws are fixed for a trial (the same part at every theta).
 //
 // Free rotation of the disc (ring backlash) at theta for a gap vector g: the disc turns by psi about C and moves by t in
 // the eccentric bearing clearance, |t| <= c_b; gaps become g_i + n_i . t + arm_i psi and must all stay >= 0.
@@ -64,7 +68,8 @@
 //       a = sqrt(4 F R*/(pi L E*)), 1/R* = 1/rr + kappa_a, R1 = rr (pin / tooth), R2 = |rho_a| at the contact of the
 //       rigid peak force (disc), E1 = bushing / pin / housing, E2 = disc.
 //     pin bending, simply supported over the span with a central load: k_b = 48 E I / span^3, I = pi d^4/64,
-//       d = bolt shank (bolt + bushing, steel bolt E 200 GPa) or 2 rr (solid pin, its material); integral ring: rigid.
+//       d = bolt shank (bolt + bushing, steel bolt E 200 GPa) or 2 rr (solid pin, its material; shoulder bolt, its steel);
+//       integral ring: rigid.
 // Torsional stiffness: psi(T) = 1000 T share / (k sum_{arm>0} arm^2) with zero gaps (rigid sharing); K_t = T/psi at T_req,
 //   at the theta (24 per pitch) with the smallest sum arm^2. Inner pins, standoffs and the housing are not included.
 // Sensitivity: backlash share = worst-loose backlash with only that term at its value (all others 0, plays included);
@@ -73,7 +78,8 @@
 
 import { computeProfile } from './kernel';
 import { deriveGeometry, discShareOf, validateGearboxInputs } from './gearbox';
-import { effectiveModulus, SPEC_STEEL } from './materials';
+import { effectiveModulus, outerPinMaterial, SPEC_STEEL } from './materials';
+import { shoulderBandOf } from './catalog';
 import { ringContactMaterial } from './integral';
 import { nextNonRoll, firstPitchIndex, type ArmInputs } from './arm';
 import { now, runAsync, runSync, SLICE_MS, type RunHooks } from './runner';
@@ -160,17 +166,59 @@ export const TOLERANCE_TERM_LABEL: Record<ToleranceTerm, string> = {
 
 /** Terms that do not exist for an integral (machined) ring. */
 export const INTEGRAL_UNUSED_TERMS: readonly ToleranceTerm[] = ['bushingPlay', 'holePlay', 'pinPosition', 'pinDiaTol'];
+/** Terms that do not exist (bushing play) or are set by the catalog (shoulder diameter band) for a shoulder bolt. */
+export const SHOULDER_FIXED_TERMS: readonly ToleranceTerm[] = ['bushingPlay', 'pinDiaTol'];
+
+/**
+ * What the outer construction does to the tolerance model. `integral`: machined teeth. `shoulder`: a ground shoulder bolt,
+ * with its diameter band (pinDiaTol = the half band, mm diametral) and the deterministic radial gap of the mean undersize.
+ * Functions that take `integral: RingArg` accept either (a boolean = the old pins / integral switch).
+ */
+export interface RingTol {
+  integral: boolean;
+  shoulder: { pinDiaTol: number; undersize: number } | null;
+}
+export type RingArg = boolean | RingTol | undefined;
+
+export function asRing(x: RingArg): RingTol {
+  if (x && typeof x === 'object') return x;
+  return { integral: x === true, shoulder: null };
+}
+
+/** The ring kind of a gearbox's outer construction (the shoulder band from its rr). */
+export function ringTolOf(inputs: { rr?: number; outerPin?: { construction?: string } } | undefined): RingTol {
+  const c = inputs?.outerPin?.construction;
+  if (c === 'integral') return { integral: true, shoulder: null };
+  if (c === 'shoulderBolt') {
+    const rr = inputs?.rr;
+    const b = shoulderBandOf(fin(rr) ? rr : 0);
+    return { integral: false, shoulder: { pinDiaTol: b.halfBand, undersize: b.meanUndersize / 2 } };
+  }
+  return { integral: false, shoulder: null };
+}
+
+/** The spec the analysis uses: a shoulder bolt has no bushing play and its catalog diameter band. */
+export function effectiveSpec(t: ToleranceSpec, ring: RingArg): ToleranceSpec {
+  const r = asRing(ring);
+  if (!r.shoulder) return t;
+  return { ...t, bushingPlay: 0, pinDiaTol: r.shoulder.pinDiaTol };
+}
 
 export function processPreset(id: ProcessId): ProcessPreset {
   return PROCESS_PRESETS.find((p) => p.id === id) ?? PROCESS_PRESETS.find((p) => p.id === DEFAULT_PROCESS)!;
 }
 
-/** Worst-case stacks (mm): what the profile clearance (radial) and half the inner hole clearance must cover. */
-export function toleranceStacks(t: ToleranceSpec, integral: boolean, maxNU = 1): { profile: number; inner: number } {
+/**
+ * Worst-case stacks (mm): what the profile clearance (radial) and half the inner hole clearance must cover. A shoulder
+ * bolt uses its effective spec and subtracts the radial mean undersize (a gap every build has).
+ */
+export function toleranceStacks(tIn: ToleranceSpec, integral: RingArg, maxNU = 1): { profile: number; inner: number } {
+  const ring = asRing(integral);
+  const t = effectiveSpec(tIn, ring);
   return {
-    profile: integral
+    profile: ring.integral
       ? 2 * t.profileError + t.eccError * maxNU
-      : t.profileError + t.pinPosition + t.holePlay + t.pinDiaTol / 2 + t.eccError * maxNU,
+      : t.profileError + t.pinPosition + t.holePlay + t.pinDiaTol / 2 + t.eccError * maxNU - (ring.shoulder?.undersize ?? 0),
     inner: t.innerHolePosition + t.innerPinDiaTol / 2 + t.eccError,
   };
 }
@@ -179,15 +227,15 @@ export function toleranceStacks(t: ToleranceSpec, integral: boolean, maxNU = 1):
 export const ceilStep = (x: number, step = 0.005): number => Math.max(0, Math.round(Math.ceil(x / step - 1e-9) * step * 1e9) / 1e9);
 
 /** The smallest clearances (0.005 mm steps) that keep the worst-case stacks from binding. */
-export function fittedClearances(t: ToleranceSpec, integral: boolean): { profileClearance: number; innerHoleClearance: number } {
+export function fittedClearances(t: ToleranceSpec, integral: RingArg): { profileClearance: number; innerHoleClearance: number } {
   const st = toleranceStacks(t, integral);
   return { profileClearance: ceilStep(st.profile), innerHoleClearance: ceilStep(2 * st.inner) };
 }
 
 export interface ProcessSpecOptions {
-  /** Integral (machined) ring: no hole play or pin terms in the profile stack */
-  integral?: boolean;
-  /** Hole play to keep (reamed holes); default the preset's 0.1 mm */
+  /** Integral (machined) ring: no hole play or pin terms in the profile stack (or a RingTol, e.g. a shoulder bolt) */
+  integral?: RingArg;
+  /** Hole play to keep (reamed holes); default the preset's 0.1 mm (a shoulder bolt: reamed, 0.005 mm) */
   holePlay?: number;
   /** Monte Carlo settings to keep */
   keep?: Partial<Pick<ToleranceSpec, 'mcTrials' | 'seed' | 'fitMode' | 'bindTarget'>>;
@@ -197,11 +245,12 @@ export interface ProcessSpecOptions {
 export function processSpec(id: ProcessId, opts: ProcessSpecOptions = {}): ToleranceSpec {
   const p = processPreset(id);
   const keep = opts.keep;
-  const t: ToleranceSpec = {
+  const ring = asRing(opts.integral);
+  const t0: ToleranceSpec = {
     profileClearance: 0,
     innerHoleClearance: 0,
     bushingPlay: PRESET_COMMON.bushingPlay,
-    holePlay: fin(opts.holePlay) && opts.holePlay >= 0 ? opts.holePlay : PRESET_COMMON.holePlay,
+    holePlay: fin(opts.holePlay) && opts.holePlay >= 0 ? opts.holePlay : ring.shoulder ? REAMED_HOLE_PLAY : PRESET_COMMON.holePlay,
     bearingClearance: PRESET_COMMON.bearingClearance,
     profileError: p.profileError,
     pinPosition: p.pinPosition,
@@ -214,12 +263,14 @@ export function processSpec(id: ProcessId, opts: ProcessSpecOptions = {}): Toler
     fitMode: keep?.fitMode === 'statistical' ? 'statistical' : 'worst',
     bindTarget: fin(keep?.bindTarget) ? keep.bindTarget : DEFAULT_BIND_TARGET,
   };
-  // the worst-case fit; fitClearances(inputs, spec) gives the statistical one (it needs the geometry and a Monte Carlo)
-  return { ...t, ...fittedClearances(t, opts.integral === true) };
+  // the stored values stay the preset's (a shoulder bolt's bushing play and diameter band are applied by effectiveSpec in
+  // the analysis), the clearances are fitted to the construction.
+  // The worst-case fit; fitClearances(inputs, spec) gives the statistical one (it needs the geometry and a Monte Carlo)
+  return { ...t0, ...fittedClearances(t0, ring) };
 }
 
 /** A missing spec: the CNC mill preset with fitted clearances. */
-export function defaultToleranceSpec(integral = false): ToleranceSpec {
+export function defaultToleranceSpec(integral: RingArg = false): ToleranceSpec {
   return processSpec(DEFAULT_PROCESS, { integral });
 }
 
@@ -233,10 +284,11 @@ const PROCESS_FIELDS = ['profileError', 'pinPosition', 'eccError', 'innerHolePos
  * without them only the process values are compared.
  */
 export function matchProcess(
-  t: ToleranceSpec, integral = false, statFit?: { profileClearance: number; innerHoleClearance: number } | null,
+  tIn: ToleranceSpec, integral: RingArg = false, statFit?: { profileClearance: number; innerHoleClearance: number } | null,
 ): ProcessId | null {
+  const t = effectiveSpec(tIn, integral);
   for (const p of PROCESS_PRESETS) {
-    const s = processSpec(p.id, { integral, holePlay: t.holePlay });
+    const s = effectiveSpec(processSpec(p.id, { integral, holePlay: t.holePlay }), integral);
     const same = (k: (typeof PROCESS_FIELDS)[number]) => Math.abs(s[k] - t[k]) < 1e-9;
     if (!PROCESS_FIELDS.every(same)) continue;
     const want = t.fitMode === 'statistical' ? statFit : s;
@@ -272,12 +324,12 @@ export function normalizeToleranceSpec(raw: unknown): ToleranceSpec {
   return out;
 }
 
-type ToleranceHolder = Pick<GearboxInputs, 'tolerance'> & { outerPin?: { construction?: string } };
+type ToleranceHolder = Pick<GearboxInputs, 'tolerance'> & { rr?: number; outerPin?: { construction?: string } };
 
 /** The spec in effect for a gearbox (normalized; a missing one is the default for its construction). */
 export function toleranceOf(inputs: ToleranceHolder): ToleranceSpec {
   return inputs.tolerance === undefined || inputs.tolerance === null
-    ? defaultToleranceSpec(inputs.outerPin?.construction === 'integral')
+    ? defaultToleranceSpec(ringTolOf(inputs))
     : normalizeToleranceSpec(inputs.tolerance);
 }
 
@@ -569,7 +621,7 @@ export function pinStiffness(inputs: GearboxInputs, F: number, kappaA: number, s
   if (inputs.outerPin.construction !== 'integral') {
     const bolt = inputs.outerPin.construction === 'boltBushing';
     const d = bolt ? inputs.outerPin.shankDia : 2 * inputs.rr;
-    const E = bolt ? SPEC_STEEL.E : inputs.outerPin.material.E;
+    const E = bolt ? SPEC_STEEL.E : outerPinMaterial(inputs.outerPin).E;
     const I = (Math.PI * d ** 4) / 64;
     kb = (48 * E * I) / span ** 3;
     deltaB = Fs / kb;
@@ -753,6 +805,8 @@ interface Prepared {
   inputs: GearboxInputs;
   spec: ToleranceSpec;
   integral: boolean;
+  /** Deterministic radial gap at every outer pin (shoulder bolt mean undersize / 2), mm */
+  gap0: number;
   Zp: number;
   Zw: number;
   Rw: number;
@@ -796,7 +850,7 @@ function drawBuild(p: Prepared, t: ToleranceSpec, rnd: () => number): Draw {
       const r = t.pinPosition * Math.sqrt(rnd()), ph = TWO_PI * rnd();
       const rh = t.holePlay * Math.sqrt(rnd()), phh = TWO_PI * rnd();
       dx[i] = r * Math.cos(ph) + rh * Math.cos(phh); dy[i] = r * Math.sin(ph) + rh * Math.sin(phh);
-      base[i] = t.profileClearance + rnd() * t.bushingPlay + U(t.profileError) - U(t.pinDiaTol / 2);
+      base[i] = t.profileClearance + p.gap0 + rnd() * t.bushingPlay + U(t.profileError) - U(t.pinDiaTol / 2);
     }
   }
   const ibase = new Float64Array(Zw), px = new Float64Array(Zw), py = new Float64Array(Zw);
@@ -819,7 +873,7 @@ function fixedBuild(p: Prepared, t: ToleranceSpec, mode: 'design' | 'worst'): Dr
   for (let i = 0; i < Zp; i++) {
     base[i] = p.integral
       ? t.profileClearance + (worst ? 2 * t.profileError : 0)
-      : t.profileClearance + (worst
+      : t.profileClearance + p.gap0 + (worst
         ? t.bushingPlay + t.profileError + t.pinDiaTol / 2 + t.pinPosition + t.holePlay
         : t.bushingPlay / 2);
   }
@@ -964,21 +1018,23 @@ export function fitTrialsFor(target: number): number {
 export function statFitKey(inputs: GearboxInputs, spec: ToleranceSpec, trials = fitTrialsFor(spec.bindTarget), seed = spec.seed, nB = 24): string {
   const t = spec;
   return JSON.stringify([inputs.Zp, inputs.D, inputs.e, inputs.rr, inputs.rw, inputs.Zw, inputs.Db, inputs.tMin, inputs.RwOverride,
-    inputs.outerPin?.construction === 'integral', t.profileError, t.pinPosition, t.pinDiaTol, t.eccError, t.innerHolePosition,
+    inputs.outerPin?.construction ?? '', ringTolOf(inputs).shoulder?.undersize ?? 0, t.profileError, t.pinPosition, t.pinDiaTol, t.eccError, t.innerHolePosition,
     t.innerPinDiaTol, t.bushingPlay, t.holePlay, t.bearingClearance, t.bindTarget, trials, seed, nB]);
 }
 
 const fitCache = new Map<string, StatisticalFit>();
 
-function statisticalFitRaw(inputs: GearboxInputs, spec: ToleranceSpec, trials: number, seed: number, nB: number, target: number): StatisticalFit {
+function statisticalFitRaw(inputs: GearboxInputs, specIn: ToleranceSpec, trials: number, seed: number, nB: number, target: number): StatisticalFit {
   const t0 = now();
-  const integral = inputs.outerPin?.construction === 'integral';
-  const worst = fittedClearances(spec, integral);
+  const ring = ringTolOf(inputs);
+  const integral = ring.integral;
+  const spec = effectiveSpec(specIn, ring);
+  const worst = fittedClearances(spec, ring);
   const gd = deriveGeometry(inputs);
   const Zp = inputs.Zp, Zw = inputs.Zw;
   const geo: ToleranceGeometry[] = [];
   for (let j = 0; j < nB; j++) geo.push(toleranceGeometryAt(Zp, gd.Rp, inputs.e, inputs.rr, Zw, ((2 * Math.PI) / Zp) * (j / nB)));
-  const p = { Zp, Zw, integral } as Prepared;
+  const p = { Zp, Zw, integral, gap0: ring.shoulder?.undersize ?? 0 } as Prepared;
   const zeroC: ToleranceSpec = { ...spec, profileClearance: 0, innerHoleClearance: 0 };
   const rnd = makeRng(seed);
   const c = Math.max(0, spec.bearingClearance);
@@ -1041,7 +1097,7 @@ function statisticalFitRaw(inputs: GearboxInputs, spec: ToleranceSpec, trials: n
 
 /** The spec with its clearances fitted for its fit mode (worst case, or the statistical Monte Carlo fit). Pure. */
 export function fitClearances(inputs: GearboxInputs, spec: ToleranceSpec): ToleranceSpec {
-  const integral = inputs.outerPin?.construction === 'integral';
+  const integral = ringTolOf(inputs);
   if (spec.fitMode !== 'statistical') return { ...spec, ...fittedClearances(spec, integral) };
   try {
     const f = statisticalFitFor(inputs, spec);
@@ -1059,8 +1115,10 @@ export function cancelledToleranceResult(inputs?: GearboxInputs): ToleranceResul
 
 function* toleranceGen(inputs: GearboxInputs, opts: ToleranceOptions = {}): Generator<ToleranceProgress, ToleranceResult, void> {
   const t0 = now();
-  const integral = inputs?.outerPin?.construction === 'integral';
-  const spec = toleranceOf(inputs);
+  const ring = ringTolOf(inputs);
+  const integral = ring.integral;
+  const gap0 = ring.shoulder?.undersize ?? 0;
+  const spec = effectiveSpec(toleranceOf(inputs), ring);
   const v = validateGearboxInputs(inputs);
   if (v.errors.length) return invalidTolerance(v.errors, spec, integral);
   const se = Object.values(validateToleranceSpec(spec)) as string[];
@@ -1100,7 +1158,7 @@ function* toleranceGen(inputs: GearboxInputs, opts: ToleranceOptions = {}): Gene
   const kLife = pinStiffness(inputs, gc.Funit * inputs.Treq * share, gc.kappaA, gd.span);
 
   const p: Prepared = {
-    inputs, spec, integral, Zp, Zw, Rw: gd.Rw, share, geo: backlashGeo, kcIdx: [], maxNU,
+    inputs, spec, integral, gap0, Zp, Zw, Rw: gd.Rw, share, geo: backlashGeo, kcIdx: [], maxNU,
     kStr: kStrength.k, kLife: kLife.k, Tstr: 1000 * inputs.Tdes * share, Tlife: 1000 * inputs.Treq * share,
   };
   // Kc uses the full geo list (it may hold extra samples)
@@ -1119,7 +1177,7 @@ function* toleranceGen(inputs: GearboxInputs, opts: ToleranceOptions = {}): Gene
   const sens = opts.sensitivity !== false;
   const sTrials = fin(opts.sensitivityTrials) ? Math.max(2, Math.floor(opts.sensitivityTrials)) : Math.min(100, trials);
   const kcTerms: ToleranceTerm[] = (['bushingPlay', 'holePlay', 'profileError', 'pinPosition', 'pinDiaTol', 'eccError'] as ToleranceTerm[])
-    .filter((x) => !(integral && INTEGRAL_UNUSED_TERMS.includes(x)));
+    .filter((x) => !(integral && INTEGRAL_UNUSED_TERMS.includes(x)) && !(ring.shoulder && x === 'bushingPlay'));
   const totalWork = trials + (sens ? kcTerms.length * sTrials : 0);
   let done = 0;
   let slice = now();
@@ -1139,7 +1197,7 @@ function* toleranceGen(inputs: GearboxInputs, opts: ToleranceOptions = {}): Gene
   }
 
   // binding (worst-case stack at t = 0)
-  const stacks = toleranceStacks(spec, integral, maxNU);
+  const stacks = toleranceStacks(spec, ring, maxNU);
   const stack = stacks.profile;
   const innerStack = stacks.inner;
   const minGapWorst = spec.profileClearance - stack;
@@ -1154,10 +1212,12 @@ function* toleranceGen(inputs: GearboxInputs, opts: ToleranceOptions = {}): Gene
   if (sens) {
     const zero: ToleranceSpec = { ...spec };
     for (const k of TOLERANCE_MM_FIELDS) zero[k] = 0;
-    const blTerms = TOLERANCE_MM_FIELDS.filter((x) => !(integral && INTEGRAL_UNUSED_TERMS.includes(x)));
+    const blTerms = TOLERANCE_MM_FIELDS.filter((x) => !(integral && INTEGRAL_UNUSED_TERMS.includes(x)) && !(ring.shoulder && x === 'bushingPlay'));
     const bItems: SensitivityItem[] = blTerms.map((term) => {
       const s1 = { ...zero, [term]: spec[term] };
-      const value = spec[term] > 0 ? worstOf(p, s1).total : 0;
+      // a shoulder bolt's mean undersize belongs to the pin diameter term (the shoulder band)
+      const g0 = term === 'pinDiaTol' ? gap0 : 0;
+      const value = spec[term] > 0 || g0 > 0 ? worstOf({ ...p, gap0: g0 }, s1).total : 0;
       return { term, label: TOLERANCE_TERM_LABEL[term], value, share: 0 };
     });
     const bSum = bItems.reduce((s, x) => s + x.value, 0);
@@ -1223,7 +1283,7 @@ function* toleranceGen(inputs: GearboxInputs, opts: ToleranceOptions = {}): Gene
       Kt_Nm_per_rad: KtRad, Kt_Nm_per_arcmin: KtRad / ARCMIN_PER_RAD, twistReq: twist, twistReq_arcmin: twist * ARCMIN_PER_RAD,
     },
     sensitivity,
-    fit: { worst: fittedClearances(spec, integral), statistical: spec.fitMode === 'statistical' ? statisticalFitFor(inputs, spec, { nBacklash: nB }) : notFitted(spec) },
+    fit: { worst: fittedClearances(spec, ring), statistical: spec.fitMode === 'statistical' ? statisticalFitFor(inputs, spec, { nBacklash: nB }) : notFitted(spec) },
     elapsedMs: now() - t0,
   };
 }

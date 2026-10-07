@@ -78,6 +78,67 @@ export const OUTER_PIN_OPTIONS: readonly OuterPinOption[] = [
   { od: 10, bolt: 'M6', shank: 6.0 },
 ];
 
+export type UnitSystem = 'metric' | 'inch';
+
+export interface ShoulderBoltOption {
+  /** Stable id, e.g. 'm6' or 'in-1/4' */
+  id: string;
+  system: UnitSystem;
+  /** Nominal shoulder diameter, mm (the checks use this; rr = dia / 2) */
+  dia: number;
+  /** Shoulder size label, e.g. '6 mm' or '1/4"' */
+  label: string;
+  /** Thread at the end of the shoulder, e.g. 'M5' or '#10-24' */
+  thread: string;
+  /** Tap drill for the thread, mm (the far plate hole) */
+  tapDrill: number;
+  /**
+   * Shoulder diameter deviations from nominal, mm (both negative: ground undersize). The diameter lies in
+   * [dia + lower, dia + upper], e.g. upper -0.013, lower -0.038.
+   */
+  upper: number;
+  lower: number;
+}
+
+const MET = { upper: -0.013, lower: -0.038 } as const;
+/** -0.0005 / -0.002 in */
+const INCH = { upper: -0.0005 * 25.4, lower: -0.002 * 25.4 } as const;
+
+/**
+ * Ground shoulder screws (alloy steel, class 12.9 / ASTM A574 class): shoulder dia -> thread and diameter tolerance.
+ * Metric -0.013/-0.038 mm (ISO 7379 style), inch -0.0005/-0.002 in. Tap drills: ISO coarse 75%, inch number / letter drills.
+ * New entries are appended (advisor locks may store an index).
+ */
+export const SHOULDER_BOLT_OPTIONS: readonly ShoulderBoltOption[] = [
+  { id: 'm4', system: 'metric', dia: 4, label: '4 mm', thread: 'M3', tapDrill: 2.5, ...MET },
+  { id: 'm5', system: 'metric', dia: 5, label: '5 mm', thread: 'M4', tapDrill: 3.3, ...MET },
+  { id: 'm6', system: 'metric', dia: 6, label: '6 mm', thread: 'M5', tapDrill: 4.2, ...MET },
+  { id: 'm8', system: 'metric', dia: 8, label: '8 mm', thread: 'M6', tapDrill: 5.0, ...MET },
+  { id: 'm10', system: 'metric', dia: 10, label: '10 mm', thread: 'M8', tapDrill: 6.8, ...MET },
+  { id: 'in-1/8', system: 'inch', dia: 3.175, label: '1/8"', thread: '#4-40', tapDrill: 2.26, ...INCH },
+  { id: 'in-3/16', system: 'inch', dia: 4.763, label: '3/16"', thread: '#8-32', tapDrill: 3.454, ...INCH },
+  { id: 'in-1/4', system: 'inch', dia: 6.35, label: '1/4"', thread: '#10-24', tapDrill: 3.797, ...INCH },
+  { id: 'in-5/16', system: 'inch', dia: 7.938, label: '5/16"', thread: '1/4-20', tapDrill: 5.105, ...INCH },
+  { id: 'in-3/8', system: 'inch', dia: 9.525, label: '3/8"', thread: '5/16-18', tapDrill: 6.528, ...INCH },
+];
+
+/** Shoulder bolts of one unit system, diameter ascending. */
+export function shoulderBoltsOf(system: UnitSystem): ShoulderBoltOption[] {
+  return SHOULDER_BOLT_OPTIONS.filter((o) => o.system === system).sort((a, b) => a.dia - b.dia);
+}
+
+/** The shoulder bolt whose nominal diameter is 2 rr (to 0.002 mm), or null for a non-catalog size. */
+export function shoulderBoltFor(rr: number): ShoulderBoltOption | null {
+  return SHOULDER_BOLT_OPTIONS.find((o) => Math.abs(o.dia - 2 * rr) < 2e-3) ?? null;
+}
+
+/** Diameter band of a shoulder (catalog, or the metric band for a non-catalog size): mean undersize and half band, mm (diametral). */
+export function shoulderBandOf(rr: number): { meanUndersize: number; halfBand: number; option: ShoulderBoltOption | null } {
+  const o = shoulderBoltFor(rr);
+  const upper = o ? o.upper : MET.upper, lower = o ? o.lower : MET.lower;
+  return { meanUndersize: -(upper + lower) / 2, halfBand: (upper - lower) / 2, option: o };
+}
+
 export interface InnerPinOption {
   /** Standoff / pin outer diameter, mm */
   od: number;

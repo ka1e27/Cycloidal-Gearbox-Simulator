@@ -142,6 +142,30 @@ the defaults, and `defaultGearboxInputs()` / `normalizeGearboxInputs` carry them
   (Rh + OD/2)/2; notes give thickness = Lt + 2·gap. `info.ringRoot`, `info.ringPointCount`. The pin sheet lists only the inner pins.
 * Check time: about 5 ms (vs 1.5 ms for pins).
 
+## 2c. Shoulder bolt outer pins (`'shoulderBolt'`)
+
+A ground shoulder screw is the pin; no bushing, the disc slides on the shoulder. `outerPin.material`, `shankDia` and `boltYield` are
+not used: the pin is always `SHOULDER_BOLT_STEEL` (class 12.9: E 205000, ν 0.29, Sy 1080, σf 450, metal; `outerPinMaterial(p)`).
+* **Checks**: as a solid pin of d = 2·rr: `boltBending` is labelled "Shoulder bolt bending", limit min(0.4·Sy, σf) = 432 MPa, same span.
+  Ring E\* uses the bolt steel (`ringContactMaterial`), contact limits the weaker of disc and bolt. A rr that is not a catalog shoulder
+  gives a warning. The SPEC solver now also uses `ringContactMaterial` (unchanged for bolt + bushing and solid pins).
+* **Catalog** `SHOULDER_BOLT_OPTIONS` (append-only; `id, system 'metric'|'inch', dia, label, thread, tapDrill, upper, lower` in mm):
+  metric 4/M3, 5/M4, 6/M5, 8/M6, 10/M8 at −0.013/−0.038; inch 1/8" #4-40, 3/16" #8-32, 1/4" #10-24, 5/16" 1/4-20, 3/8" 5/16-18 at
+  −0.0005/−0.002 in. `shoulderBoltFor(rr)`, `shoulderBoltsOf(system)`, `shoulderBandOf(rr)` → `{meanUndersize, halfBand}` (diametral;
+  metric band for a non-catalog rr). The checks use the nominal diameter.
+* **Tolerances**: `ringTolOf(inputs)` → `RingTol {integral, shoulder: {pinDiaTol, undersize} | null}`; every function that took
+  `integral: boolean` (`toleranceStacks`, `fittedClearances`, `processSpec` opts, `defaultToleranceSpec`, `matchProcess`) also takes a
+  `RingTol`. For a shoulder bolt `effectiveSpec(spec, ring)` sets bushingPlay 0 and pinDiaTol = the half band (the stored spec keeps
+  its values); every outer gap gets the deterministic + meanUndersize/2; the profile stack subtracts it. Default/preset hole play:
+  reamed (0.005). `ToleranceResult.spec` is the effective spec. Sensitivity: no bushing play term; the pin diameter term carries the
+  undersize.
+* **Advisor**: `AdvisorOptions.shoulderSystem` ('metric' default | 'inch' | 'both'); a catalog `outerPin` lock indexes
+  `SHOULDER_BOLT_OPTIONS`; `AdvisorDesign.outerBolt` = the thread.
+* **Fixes**: the next larger shoulders of the same system (`rr` up); no bolt grade or material fix.
+* **DXF**: housing "make 2": the shoulder plate (left, holes 2·rr + pin hole clearance = 2·holePlay, 0.01 reamed) and the far plate
+  (right, tap-drill holes) side by side; notes "Far plate: tap for <thread>; set plate spacing with the housing ring, not the shoulder
+  length". The pins sheet lists the shoulder bolts.
+
 ## 3. The gearbox check
 
 ```ts
