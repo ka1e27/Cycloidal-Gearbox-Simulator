@@ -47,6 +47,7 @@ export type MaterialId =
   | 'uhmw'
   | 'pom'
   | 'delrin150'
+  | 'peek'
   | 'pa66'
   | 'petg'
   | 'pla'
@@ -107,15 +108,21 @@ export const MATERIALS: readonly Material[] = [
   },
   {
     id: 'pom',
-    name: 'Acetal / POM / Delrin (machined)',
+    name: 'Acetal copolymer, POM-C (machined; e.g. Acetron GP)',
     E: 2900, nu: 0.35, Sy: 65, sigmaF: 30, density: 1.41, kind: 'polymer', family: 'machined', form: 'plate',
-    note: 'The classic gear plastic: stiff, low friction, good fatigue. Best plastic choice for a cycloidal disc.',
+    note: 'The classic gear plastic and the best value for a cycloidal disc: stiff, low friction, good fatigue, machines cleanly, and no porous core in thick plate (unlike Delrin). About the price of aluminum plate.',
   },
   {
     id: 'delrin150',
     name: 'Delrin 150 (acetal homopolymer, machined)',
     E: 3100, nu: 0.35, Sy: 72, sigmaF: 32, density: 1.42, kind: 'polymer', family: 'machined', form: 'plate',
     note: 'DuPont homopolymer acetal, the usual Delrin rod and plate grade: a little stiffer and stronger than generic POM. Creep under constant load is the main risk; use a hub insert for the bearing and steel sleeves in the inner pin holes.',
+  },
+  {
+    id: 'peek',
+    name: 'PEEK, unfilled (machined)',
+    E: 3800, nu: 0.4, Sy: 100, sigmaF: 40, density: 1.31, kind: 'polymer', family: 'machined', form: 'plate',
+    note: 'High-performance plastic: stronger than acetal, far less creep, and usable to about 250 C. About 10x the price of acetal; worth it mainly for a joint that holds a constant load (the shoulder). Fatigue strength is an estimate.',
   },
   {
     id: 'pa66',

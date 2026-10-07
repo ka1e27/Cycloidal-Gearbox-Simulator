@@ -21,6 +21,7 @@ describe('audit: material library matches CLAUDE.md', () => {
     uhmw: [700, 0.46, 20, 7, 0.93, 'polymer'],
     pom: [2900, 0.35, 65, 30, 1.41, 'polymer'],
     delrin150: [3100, 0.35, 72, 32, 1.42, 'polymer'],
+    peek: [3800, 0.4, 100, 40, 1.31, 'polymer'],
     pa66: [2000, 0.39, 55, 20, 1.14, 'polymer'],
     abs: [2000, 0.35, 35, 10, 1.04, 'polymer'],
     asa: [2000, 0.35, 38, 11, 1.07, 'polymer'],

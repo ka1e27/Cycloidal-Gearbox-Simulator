@@ -11,7 +11,7 @@ describe('material library', () => {
     expect(MATERIALS.map((m) => m.id)).toEqual([
       'steel-1018', 'steel-4140', 'al-6061', 'al-7075',
       'g10',
-      'hdpe', 'uhmw', 'pom', 'delrin150', 'pa66',
+      'hdpe', 'uhmw', 'pom', 'delrin150', 'peek', 'pa66',
       'petg', 'pla', 'abs', 'asa', 'pc', 'pa12', 'pa6cf',
       'fl-rigid10k', 'fl-tough2000', 'fl-tough1500',
     ]);
@@ -138,6 +138,7 @@ describe('added plastics (machined and 3D printed)', () => {
     ['uhmw', 700, 0.46, 20, 7, 0.93, 'plate'],
     ['pom', 2900, 0.35, 65, 30, 1.41, 'plate'],
     ['delrin150', 3100, 0.35, 72, 32, 1.42, 'plate'],
+    ['peek', 3800, 0.4, 100, 40, 1.31, 'plate'],
     ['pa66', 2000, 0.39, 55, 20, 1.14, 'plate'],
     ['abs', 2000, 0.35, 35, 10, 1.04, 'printed'],
     ['asa', 2000, 0.35, 38, 11, 1.07, 'printed'],
