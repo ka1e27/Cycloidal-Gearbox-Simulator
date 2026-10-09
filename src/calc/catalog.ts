@@ -206,7 +206,7 @@ export interface InnerPinOption {
 export const INNER_PIN_OPTIONS: readonly InnerPinOption[] = [
   { od: 4.5, bore: 2.05, thread: 'M2.5' },
   { od: 5, bore: 2.46, thread: 'M3' },
-  { od: 7, bore: 3.24, thread: 'M4' },
+  { od: 6, bore: 3.24, thread: 'M4' },
   { od: 10, bore: 4.13, thread: 'M5' },
   { od: 10, bore: 4.9, thread: 'M6' },
 ];

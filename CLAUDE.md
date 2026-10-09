@@ -103,7 +103,7 @@ over Zp ∈ {12,14,16,18,20,22,24,26}):
 - D 30–150 mm, 1 mm steps. K1 0.40–0.85, 0.025 steps.
 - Outer pin options (pin OD → bolt shank for the bolt+bushing construction): 3→M2 (2.0),
   4→M2.5 (2.5), 5→M3 (3.0), 6→M4 (4.0), 8→M5 (5.0), 10→M6 (6.0). For solid pins, just the OD.
-- Inner pin options (round standoffs OD/bore): 4.5/2.05 (M2.5), 5/2.46 (M3), 7/3.24 (M4),
+- Inner pin options (round standoffs OD/bore): 4.5/2.05 (M2.5), 5/2.46 (M3), 6/3.24 (M4),
   10/4.13 (M5), 10/4.9 (M6). For solid pins, just the OD.
 - Zw 4–10. Discs 1 and 2.
 - Disc thickness L: metal stock {3.175, 4.76, 6.35, 9.525, 12.7}; polymer {4, 5, 6, 8, 10, 12}.
