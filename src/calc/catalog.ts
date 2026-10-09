@@ -164,7 +164,7 @@ export const OUTER_STANDOFF_OPTIONS: readonly OuterStandoffOption[] = [
   { id: 'so-m2.5', system: 'metric', od: 4.5, label: '4.5 mm', thread: 'M2.5', bore: 2.05, clearanceHole: 2.9 },
   { id: 'so-m3', system: 'metric', od: 5, label: '5 mm', thread: 'M3', bore: 2.46, clearanceHole: 3.4 },
   { id: 'so-m4', system: 'metric', od: 6, label: '6 mm', thread: 'M4', bore: 3.24, clearanceHole: 4.5 },
-  { id: 'so-m5', system: 'metric', od: 8, label: '8 mm', thread: 'M5', bore: 4.13, clearanceHole: 5.5 },
+  { id: 'so-m5', system: 'metric', od: 10, label: '10 mm', thread: 'M5', bore: 4.13, clearanceHole: 5.5 },
   { id: 'so-in-3/16', system: 'inch', od: 4.763, label: '3/16"', thread: '#4-40', bore: 2.261, clearanceHole: 3.264 },
   { id: 'so-in-1/4-6', system: 'inch', od: 6.35, label: '1/4"', thread: '#6-32', bore: 2.705, clearanceHole: 3.797 },
   { id: 'so-in-1/4-8', system: 'inch', od: 6.35, label: '1/4"', thread: '#8-32', bore: 3.454, clearanceHole: 4.496 },
@@ -207,7 +207,7 @@ export const INNER_PIN_OPTIONS: readonly InnerPinOption[] = [
   { od: 4.5, bore: 2.05, thread: 'M2.5' },
   { od: 5, bore: 2.46, thread: 'M3' },
   { od: 7, bore: 3.24, thread: 'M4' },
-  { od: 8, bore: 4.13, thread: 'M5' },
+  { od: 10, bore: 4.13, thread: 'M5' },
   { od: 10, bore: 4.9, thread: 'M6' },
 ];
 

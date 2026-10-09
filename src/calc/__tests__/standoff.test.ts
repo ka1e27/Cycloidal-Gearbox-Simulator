@@ -93,7 +93,7 @@ describe('outer standoff: material and checks', () => {
 
 describe('outer standoff: catalog', () => {
   it('metric and inch sizes', () => {
-    expect(outerStandoffsOf('metric').map((o) => `${o.od}:${o.thread}`)).toEqual(['4.5:M2.5', '5:M3', '6:M4', '8:M5']);
+    expect(outerStandoffsOf('metric').map((o) => `${o.od}:${o.thread}`)).toEqual(['4.5:M2.5', '5:M3', '6:M4', '10:M5']);
     expect(outerStandoffsOf('inch').map((o) => `${o.od}:${o.thread}`)).toEqual(['4.763:#4-40', '6.35:#6-32', '6.35:#8-32', '7.938:#10-32']);
     for (const o of OUTER_STANDOFF_OPTIONS) {
       expect(o.bore).toBeGreaterThan(0);
